@@ -777,3 +777,69 @@
   note: "a GPX track of thirty points (gen/documents.ts); XML by sniff"
   source: synthetic
 
+# ── generic page captures and odd formats (gen/pages.ts, gen/odds.ts) ─────────────────────────────────────
+
+- file: harbour-article.html
+  blake3: 95460875093fd57a8d64913a45afd50b035ab53de34a2c1c988faa096e18c3b3
+  mime: text/html
+  root: article-page
+  shape: page-capture
+  note: "the twin of a news-article capture — headline, byline, published time, lead figure, body paragraphs and a subheading, a pull quote, comments (gen/pages.ts)"
+  source: synthetic
+
+- file: rope-product.html
+  blake3: d97e60d369370010642454bbb6abf2472697c76854e126db24c8a6529856ca95
+  mime: text/html
+  root: product-page
+  shape: page-capture
+  note: "the twin of a product-page capture — schema.org microdata: name, price, sku, description, a specification table, reviews, a gallery (gen/pages.ts)"
+  source: synthetic
+
+- file: order-detail.html
+  blake3: 9515b279f0de5ca3bbfe81e028f1234be064db4c9a7d86b08774b85c0a27cc6f
+  mime: text/html
+  root: order-page
+  shape: page-capture
+  note: "the twin of an order-detail capture — order facts, a table of lines with totals, tracking events (gen/pages.ts)"
+  source: synthetic
+
+- file: cottage-listing.html
+  blake3: 7684234e970a2940ac15d0974c20cded566641eefa6c5bcd5dd2ac45b1e396cc
+  mime: text/html
+  root: listing-page
+  shape: page-capture
+  note: "the twin of a property-listing capture — address, price, facts, photos, description, rooms (gen/pages.ts)"
+  source: synthetic
+
+- file: reference.zim
+  blake3: f7563aea4ec5cf2779295f19ac2f06b805db61f6ec682f53d41b19f8d4d05982
+  mime: application/x-openzim
+  root: zim
+  shape: reference-archive
+  note: "a ZIM header with an empty MIME list — the signature and first structures only, a stub by design (gen/odds.ts)"
+  source: synthetic
+
+- file: region.osm.pbf
+  blake3: f7cc967683c92e41a966b32cda3c50f60c554d03213e0d258f1bcd41e78646e7
+  mime: application/x-osm+pbf
+  root: osm-pbf
+  shape: reference-archive
+  note: "an OSM PBF file of one OSMHeader blob — a stub by design (gen/odds.ts)"
+  source: synthetic
+
+- file: bracket.FCStd
+  blake3: 0384bb7ee10f7ee24fe100ff7fb5e47bb393982ed186b18d32d22a132f10288b
+  mime: application/x-extension-fcstd
+  root: fcstd
+  shape: cad-document
+  note: "a FreeCAD document — a zip of Document.xml and GuiDocument.xml with one box (gen/odds.ts)"
+  source: synthetic
+
+- file: notes.txt.gz
+  blake3: 30522edc7d940611e83a36c976dd5e88dc7267376b948a94e2c0772b2b770052
+  mime: application/gzip
+  root: gzip
+  shape: compressed-text
+  note: "a gzip of a short text; stands for the tgz wrapper of a Takeout delivery (gen/odds.ts)"
+  source: synthetic
+

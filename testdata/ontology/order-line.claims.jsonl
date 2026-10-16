@@ -1,0 +1,2 @@
+{"subject":"order-line","predicate":"refines","value":"unit"}
+{"subject":"order-line","predicate":"reads","value":"text"}

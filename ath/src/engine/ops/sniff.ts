@@ -48,8 +48,8 @@ function zipKind(b: Uint8Array): string {
     if (names.some((n) => n.startsWith("xl/"))) return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
     if (names.some((n) => n.startsWith("word/"))) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
     if (names.some((n) => n.startsWith("ppt/"))) return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
-    if (names.includes("Document.xml") && names.includes("GuiDocument.xml")) return "application/x-extension-fcstd";
   }
+  if (names.includes("Document.xml") && names.includes("GuiDocument.xml")) return "application/x-extension-fcstd";
   return "application/zip";
 }
 
@@ -108,6 +108,17 @@ export function sniffMime(bytes: Uint8Array, name = ""): string {
   if (starts([0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c])) return "application/x-7z-compressed";
   if (starts([0x4d, 0x5a])) return "application/x-msdownload";
   if (starts([0x7f, 0x45, 0x4c, 0x46])) return "application/x-executable";
+  if (starts([0x5a, 0x49, 0x4d, 0x04])) return "application/x-openzim";
+  if (
+    b.length > 12 &&
+    b[0] === 0 &&
+    b[1] === 0 &&
+    b[2] === 0 &&
+    b[3]! > 0 &&
+    b[3]! < 64 &&
+    text(b.subarray(4, 4 + b[3]!), 64).includes("OSMHeader")
+  )
+    return "application/x-osm+pbf";
   if (starts([0x4f, 0x67, 0x67, 0x53])) return text(b.subarray(0, 512), 512).includes("OpusHead") ? "audio/opus" : "application/ogg";
   if (starts([0x49, 0x44, 0x33]) || (b[0] === 0xff && (b[1]! & 0xf6) === 0xf2)) return "audio/mpeg";
   if (b[0] === 0xff && (b[1]! & 0xf6) === 0xf0) return "audio/aac";

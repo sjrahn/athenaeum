@@ -1,0 +1,10 @@
+{"subject":"product-page","predicate":"refines","value":"web-page"}
+{"subject":"product-page","predicate":"matches","value":{"mime":"text/html","selector":"[itemtype=\"https://schema.org/Product\"]"}}
+{"subject":"product-page","predicate":"select","value":{"selector":"[itemprop=\"name\"]","term":"heading","level":0}}
+{"subject":"product-page","predicate":"select","value":{"selector":"[itemprop=\"price\"]","term":"price","field":"amount","attr":"content"}}
+{"subject":"product-page","predicate":"select","value":{"selector":"[itemprop=\"sku\"]","term":"sku"}}
+{"subject":"product-page","predicate":"select","value":{"selector":"[itemprop=\"description\"] > p","term":"paragraph"}}
+{"subject":"product-page","predicate":"select","value":{"selector":"table.specs tr","term":"spec-row"}}
+{"subject":"product-page","predicate":"select","value":{"selector":".review","term":"review"}}
+{"subject":"product-page","predicate":"select","value":{"selector":".gallery img","term":"figure","field":"alt","attr":"alt"}}
+{"subject":"product-page","predicate":"chrome","value":[".site-header",".site-footer","script"]}

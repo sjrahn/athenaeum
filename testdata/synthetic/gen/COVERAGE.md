@@ -15,7 +15,7 @@ test once the derivation lands.
 | forum thread capture (XenForo) | web | text/html | 800 | c | harbourboard-thread.html | thread.ts | done |
 | iMessage conversation page (imessage-exporter, attachments inlined) | imessage-export | text/html | 5,900 | c | quay-messages.html (+ .capture.yaml) | conversation-page.ts | done |
 | service-manual page (procedures, data tables, figures) | web | text/html | 7,000 | c | pump-service-manual.html | manual-page.ts | done |
-| product / order / listing / article page captures | web | text/html | 600 | c | — | — | planned (one generator, a page kind per call) |
+| product / order / listing / article page captures | web | text/html | 600 | c | harbour-article.html, rope-product.html, order-detail.html, cottage-listing.html | pages.ts | done (four roots told by their markup) |
 | Meta conversation (`message_N.json`, photos/ gifs/ videos/ audio/) | facebook-, instagram-, threads-conversation | application/json | 2,900 | a (+b via bundle) | facebook-/instagram-/threads-thread.json; inside the month bundles | bundles.ts | done (classified by container and name; tree is a later ruling) |
 | Google Chat conversation (`messages.json` + `group_info.json`) | google-chat-conversation | application/json | 1,200 | a | chat-space.json; inside chat-month-bundle.zip | bundles.ts | done |
 | Discord channel export (DCE json) | discord-conversation | application/json | 70 | a | (inside quay-chat-export.zip) | chat-export.ts | done |
@@ -35,7 +35,7 @@ test once the derivation lands.
 | Facebook profile harvest (our layout, per person / per year) | facebook-profile-export, -year | application/zip | 2 | b | profile-year.zip | bundles2.ts | done |
 | Google Chat export bundle (month slice) | google-chat-export-bundle | application/zip | 160 | b | chat-month-bundle.zip | bundles.ts | done |
 | iMessage export bundle (period of conversation pages) | imessage-export-bundle | application/zip | 180 | b | messages-week-bundle.zip | bundles.ts | done |
-| Google Takeout slice (`Takeout/<Service>/…`: fit tcx, contacts, maps, keep html+json, calendar ics) | google-takeout | application/zip (tgz in the wild) | 6 | b | takeout-slice.zip | bundles2.ts | done (zip; the tgz wrapper is a later ruling) |
+| Google Takeout slice (`Takeout/<Service>/…`: fit tcx, contacts, maps, keep html+json, calendar ics) | google-takeout | application/zip (tgz in the wild) | 6 | b | takeout-slice.zip; notes.txt.gz for the gzip wrapper | bundles2.ts, odds.ts | done (a tar reader is a later ruling) |
 | Google Drive download job | google-drive-export | application/zip | 2 | b | drive-folder.zip | bundles2.ts | done (classifies as zip: a flat folder has no layout to be told by) |
 | photo-library period batch (originals, sidecar JSON, edited renders, videos) | osxphotos-export | application/zip | 76 | b | photos-month-bundle.zip | bundles.ts | done |
 | camera SD-card dump (ARW + HIF pairs, MP4 with XML sidecars) | camera-sd-dump | application/zip | — | b | card-dump.zip | bundles2.ts | done |
@@ -67,9 +67,9 @@ test once the derivation lands.
 | video clip, multi-track | web, osxphotos | video/mp4, video/quicktime, video/3gpp | 500 | a | countdown.mp4, harbour-clip.mov, phone-clip.3gp | plain.ts, media.ts | done |
 | raw elementary streams | web | video/hevc, video/h264, video/av1 | 80 | a | stream.h264, stream.h265, stream.ivf | media.ts | done (told by NAL headers and the IVF signature) |
 | audio | web, members | audio/opus, aac, mpeg, mp4 | 15 (+ members) | a | synthetic-audio.m4a, tone.opus, tone.aac, tone.mp3 | message-audio-heic.py, media.ts | done |
-| reference archives | kiwix, geofabrik | application/x-openzim, application/x-osm+pbf | 48 | a | — | — | planned (minimal valid headers, marked stub) |
+| reference archives | kiwix, geofabrik | application/x-openzim, application/x-osm+pbf | 48 | a | reference.zim, region.osm.pbf | odds.ts | done as signature stubs |
 | calendar, routes, tracks | google-takeout, apple-health | text/calendar, gpx, tcx | members | a | harbour-events.ics, walk.gpx; inside takeout-slice.zip and health-export.zip | documents.ts, bundles2.ts | done |
-| compressed and binary odds | vendor-download | rar, 7z, exe, FCStd, octet-stream | members | a | inside vendor-share.zip | bundles2.ts | rar, 7z, exe, ELF done as magic-only stubs; FCStd sniffed (a zip holding Document.xml + GuiDocument.xml), no twin |
+| compressed and binary odds | vendor-download | rar, 7z, exe, FCStd, octet-stream | members | a | inside vendor-share.zip | bundles2.ts | rar, 7z, exe, ELF done as magic-only stubs; bracket.FCStd (odds.ts) |
 
 Rules: a twin keeps the shape, never the content — fictional names, places, numbers; no hostname, institution or
 person from the owner's corpus appears in a tracked file. Each generator says in its header what it reproduces

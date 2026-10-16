@@ -586,6 +586,57 @@ describe("regression: loose documents with sidecars", () => {
   }
 });
 
+/** Generic page captures: four page kinds told by their markup, each a derived tree under its own root. */
+describe("regression: generic page captures (html, derived trees — generated twins of the web captures)", () => {
+  const pages: { file: string; blake3: string; root: string; scopes: number; remainder: string }[] = [
+    {
+      file: "harbour-article.html",
+      blake3: "95460875093fd57a8d64913a45afd50b035ab53de34a2c1c988faa096e18c3b3",
+      root: "article-page",
+      scopes: 21,
+      remainder: "11 of 3638",
+    },
+    {
+      file: "rope-product.html",
+      blake3: "d97e60d369370010642454bbb6abf2472697c76854e126db24c8a6529856ca95",
+      root: "product-page",
+      scopes: 18,
+      remainder: "56 of 1594",
+    },
+    {
+      file: "order-detail.html",
+      blake3: "9515b279f0de5ca3bbfe81e028f1234be064db4c9a7d86b08774b85c0a27cc6f",
+      root: "order-page",
+      scopes: 15,
+      remainder: "53 of 482",
+    },
+    {
+      file: "cottage-listing.html",
+      blake3: "7684234e970a2940ac15d0974c20cded566641eefa6c5bcd5dd2ac45b1e396cc",
+      root: "listing-page",
+      scopes: 22,
+      remainder: "51 of 1261",
+    },
+  ];
+  for (const p of pages) {
+    test(`${p.file}: ${p.root}, ${p.scopes} scopes`, async () => {
+      const f = foundation();
+      const chain = loadChain(f);
+      const o = loadOntology(chain);
+      const ing = await ingestFile(chain, join(SYN, p.file), { date: "2026-10-16" });
+      expect(ing.blake3).toBe(p.blake3);
+      expect((ing.capturedFrom!.value as { via: string }).via).toBe("capture"); // the banner
+      const a = await loadArtifact(chain, o, p.blake3);
+      expect(a.root).toBe(p.root);
+      expect(a.table.size).toBe(p.scopes);
+      expect(a.table.unreachable()).toEqual([]);
+      expect(a.table.find("heading")!.fields).toEqual({ level: 0 });
+      expect((await ath(["lint", "--all"], { cwd: f, env })).code).toBe(0);
+      expect((await ath(["export", "markdown", p.blake3], { cwd: f, env })).stdout).toContain(`remainder  ${p.remainder}`);
+    });
+  }
+});
+
 describe("regression: the regatta mailing (rfc822, derived tree — the generated twin of the festival mailing)", () => {
   test("header + body + blocks; the HTML alternative and three attachments are subjects; the message harvests", async () => {
     const f = foundation();

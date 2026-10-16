@@ -1,0 +1,3 @@
+{"subject":"price","predicate":"refines","value":"unit"}
+{"subject":"price","predicate":"reads","value":"text"}
+{"subject":"price","predicate":"field","value":{"name":"amount","kind":"string"}}

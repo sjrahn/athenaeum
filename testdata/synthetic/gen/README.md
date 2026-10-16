@@ -22,6 +22,8 @@ tier"). Run from the repo root.
 | `media.ts` | `scan.tiff`, `still.avif`, `favicon.ico` | ImageMagick 7 | no (encoder) |
 | `documents.ts` | `statement-2026-03.pdf`, `tax-slip-2025.pdf`, `policy-schedule.pdf`, `account-confirmation.pdf`, `chart-printout.pdf`, `design-export.pdf` (each with a `.capture.yaml`) | typst 0.15.1 | yes |
 | `documents.ts` | `regatta-roles.docx`, `owner-statement.md`, `contact-card.vcf`, `sms-2026-03.ndjson`, `location-history.json`, `tidewatch.css`, `tidewatch.ts`, `tidewatch.py`, `harbour-events.ics`, `walk.gpx` | the script itself | yes |
+| `pages.ts` | `harbour-article.html`, `rope-product.html`, `order-detail.html`, `cottage-listing.html` | the script itself | yes |
+| `odds.ts` | `reference.zim`, `region.osm.pbf`, `bracket.FCStd`, `notes.txt.gz` | the script itself (`lib/zip.ts`, node zlib) | yes |
 | `mailing.ts` | `regatta-mailing.eml` | the script itself (its xlsx attachment through `lib/zip.ts`; the jpeg and pdf are the committed `garden.jpg` and `till-receipt.pdf`) | yes, given those two files |
 | `novel.ts` | `lantern-novel.epub` | the script itself (`lib/zip.ts`, `lib/png.ts` for the images) | yes |
 | `chat-archive.ts` | `quay-chat.mbox` | the script itself | yes |

@@ -1,0 +1,3 @@
+{"subject":"osm-pbf","predicate":"refines","value":"binary"}
+{"subject":"osm-pbf","predicate":"matches","value":{"mime":"application/x-osm+pbf"}}
+{"subject":"osm-pbf","predicate":"definition","value":"an OpenStreetMap extract in PBF"}

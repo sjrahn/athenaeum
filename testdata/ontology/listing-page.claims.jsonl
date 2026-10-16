@@ -1,0 +1,9 @@
+{"subject":"listing-page","predicate":"refines","value":"web-page"}
+{"subject":"listing-page","predicate":"matches","value":{"mime":"text/html","selector":".listing[itemtype=\"https://schema.org/Residence\"]"}}
+{"subject":"listing-page","predicate":"select","value":{"selector":"h1.listing-title","term":"heading","level":0}}
+{"subject":"listing-page","predicate":"select","value":{"selector":".price .amount","term":"price"}}
+{"subject":"listing-page","predicate":"select","value":{"selector":"ul.facts li","term":"listing-fact"}}
+{"subject":"listing-page","predicate":"select","value":{"selector":".description > p","term":"paragraph"}}
+{"subject":"listing-page","predicate":"select","value":{"selector":".rooms li.room","term":"listing-fact"}}
+{"subject":"listing-page","predicate":"select","value":{"selector":".photos img","term":"figure","field":"alt","attr":"alt"}}
+{"subject":"listing-page","predicate":"chrome","value":[".site-header",".site-footer","script",".agent"]}
