@@ -7,6 +7,7 @@ import { loadArtifact } from "../src/engine/corpus/derive.ts";
 import { ingestFile } from "../src/engine/corpus/ingest.ts";
 import { loadChain } from "../src/engine/layer/config.ts";
 import { loadOntology } from "../src/engine/ontology/load.ts";
+import { readCentralDirectory } from "../src/engine/ops/zip/roster.ts";
 import { ath } from "./harness.ts";
 import { foundation, TESTDATA } from "./layers.ts";
 
@@ -22,6 +23,7 @@ const PASS = join(TESTDATA, "passes", "404d090fea45729f3e5933835fbd833ec7859595c
 const TWIN_PDF = join(TESTDATA, "synthetic", "procedure.pdf");
 const TWIN_ID = "5e6e497d934498fc49229ba8c594684114a1213426bc1ad0113718ae72794269";
 const TWIN_PASS = join(TESTDATA, "passes", `${TWIN_ID}.p1.jsonl`);
+const SYN = join(TESTDATA, "synthetic");
 const env = { ATH_ACTOR: "regression" };
 
 describe("regression: the XenForo thread (html, derived tree)", () => {
@@ -231,6 +233,208 @@ describe("regression: the calculation procedure (pdf, asserted tree — the gene
     expect(md.stdout).toContain("## 5. Calculation procedure");
     expect(md.stdout).toContain("\\tag*{Equation (2)}");
     expect(md.stdout).toContain("| Data / parameter: | $T_{a,y}$ |");
+  });
+});
+
+describe("regression: the forum thread (html, derived tree — the generated twin of the XenForo capture)", () => {
+  test("72 scopes by select; the banner is provenance; harvest, verify, lint, tree at, export", async () => {
+    const f = foundation();
+    const chain = loadChain(f);
+    const o = loadOntology(chain);
+    const ing = await ingestFile(chain, join(SYN, "harbourboard-thread.html"), { date: "2026-10-16" });
+    expect(ing.blake3).toBe("b83e99eefb2230f36622c9654bf857ed8555dbef352de20cc67d6f8e9009128c");
+    expect(ing.capturedFrom?.value).toMatchObject({
+      origin: "harbourboard.example",
+      uri: "https://www.harbourboard.example/threads/mooring-line-chafe.48213/",
+      via: "capture",
+      snapshot: "2026-08-15T23:40:36Z",
+      fidelity: "lean",
+    });
+    const a = await loadArtifact(chain, o, ing.blake3);
+    expect(a.root).toBe("xenforo-thread");
+    expect(a.table.size).toBe(72);
+    expect(a.table.unreachable()).toEqual([]);
+    const title = a.table.find("thread-title")!;
+    expect(title.at).toBe("bytes=4455,4537");
+    expect(title.readings[0]).toMatchObject({ body: "Mooring line chafe — ✓ sorted", rev: "derived:html.text@1" });
+    expect(a.table.findAll("post").map((p) => p.fields.position)).toEqual(["#1", "#2", "#3", "#4", "#5", "#6", "#7", "#8", "#9", "#10"]);
+    expect(a.table.findAll("timestamp").every((t) => t.readings[0]?.rev === "derived:html.attr@1 datetime")).toBe(true);
+    // XenForo carries a quote's source on the attribution link, not on the blockquote: the `quote` select matches nothing
+    expect(a.table.findAll("quote")).toEqual([]);
+    const h = await ath(["--json", "harvest", ing.blake3], { cwd: f, env });
+    expect((h.json() as { data: { concepts: number; claims: number; entries: number } }).data).toMatchObject({
+      concepts: 17,
+      claims: 68,
+      entries: 83,
+    });
+    const v = await ath(["--json", "verify", "--all"], { cwd: f, env });
+    expect(v.code).toBe(0);
+    const vd = (
+      v.json() as { data: { counts: { bound: number; entries: number; flagged: number; held: number; byStatus: Record<string, number> } } }
+    ).data;
+    expect(vd.counts).toMatchObject({ entries: 83, bound: 83, flagged: 0, held: 0, byStatus: { confirmed: 58, provisional: 10 } });
+    expect((await ath(["lint", "--all"], { cwd: f, env })).code).toBe(0);
+    expect((await ath(["tree", "at", ing.blake3, "post=4"], { cwd: f, env })).stdout.trim()).toBe("bytes=9216,10770  (post)");
+    const md = await ath(["export", "markdown", ing.blake3], { cwd: f, env });
+    expect(md.stdout).toContain("remainder  22 of 6376");
+    expect(md.stdout).toContain("<!-- bytes=4455,4537 -->\n# Mooring line chafe");
+  });
+});
+
+describe("regression: the regatta mailing (rfc822, derived tree — the generated twin of the festival mailing)", () => {
+  test("header + body + blocks; the HTML alternative and three attachments are subjects; the message harvests", async () => {
+    const f = foundation();
+    const chain = loadChain(f);
+    const o = loadOntology(chain);
+    const ing = await ingestFile(chain, join(SYN, "regatta-mailing.eml"), {
+      date: "2026-10-16",
+      provenance: { origin: "gmail", via: "export" },
+    });
+    expect(ing.blake3).toBe("6cdfa47f2509ead14a3818eac7b16c6e20800f6fe5b1e6c93c188e0b72562dfc");
+    expect(ing.mime).toBe("message/rfc822");
+    expect(ing.attests.value).toMatchObject({
+      content_type: "multipart/mixed",
+      date_iso: "2026-04-22T03:33:28Z",
+      subject: "Port Ellen Regatta 2026 — volunteer schedule, poster and roles",
+    });
+    expect((ing.attests.value as { parts: unknown[] }).parts.length).toBe(6);
+    expect(ing.members.map((m) => m.mime)).toEqual([
+      "text/html",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      "image/jpeg",
+      "application/pdf",
+    ]);
+    expect((ing.attests.value as { members: { filename?: string }[] }).members.map((m) => m.filename ?? null)).toEqual([
+      null,
+      "2026 Regatta Schedule.xlsx",
+      "Regatta-Volunteer-Poster.jpg",
+      "Regatta Roles 2026.pdf",
+    ]);
+    const a = await loadArtifact(chain, o, ing.blake3);
+    expect(a.root).toBe("rfc822");
+    expect(a.table.walk().map((s) => s.terms.join("+"))).toEqual([
+      "rfc822",
+      "message-header",
+      "message-body",
+      ...Array(6).fill("paragraph"),
+      "signature",
+    ]);
+    expect(a.table.find("message-body")!.fields).toEqual({ part: "1.1", encoding: "quoted-printable", charset: "UTF-8" });
+    for (const m of ing.members) {
+      const ma = await loadArtifact(chain, o, m.blake3);
+      expect(ma.root, m.mime).toBe({ "text/html": "html", "image/jpeg": "jpeg", "application/pdf": "pdf" }[m.mime] ?? "xlsx");
+    }
+    const h = await ath(["--json", "harvest", ing.blake3], { cwd: f, env });
+    expect((h.json() as { data: { concepts: number; claims: number } }).data).toMatchObject({ concepts: 1, claims: 4 });
+    const v = await ath(["--json", "verify", "--all"], { cwd: f, env });
+    const vd = (v.json() as { data: { counts: { bound: number; entries: number; flagged: number } } }).data;
+    expect(vd.counts).toMatchObject({ entries: 4, bound: 4, flagged: 0 });
+    expect((await ath(["lint", "--all"], { cwd: f, env })).code).toBe(0);
+    expect((await ath(["tree", "at", ing.blake3, "1/0"], { cwd: f, env })).stdout).toContain("(paragraph)");
+  });
+});
+
+describe("regression: the lantern novel (epub, container with a spine — the generated twin of the novel)", () => {
+  test("52 members, 25 spine items in order; a chapter classifies by its package and derives; the publication harvests", async () => {
+    const f = foundation();
+    const chain = loadChain(f);
+    const o = loadOntology(chain);
+    const ing = await ingestFile(chain, join(SYN, "lantern-novel.epub"), {
+      date: "2026-10-16",
+      provenance: { origin: "synthetic", via: "upload" },
+    });
+    expect(ing.blake3).toBe("a04764fbe6acb210160ea018f07f3b3e5bdf48a6f3e06c96f60116d54ee9c673");
+    expect(ing.mime).toBe("application/epub+zip");
+    expect(ing.members.length).toBe(52);
+    expect(ing.attests.value).toMatchObject({
+      title: "The Lantern Room",
+      creator: "Ida Thorn",
+      language: "en",
+      isbn: "9780000000019",
+      opf: "content.opf",
+    });
+    const a = await loadArtifact(chain, o, ing.blake3);
+    expect(a.root).toBe("epub");
+    const walk = a.table.walk();
+    expect(walk.length).toBe(26);
+    expect(walk[1]!.at).toBe("path=text%2Ftitlepage.xhtml");
+    expect(walk.slice(1).every((s) => s.terms[0] === "spine-item")).toBe(true);
+    const ch = ing.members.find((m) => (m.capturedFrom!.value as { path: string }).path === "text/part0005.html")!;
+    const ca = await loadArtifact(chain, o, ch.blake3);
+    expect(ca.root).toBe("epub-chapter");
+    expect(ca.table.findAll("paragraph").length).toBe(606);
+    expect(ca.table.findAll("quote").length).toBe(6);
+    expect(ca.table.findAll("paragraph").every((p) => p.readings[0]?.rev === "derived:html.text@1")).toBe(true);
+    const h = await ath(["--json", "harvest", ing.blake3], { cwd: f, env });
+    expect((h.json() as { data: { concepts: number; claims: number } }).data).toMatchObject({ concepts: 1, claims: 5 });
+    const v = await ath(["--json", "verify", "--all"], { cwd: f, env });
+    const vd = (v.json() as { data: { counts: { bound: number; entries: number; flagged: number } } }).data;
+    expect(vd.counts).toMatchObject({ entries: 5, bound: 5, flagged: 0 });
+    expect((await ath(["lint", "--all"], { cwd: f, env })).code).toBe(0);
+  });
+});
+
+describe("regression: the quay chat archive (mbox, container of messages — the generated twin of the mailbox slice)", () => {
+  test("358 messages are subjects, every one a message; alternatives are members; nothing lands on the mailbox", async () => {
+    const f = foundation();
+    const chain = loadChain(f);
+    const o = loadOntology(chain);
+    const ing = await ingestFile(chain, join(SYN, "quay-chat.mbox"), {
+      date: "2026-10-16",
+      provenance: { origin: "google-takeout", via: "export" },
+    });
+    expect(ing.blake3).toBe("489636cafe2eeb8e2e639189383e291c8f8404e097799af6824467485265c4a3");
+    expect(ing.mime).toBe("application/mbox");
+    expect(ing.members.length).toBe(358);
+    expect(ing.members.every((m) => m.mime === "message/rfc822")).toBe(true);
+    const a = await loadArtifact(chain, o, ing.blake3);
+    expect(a.root).toBe("mbox");
+    expect(a.table.size).toBe(1);
+    let bodies = 0;
+    let htmlAlternatives = 0;
+    let stuffed = 0;
+    for (const m of ing.members) {
+      const ma = await loadArtifact(chain, o, m.blake3);
+      expect(ma.root).toBe("rfc822");
+      const body = ma.table.find("message-body");
+      if (body) {
+        bodies++;
+        if (String(body.readings[0]?.body).includes("\nFrom the quay")) stuffed++; // un-stuffed on the way out
+      }
+      const roster = (ma.attests.value as { members?: { mime: string }[] }).members ?? [];
+      if (roster.some((r) => r.mime === "text/html")) htmlAlternatives++;
+    }
+    expect(bodies).toBe(2);
+    expect(stuffed).toBe(2);
+    expect(htmlAlternatives).toBe(358);
+    expect(readdirSync(join(f, "corpus")).filter((n) => n.endsWith(".claims.jsonl")).length).toBe(1 + 358);
+    expect((await ath(["lint", "--all"], { cwd: f, env })).code).toBe(0);
+  });
+});
+
+describe("regression: the quay chat export (zip, container — the generated twin of the Discord export)", () => {
+  test("members are subjects; the JSON and the SVG are zstd (method 93), the PNGs stored; a route canonicalises to the member", async () => {
+    const f = foundation();
+    const chain = loadChain(f);
+    const o = loadOntology(chain);
+    const bytes = new Uint8Array(await Bun.file(join(SYN, "quay-chat-export.zip")).arrayBuffer());
+    expect(readCentralDirectory(bytes).map((e) => e.method)).toEqual([93, 0, 0, 0, 0, 0, 0, 0, 93]);
+    const ing = await ingestFile(chain, join(SYN, "quay-chat-export.zip"), {
+      date: "2026-10-16",
+      provenance: { origin: "discord", via: "export" },
+    });
+    expect(ing.blake3).toBe("0cc4bf7d6def2f15484b2d14ddafdeb9e13a1a4b2b1a7d2e9b5398a962feda03");
+    expect(ing.mime).toBe("application/zip");
+    expect(ing.members.length).toBe(9);
+    expect(ing.members.map((m) => m.mime).sort()).toEqual(["application/json", ...Array(7).fill("image/png"), "image/svg+xml"].sort());
+    const a = await loadArtifact(chain, o, ing.blake3);
+    expect(a.root).toBe("zip");
+    const png = ing.members.find((m) => m.mime === "image/png")!;
+    const pa = await loadArtifact(chain, o, png.blake3);
+    expect(pa.root).toBe("png");
+    expect(pa.tree).toBe("asserted");
+    expect((pa.capturedFrom!.value as { container: string }).container).toBe(`corpus://${ing.blake3}`);
+    expect((await ath(["lint", "--all"], { cwd: f, env })).code).toBe(0);
   });
 });
 

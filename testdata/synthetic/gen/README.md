@@ -10,8 +10,16 @@ tier"). Run from the repo root.
 | `plain.ts` | `window.png`, `garden.jpg` | ImageMagick 7 (`magick`), `-strip`; the Exif APP1 of the JPEG is written by the script | no (encoder) |
 | `plain.ts` | `countdown.mp4` | ffmpeg (libx264 + aac) | no (encoder, muxer timestamps) |
 | `plain.ts` | `till-receipt.typ`, `till-receipt.pdf` | typst 0.15.1 | yes |
+| `thread.ts` | `harbourboard-thread.html` | the script itself | yes |
+| `mailing.ts` | `regatta-mailing.eml` | the script itself (its xlsx attachment through `lib/zip.ts`; the jpeg and pdf are the committed `garden.jpg` and `till-receipt.pdf`) | yes, given those two files |
+| `novel.ts` | `lantern-novel.epub` | the script itself (`lib/zip.ts`, `lib/png.ts` for the images) | yes |
+| `chat-archive.ts` | `quay-chat.mbox` | the script itself | yes |
+| `chat-export.ts` | `quay-chat-export.zip` | the script itself (`lib/zip.ts` with zstd, `lib/png.ts`) | yes |
 | `message-audio-heic.py` | `synthetic-message.eml`, `synthetic-audio.m4a`, `synthetic-image.heic` | stdlib; ffmpeg n9.0.1; libheif 1.23.1 `heif-enc` | eml yes; m4a, heic no |
 | by hand | `amazon-twin.csv`, `sign.jpg`, `synthetic-image.{gif,webp,svg}`, `synthetic-lines.ndjson` | ImageMagick for gif/webp | — |
+
+`lib/` holds what the twins share: a deterministic zip writer (store, deflate, zstd; fixed DOS stamps), a minimal
+PNG encoder, and a seeded generator with a word well for fabricated prose.
 
 A twin keeps the *shape* of its private counterpart (the manifest's `shape` and `note`), never its content:
 fictional names, places and numbers only, nothing copied from a real export.

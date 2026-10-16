@@ -39,7 +39,9 @@ committed beside it, and the script that generates it is kept under `synthetic/g
 test suite always runs; the private bytes, when placed, run the same leg over the real thing. `gen/plain.ts`
 makes the twins whose test is classify + attest + lint (the readme, the script, the address book and cards,
 the exchange file, the media manifest, the screenshot, the photograph with its Exif orientation, the clip,
-the receipt). `gen/procedure.ts` is the twin of the TOOL03 PDF: one content model drives both the typst source
+the receipt). `gen/thread.ts`, `gen/mailing.ts`, `gen/novel.ts`, `gen/chat-archive.ts` and `gen/chat-export.ts`
+make the full-shape twins of the thread capture, the mailing, the novel, the mailbox slice and the chat export,
+each with a regression leg of its own and frozen counts. `gen/procedure.ts` is the twin of the TOOL03 PDF: one content model drives both the typst source
 (`procedure.typ`, rendered to `procedure.pdf` with typst 0.15.1 and its bundled fonts; `set document(date:
 none)` makes the render byte-identical across runs) and the pass lines (`passes/<blake3>.p1.jsonl`), whose
 boxes are read back off the rendered PDF through `pdf.words@1`. Re-rendering is re-running the script; the

@@ -49,6 +49,14 @@
   note: XenForo thread capture with the v52 banner; 72 scopes by select (Appendix B)
   source: regression
 
+- file: harbourboard-thread.html
+  blake3: b83e99eefb2230f36622c9654bf857ed8555dbef352de20cc67d6f8e9009128c
+  mime: text/html
+  root: xenforo-thread
+  shape: html-capture
+  note: the twin of the thread capture — the v52 banner, html#XF[data-template=thread_view], ten posts with XenForo's attribution, time and quote markup, declared chrome, a script and style blob (gen/thread.ts); 72 scopes by select
+  source: synthetic
+
 - file: gocf-2026-wpg.eml
   blake3: 36c1188d271552f814612c517fbec5da425a42883d63a87fd4116675530adbfe
   mime: message/rfc822
@@ -56,6 +64,14 @@
   shape: message-with-attachments
   note: multipart/mixed over multipart/alternative; quoted-printable body with a sigdash; xlsx, jpeg and pdf attachments as members
   source: regression
+
+- file: regatta-mailing.eml
+  blake3: 6cdfa47f2509ead14a3818eac7b16c6e20800f6fe5b1e6c93c188e0b72562dfc
+  mime: message/rfc822
+  root: rfc822
+  shape: message-with-attachments
+  note: the twin of the mailing — multipart/mixed over multipart/alternative, a quoted-printable body with a sigdash, an HTML alternative, xlsx (a minimal OOXML workbook), jpeg and pdf attachments as members (gen/mailing.ts)
+  source: synthetic
 
 - file: synthetic-message.eml
   blake3: b8ed8b5a6f2c8d4a43bc4c72decf59ef7978ae5e1772fd8659c5bc2cd0c0720f
@@ -197,6 +213,14 @@
   note: a chat export; 9 members (json, png, svg) written with zstd (method 93)
   source: regression
 
+- file: quay-chat-export.zip
+  blake3: 0cc4bf7d6def2f15484b2d14ddafdeb9e13a1a4b2b1a7d2e9b5398a962feda03
+  mime: application/zip
+  root: zip
+  shape: zip-zstd-members
+  note: the twin of the chat export — the exporter's layout, 9 members (json and svg written with zstd, method 93; seven PNGs stored) (gen/chat-export.ts)
+  source: synthetic
+
 - file: novel.epub
   blake3: b8ded2e04ee9a11c3d401e8d39e64497426772f480cbde765abeb917a4732fee
   mime: application/epub+zip
@@ -205,6 +229,14 @@
   note: EPUB 2 package (calibre); 52 members, 25 spine items; chapters classify by container
   source: regression
 
+- file: lantern-novel.epub
+  blake3: a04764fbe6acb210160ea018f07f3b3e5bdf48a6f3e06c96f60116d54ee9c673
+  mime: application/epub+zip
+  root: epub
+  shape: epub
+  note: the twin of the novel — an EPUB 2 package in calibre's layout with Dublin Core and an ISBN; 52 members, 25 spine items, one chapter of 600 paragraphs (gen/novel.ts)
+  source: synthetic
+
 - file: gmail-slice.mbox
   blake3: 7755d697e7ab330535d4c3555ecae4334176f6353758fce6404adc62546d5116
   mime: application/mbox
@@ -212,6 +244,14 @@
   shape: mbox
   note: mboxrd, 358 messages, google-takeout/gmail export slice; every message a subject
   source: regression
+
+- file: quay-chat.mbox
+  blake3: 489636cafe2eeb8e2e639189383e291c8f8404e097799af6824467485265c4a3
+  mime: application/mbox
+  root: mbox
+  shape: mbox
+  note: the twin of the mailbox slice — mboxrd, 358 messages as text/xml + text/html alternatives, two with a text/plain body carrying stuffed From lines (gen/chat-archive.ts)
+  source: synthetic
 
 # ── lossy: images and media ───────────────────────────────────────────────────────────────────────
 
