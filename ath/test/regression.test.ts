@@ -8,6 +8,7 @@ import { ingestFile } from "../src/engine/corpus/ingest.ts";
 import { loadChain } from "../src/engine/layer/config.ts";
 import { loadOntology } from "../src/engine/ontology/load.ts";
 import { readCentralDirectory } from "../src/engine/ops/zip/roster.ts";
+import { readJsonl } from "../src/lib/jsonl.ts";
 import { ath } from "./harness.ts";
 import { foundation, TESTDATA } from "./layers.ts";
 
@@ -25,71 +26,78 @@ const SYN = join(TESTDATA, "synthetic");
 const env = { ATH_ACTOR: "regression" };
 
 describe("regression: the XenForo thread (html, derived tree)", () => {
-  test.skipIf(!existsSync(HTML))("72 scopes by select; 31 derived bodies byte-for-byte; harvest; verify; lint; export", async () => {
-    const f = foundation();
-    const chain = loadChain(f);
-    const o = loadOntology(chain);
-    const ing = await ingestFile(chain, HTML, { date: "2026-10-13" });
-    expect(ing.blake3).toBe("dd0a78441fe3ae117f520809a759dac6cba0fbf52737bb2baf1cd19e1d695299");
-    expect(ing.capturedFrom?.value).toMatchObject({
-      origin: "g8board.com",
-      uri: "https://www.g8board.com/threads/idle-stall.292301/",
-      via: "capture",
-      snapshot: "2026-08-15T23:40:36Z",
-      fidelity: "lean",
-    });
-    const a = await loadArtifact(chain, o, ing.blake3);
-    expect(a.root).toBe("xenforo-thread");
-    expect(a.table.size).toBe(72);
-    expect(a.table.unreachable()).toEqual([]);
-    // 31 derived bodies byte-for-byte: 21 under html.text@1, the 10 timestamps under html.attr@1 datetime, the op
-    // each term's chain names (D-derivation)
-    const fixture = (await Bun.file(join(import.meta.dir, "fixtures", "g8board-html-text.json")).json()) as {
-      at: string;
-      term: string;
-      body: string;
-      rev?: string;
-    }[];
-    expect(fixture.length).toBe(31);
-    for (const fx of fixture) {
-      const s = a.table.get(fx.at);
-      expect(s, fx.at).toBeDefined();
-      expect(s!.readings[0]?.body, `${fx.term} at ${fx.at}`).toBe(fx.body);
-      expect(s!.readings[0]?.rev, `${fx.term} at ${fx.at}`).toBe(fx.rev ?? "derived:html.text@1");
-    }
-    expect(a.table.findAll("post").map((p) => p.fields.position)).toEqual(["#1", "#2", "#3", "#4", "#5", "#6", "#7", "#8", "#9", "#10"]);
-    const h = await ath(["--json", "harvest", ing.blake3], { cwd: f, env });
-    expect((h.json() as { data: { concepts: number; claims: number; entries: number } }).data).toMatchObject({
-      concepts: 16,
-      claims: 65,
-      entries: 83,
-    });
-    const v = await ath(["--json", "verify", "--all"], { cwd: f, env });
-    expect(v.code).toBe(0);
-    const vd = (
-      v.json() as {
-        data: {
-          counts: {
-            concepts: number;
-            claims: number;
-            entries: number;
-            bound: number;
-            flagged: number;
-            held: number;
-            byStatus: Record<string, number>;
-          };
-        };
+  test.skipIf(!existsSync(HTML))(
+    "76 scopes by select; 31 derived bodies byte-for-byte; quotes link posts; harvest; verify; lint; export",
+    async () => {
+      const f = foundation();
+      const chain = loadChain(f);
+      const o = loadOntology(chain);
+      const ing = await ingestFile(chain, HTML, { date: "2026-10-13" });
+      expect(ing.blake3).toBe("dd0a78441fe3ae117f520809a759dac6cba0fbf52737bb2baf1cd19e1d695299");
+      expect(ing.capturedFrom?.value).toMatchObject({
+        origin: "g8board.com",
+        uri: "https://www.g8board.com/threads/idle-stall.292301/",
+        via: "capture",
+        snapshot: "2026-08-15T23:40:36Z",
+        fidelity: "lean",
+      });
+      const a = await loadArtifact(chain, o, ing.blake3);
+      expect(a.root).toBe("xenforo-thread");
+      expect(a.table.size).toBe(76);
+      // a quote is told by XenForo's markup and its attribution names the quoted post (D-attr-pattern)
+      expect(a.table.findAll("quote-source").map((q) => q.fields.target)).toEqual(["post-3758898", "post-3758911"]);
+      expect(a.table.unreachable()).toEqual([]);
+      // 31 derived bodies byte-for-byte: 21 under html.text@1, the 10 timestamps under html.attr@1 datetime, the op
+      // each term's chain names (D-derivation)
+      const fixture = (await Bun.file(join(import.meta.dir, "fixtures", "g8board-html-text.json")).json()) as {
+        at: string;
+        term: string;
+        body: string;
+        rev?: string;
+      }[];
+      expect(fixture.length).toBe(31);
+      for (const fx of fixture) {
+        const s = a.table.get(fx.at);
+        expect(s, fx.at).toBeDefined();
+        expect(s!.readings[0]?.body, `${fx.term} at ${fx.at}`).toBe(fx.body);
+        expect(s!.readings[0]?.rev, `${fx.term} at ${fx.at}`).toBe(fx.rev ?? "derived:html.text@1");
       }
-    ).data;
-    expect(vd.counts).toMatchObject({ concepts: 16, claims: 65, entries: 83, bound: 83, flagged: 0, held: 0 });
-    expect(vd.counts.byStatus.confirmed).toBe(57);
-    expect((await ath(["lint", "--all"], { cwd: f, env })).code).toBe(0);
-    const at = await ath(["tree", "at", ing.blake3, "post=4"], { cwd: f, env });
-    expect(at.stdout.trim()).toBe("bytes=575696,587501  (post)");
-    const md = await ath(["export", "markdown", ing.blake3], { cwd: f, env });
-    expect(md.stdout).toContain("remainder  1309 of 6866");
-    expect(md.stdout).toContain("<!-- bytes=518950,518985 -->\n# Idle/stall");
-  });
+      expect(a.table.findAll("post").map((p) => p.fields.position)).toEqual(["#1", "#2", "#3", "#4", "#5", "#6", "#7", "#8", "#9", "#10"]);
+      const h = await ath(["--json", "harvest", ing.blake3], { cwd: f, env });
+      expect((h.json() as { data: { concepts: number; claims: number; entries: number } }).data).toMatchObject({
+        concepts: 16,
+        claims: 67,
+        entries: 85,
+      });
+      const v = await ath(["--json", "verify", "--all"], { cwd: f, env });
+      expect(v.code).toBe(0);
+      const vd = (
+        v.json() as {
+          data: {
+            counts: {
+              concepts: number;
+              claims: number;
+              entries: number;
+              bound: number;
+              flagged: number;
+              held: number;
+              byStatus: Record<string, number>;
+            };
+          };
+        }
+      ).data;
+      expect(vd.counts).toMatchObject({ concepts: 16, claims: 67, entries: 85, bound: 85, flagged: 0, held: 0 });
+      const quoting = readJsonl(join(f, "ledger", "g8board-post-3758899.claims.jsonl")).find((l) => l.predicate === "quotes")!;
+      expect(quoting.object).toBe("g8board-post-3758898");
+      expect(vd.counts.byStatus.confirmed).toBe(57);
+      expect((await ath(["lint", "--all"], { cwd: f, env })).code).toBe(0);
+      const at = await ath(["tree", "at", ing.blake3, "post=4"], { cwd: f, env });
+      expect(at.stdout.trim()).toBe("bytes=575696,587501  (post)");
+      const md = await ath(["export", "markdown", ing.blake3], { cwd: f, env });
+      expect(md.stdout).toContain("remainder  1309 of 6866");
+      expect(md.stdout).toContain("<!-- bytes=518950,518985 -->\n# Idle/stall");
+    },
+  );
 });
 
 describe("regression: the Amazon order history (csv, derived tree)", () => {
@@ -185,7 +193,7 @@ describe("regression: the calculation procedure (pdf, asserted tree — generate
 });
 
 describe("regression: the forum thread (html, derived tree — the generated twin of the XenForo capture)", () => {
-  test("72 scopes by select; the banner is provenance; harvest, verify, lint, tree at, export", async () => {
+  test("76 scopes by select; the banner is provenance; quotes link posts; harvest, verify, lint, tree at, export", async () => {
     const f = foundation();
     const chain = loadChain(f);
     const o = loadOntology(chain);
@@ -200,27 +208,31 @@ describe("regression: the forum thread (html, derived tree — the generated twi
     });
     const a = await loadArtifact(chain, o, ing.blake3);
     expect(a.root).toBe("xenforo-thread");
-    expect(a.table.size).toBe(72);
+    expect(a.table.size).toBe(76);
     expect(a.table.unreachable()).toEqual([]);
     const title = a.table.find("thread-title")!;
     expect(title.at).toBe("bytes=4455,4537");
     expect(title.readings[0]).toMatchObject({ body: "Mooring line chafe — ✓ sorted", rev: "derived:html.text@1" });
     expect(a.table.findAll("post").map((p) => p.fields.position)).toEqual(["#1", "#2", "#3", "#4", "#5", "#6", "#7", "#8", "#9", "#10"]);
     expect(a.table.findAll("timestamp").every((t) => t.readings[0]?.rev === "derived:html.attr@1 datetime")).toBe(true);
-    // XenForo carries a quote's source on the attribution link, not on the blockquote: the `quote` select matches nothing
-    expect(a.table.findAll("quote")).toEqual([]);
+    // XenForo carries a quote's source on the attribution link inside the blockquote: the quote-source's target names the quoted post
+    expect(a.table.findAll("quote").length).toBe(2);
+    expect(a.table.findAll("quote-source").map((q) => q.fields.target)).toEqual(["post-482133", "post-482136"]);
     const h = await ath(["--json", "harvest", ing.blake3], { cwd: f, env });
     expect((h.json() as { data: { concepts: number; claims: number; entries: number } }).data).toMatchObject({
       concepts: 17,
-      claims: 68,
-      entries: 83,
+      claims: 70,
+      entries: 85,
     });
     const v = await ath(["--json", "verify", "--all"], { cwd: f, env });
     expect(v.code).toBe(0);
     const vd = (
       v.json() as { data: { counts: { bound: number; entries: number; flagged: number; held: number; byStatus: Record<string, number> } } }
     ).data;
-    expect(vd.counts).toMatchObject({ entries: 83, bound: 83, flagged: 0, held: 0, byStatus: { confirmed: 58, provisional: 10 } });
+    expect(vd.counts).toMatchObject({ entries: 85, bound: 85, flagged: 0, held: 0, byStatus: { confirmed: 58, provisional: 12 } });
+    const quoting = readJsonl(join(f, "ledger", "g8board-post-482135.claims.jsonl")).find((l) => l.predicate === "quotes")!;
+    expect(quoting).toMatchObject({ object: "g8board-post-482133", qualifiers: { as: "post-482133" } });
+    expect((quoting.evidence as { reading: string }[])[0]!.reading).toBe("line:manifests target");
     expect((await ath(["lint", "--all"], { cwd: f, env })).code).toBe(0);
     expect((await ath(["tree", "at", ing.blake3, "post=4"], { cwd: f, env })).stdout.trim()).toBe("bytes=9216,10770  (post)");
     const md = await ath(["export", "markdown", ing.blake3], { cwd: f, env });

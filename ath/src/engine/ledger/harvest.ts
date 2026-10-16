@@ -303,7 +303,9 @@ export function harvestArtifact(
         if (any) continue;
       }
       let r = resolveRef(a, m.scope, ref, minted);
-      if (!r && m.scope.parent) {
+      // a sibling may carry the value (a member's title beside its name), so the parent is asked too — but never
+      // `whole`: a term found anywhere in the artifact is not this concept's evidence
+      if (!r && m.scope.parent && m.scope.parent !== "whole") {
         const parent = a.table.get(m.scope.parent);
         if (parent) r = resolveRef(a, parent, ref, minted);
       }

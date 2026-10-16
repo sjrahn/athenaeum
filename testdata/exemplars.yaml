@@ -54,7 +54,7 @@
   mime: text/html
   root: xenforo-thread
   shape: html-capture
-  note: the twin of the thread capture — the v52 banner, html#XF[data-template=thread_view], ten posts with XenForo's attribution, time and quote markup, declared chrome, a script and style blob (gen/thread.ts); 72 scopes by select
+  note: the twin of the thread capture — the v52 banner, html#XF[data-template=thread_view], ten posts with XenForo's attribution, time and quote markup, declared chrome, a script and style blob (gen/thread.ts); 76 scopes by select, quotes linked to their posts
   source: synthetic
 
 - file: quay-messages.html

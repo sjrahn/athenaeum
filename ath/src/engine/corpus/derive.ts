@@ -241,13 +241,19 @@ function deriveHtml(a: Artifact): void {
       if (!span) continue;
       const at = `bytes=${span.start},${span.end}`;
       const fields: Record<string, unknown> = {};
+      const rules = effectiveRules(o, [decl.term]);
       if (decl.field) {
         const v = el.attribs[decl.attr ?? decl.field];
-        if (v !== undefined) fields[decl.field] = v;
+        if (v !== undefined) {
+          // an attribute value passes through the field's declared pattern, when it has one: the first capture is
+          // the value (`#post-42` under `^#(post-\d+)$` is `post-42`, the key another concept is minted by)
+          const pattern = rules.fields.find((f) => f.name === decl.field)?.pattern;
+          const m = pattern ? new RegExp(pattern).exec(v) : null;
+          fields[decl.field] = m ? (m[1] ?? m[0]) : v;
+        }
       }
       if (decl.level !== undefined) fields.level = decl.level;
       // the designator fields of the term from the text, where declared (e.g. post.position from the first "#N")
-      const rules = effectiveRules(o, [decl.term]);
       for (const f of rules.fields) {
         if (f.kind === "designator" && f.pattern && fields[f.name] === undefined) {
           const text = elementText(el);
