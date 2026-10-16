@@ -1,7 +1,9 @@
 // lint.ts — ontology-level checks: every refines resolves without a cycle; repeatable predicates key uniquely;
 // a `reads` value is one of the four; a `concept` map's selectors are also `select` lines (D-F7); a `matches`
-// declares at least a mime; a `field` parses.
+// declares at least a mime; a `field` parses; a `derivation` names an op of this engine (D-derivation).
+import { parseOpRef } from "../model/line.ts";
 import { ConceptDecl, FieldDecl, MatchesDecl, READS, REPEATABLE } from "../model/term.ts";
+import { argProblem, opFor, opNames } from "../ops/index.ts";
 import { refinesChain } from "./chain.ts";
 import { duplicateIdentities } from "./hash.ts";
 import { linesOf, type Ontology } from "./load.ts";
@@ -58,6 +60,19 @@ export function lintOntology(o: Ontology): OntologyFinding[] {
             code: "O7-concept-select",
             msg: `concept map '${pred}' names a selector '${target}'; name a term and put the selector on a select line`,
           });
+      }
+    }
+    for (const l of linesOf(o, term, "derivation")) {
+      const r = parseOpRef(l.value);
+      if (!r) out.push({ term, code: "O10-derivation", msg: `derivation must be <op>@<v>[ <arg>]: ${JSON.stringify(l.value)}` });
+      else {
+        const op = opFor(r.op);
+        if (!op)
+          out.push({ term, code: "O10-derivation", msg: `derivation names ${r.op}, not an op of this engine (${opNames().join(", ")})` });
+        else {
+          const why = argProblem(op, r.arg);
+          if (why) out.push({ term, code: "O10-derivation", msg: why });
+        }
       }
     }
     for (const l of linesOf(o, term, "expects")) {

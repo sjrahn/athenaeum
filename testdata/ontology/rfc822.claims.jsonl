@@ -1,8 +1,9 @@
 {"subject":"rfc822","predicate":"refines","value":"document"}
+{"subject":"rfc822","predicate":"definition","value":"an internet message (RFC 5322/2045); eml.text@1 is the raw span transfer-decoded and charset-decoded, CRLF folded to LF"}
 {"subject":"rfc822","predicate":"matches","value":{"mime":"message/rfc822"}}
 {"subject":"rfc822","predicate":"axes","value":["bytes"]}
 {"subject":"rfc822","predicate":"tree","value":"derived — the MIME tree from the parse; a text body's blocks by blank lines"}
-{"subject":"rfc822","predicate":"derivation","value":"eml.text@1 — the raw span transfer-decoded and charset-decoded, CRLF folded to LF"}
+{"subject":"rfc822","predicate":"derivation","value":"eml.text@1"}
 {"subject":"rfc822","predicate":"expects","value":["message-header","message-body","paragraph","quote","signature"]}
 {"subject":"rfc822","predicate":"convention","value":"a leaf that is not a text/plain body (the HTML alternative, an attachment, a nested message) is a member routed path=<part>; the filename rides on the roster row"}
 {"subject":"rfc822","predicate":"convention","value":"blocks are derived only under a line-local transfer encoding (7bit, 8bit, binary, quoted-printable); a base64 body is one scope"}

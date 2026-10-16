@@ -38,7 +38,8 @@ describe("derived trees", () => {
     expect(link.readings[0]!.body).toBe("alice");
     const ts = a.table.find("timestamp")!;
     expect(ts.fields).toEqual({ datetime: "2026-04-03T23:48:07Z" });
-    expect(ts.readings[0]!.body).toBe("Apr 3, 2026");
+    // the timestamp's own chain names html.attr@1 datetime: its surface is the attribute, not the displayed text
+    expect(ts.readings[0]).toMatchObject({ body: "2026-04-03T23:48:07Z", rev: "derived:html.attr@1 datetime" });
     const body = a.table.find("post-body")!;
     expect(body.readings[0]!.body).toBe("héllo wörld\nline two");
     expect(a.table.unreachable()).toEqual([]);

@@ -1,8 +1,9 @@
 {"subject":"csv","predicate":"refines","value":"data"}
+{"subject":"csv","predicate":"definition","value":"comma-separated values (RFC 4180): row=0 is the header, col is 0-based; csv.parse@1 is the surface"}
 {"subject":"csv","predicate":"matches","value":{"mime":"text/csv"}}
 {"subject":"csv","predicate":"axes","value":["row","col"]}
 {"subject":"csv","predicate":"origin","value":0}
 {"subject":"csv","predicate":"tree","value":"derived — row in whole, cell in row"}
 {"subject":"csv","predicate":"physical","value":"row"}
 {"subject":"csv","predicate":"expects","value":["header","record","column"]}
-{"subject":"csv","predicate":"derivation","value":"csv.parse@1 (RFC 4180)"}
+{"subject":"csv","predicate":"derivation","value":"csv.parse@1"}

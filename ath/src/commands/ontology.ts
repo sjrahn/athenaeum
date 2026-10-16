@@ -2,11 +2,13 @@
 // rules, the pin, the ontology lints.
 import { defineContract, z } from "../../contracts/index.ts";
 import { openChain, openOntology } from "../engine/context.ts";
+import { parseOpRef } from "../engine/model/line.ts";
 import { classOf, refinesChain } from "../engine/ontology/chain.ts";
 import { effectiveRules } from "../engine/ontology/effective.ts";
 import { harvestPin, ontologyPin } from "../engine/ontology/hash.ts";
 import { lintOntology } from "../engine/ontology/lint.ts";
 import { linesOf, toJson } from "../engine/ontology/load.ts";
+import { opFor } from "../engine/ops/index.ts";
 import { defineCommand } from "../kit/define.ts";
 import { AthError } from "../kit/errors.ts";
 
@@ -120,7 +122,10 @@ export const ontologyRules = defineCommand({
     if (d.renders) io.out(`renders     ${JSON.stringify(d.renders)}\n`);
     if (d.axes) io.out(`axes        ${d.axes.join(", ")}\n`);
     if (d.tree) io.out(`tree        ${d.tree}\n`);
-    if (d.derivation) io.out(`derivation  ${d.derivation}\n`);
+    if (d.derivation) {
+      const r = parseOpRef(d.derivation);
+      io.out(`derivation  ${d.derivation}${r && opFor(r.op) ? "" : "  (not an op of this engine)"}\n`);
+    }
     if (d.selects || d.shapes) io.out(`derived by  ${d.selects} select, ${d.shapes} shape lines\n`);
   },
 });

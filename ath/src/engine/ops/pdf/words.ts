@@ -2,6 +2,7 @@
 // box each (the same pdfium calls v52's pypdfium2 wrapped, so boxes agree to rounding), lines banded on the
 // baseline, words-in-box in column-aware reading order, and chrome by repetition across pages (D-chrome).
 import { type Box, DECIMALS, pointInBox, SLACK } from "../../model/address.ts";
+import { registerOp } from "../registry.ts";
 import { openPdf, type PdfDoc } from "./pdfium.ts";
 
 export const PDF_WORDS_OP = "pdf.words@1";
@@ -215,3 +216,25 @@ export function isChromeWord(chrome: readonly ChromeLine[], page: number, w: Wor
   const cy = w.bbox[1] + w.bbox[3] / 2;
   return chrome.some((c) => c.page === page && pointInBox(c.box, cx, cy, 0.004));
 }
+
+/** The parsed form of a PDF: words per page and the chrome by repetition. */
+export interface PdfForm {
+  pages: PageWords[];
+  chrome: ChromeLine[];
+}
+
+registerOp<PdfForm>({
+  name: PDF_WORDS_OP,
+  family: "pdf",
+  parse: async (bytes) => {
+    const pages = await allPages(bytes);
+    return { pages, chrome: detectChrome(pages) };
+  },
+  surface: (f, m) => {
+    if (m.kind === "whole") return f.pages.map((p) => wordsText(p.words)).join("\n");
+    if (m.kind !== "page") return null;
+    const page = f.pages[m.page - 1];
+    if (!page) return null;
+    return m.box ? wordsText(wordsInBox(page.words, m.box)) : wordsText(page.words);
+  },
+});

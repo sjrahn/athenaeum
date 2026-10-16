@@ -22,7 +22,7 @@ const PASS = join(TESTDATA, "passes", "404d090fea45729f3e5933835fbd833ec7859595c
 const env = { ATH_ACTOR: "regression" };
 
 describe("regression: the XenForo thread (html, derived tree)", () => {
-  test.skipIf(!existsSync(HTML))("72 scopes by select; 31 html.text@1 bodies byte-for-byte; harvest; verify; lint; export", async () => {
+  test.skipIf(!existsSync(HTML))("72 scopes by select; 31 derived bodies byte-for-byte; harvest; verify; lint; export", async () => {
     const f = foundation();
     const chain = loadChain(f);
     const o = loadOntology(chain);
@@ -39,16 +39,20 @@ describe("regression: the XenForo thread (html, derived tree)", () => {
     expect(a.root).toBe("xenforo-thread");
     expect(a.table.size).toBe(72);
     expect(a.table.unreachable()).toEqual([]);
+    // 31 derived bodies byte-for-byte: 21 under html.text@1, the 10 timestamps under html.attr@1 datetime, the op
+    // each term's chain names (D-derivation)
     const fixture = (await Bun.file(join(import.meta.dir, "fixtures", "g8board-html-text.json")).json()) as {
       at: string;
       term: string;
       body: string;
+      rev?: string;
     }[];
     expect(fixture.length).toBe(31);
     for (const fx of fixture) {
       const s = a.table.get(fx.at);
       expect(s, fx.at).toBeDefined();
       expect(s!.readings[0]?.body, `${fx.term} at ${fx.at}`).toBe(fx.body);
+      expect(s!.readings[0]?.rev, `${fx.term} at ${fx.at}`).toBe(fx.rev ?? "derived:html.text@1");
     }
     expect(a.table.findAll("post").map((p) => p.fields.position)).toEqual(["#1", "#2", "#3", "#4", "#5", "#6", "#7", "#8", "#9", "#10"]);
     const h = await ath(["--json", "harvest", ing.blake3], { cwd: f, env });

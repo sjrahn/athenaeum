@@ -2,7 +2,8 @@
 // transfer-decoded and charset-decoded, CRLF folded to LF, trailing whitespace trimmed. Also the mechanical blocks
 // of a text body — blank-line paragraphs, `>` quote runs, the `-- ` signature — as raw spans, since quoted-printable
 // and the identity encodings are line-local and a blank line survives them (D-rfc822-parts).
-import { decodeCharset, decodeTransfer, isBodyPart, leaves, type Message, type Part } from "./parse.ts";
+import { registerOp } from "../registry.ts";
+import { decodeCharset, decodeTransfer, isBodyPart, leaves, type Message, type Part, parseMessage } from "./parse.ts";
 
 export const EML_TEXT_OP = "eml.text@1";
 
@@ -101,3 +102,10 @@ export function blocks(m: Message, p: Part): Block[] {
   flush();
   return out;
 }
+
+registerOp<Message>({
+  name: EML_TEXT_OP,
+  family: "mail",
+  parse: (bytes) => parseMessage(bytes),
+  surface: (m, a) => (a.kind === "bytes" ? textAt(m, a.start, a.end) : null),
+});

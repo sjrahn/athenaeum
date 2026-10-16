@@ -1,0 +1,3 @@
+{"subject":"xhtml","predicate":"refines","value":"html"}
+{"subject":"xhtml","predicate":"definition","value":"an HTML document served as XML (application/xhtml+xml); the html chain supplies axes, tree and html.text@1"}
+{"subject":"xhtml","predicate":"matches","value":{"mime":"application/xhtml+xml"}}

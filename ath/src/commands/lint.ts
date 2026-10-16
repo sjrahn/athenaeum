@@ -54,8 +54,20 @@ export const lint = defineCommand({
     } else for (const s of a.subjects) (kindOf(s) === "corpus" ? artifacts : concepts).push(s.replace(/^corpus:\/\//, "").split("?")[0]!);
     if (!artifacts.length && !concepts.length) throw new AthError("USAGE", "name subjects or pass --all");
     const findings: Finding[] = [];
-    for (const id of artifacts)
-      findings.push(...lintArtifact(await loadArtifact(chain, o, id), pin, { generic: a.generic, file: a.file, term: a.term }));
+    for (const id of artifacts) {
+      let art: Awaited<ReturnType<typeof loadArtifact>>;
+      try {
+        art = await loadArtifact(chain, o, id);
+      } catch (e) {
+        // the ontology names an op this engine lacks (D-derivation): the subject blocks, the run goes on
+        if (e instanceof AthError && e.code === "CONFIG") {
+          findings.push({ code: "T-derivation", severity: "block", subject: id, at: "whole", msg: e.message });
+          continue;
+        }
+        throw e;
+      }
+      findings.push(...lintArtifact(art, pin, { generic: a.generic, file: a.file, term: a.term }));
+    }
     if (concepts.length && (!a.generic && !a.file && !a.term ? true : a.generic || a.file)) {
       const r = await verifyLedger(chain, o, concepts);
       for (const c of r.concepts) findings.push(...c.findings);

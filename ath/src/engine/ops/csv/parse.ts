@@ -2,10 +2,25 @@
 // option defaults. Emits each logical row and cell with its byte span. A BOM is recorded and skipped; CRLF and LF
 // both end a row; quoted fields may hold doubled quotes and newlines. `row=0` is the header (D-csv). A tab-separated
 // file is the same parse with the tab as the delimiter.
+import { AthError } from "../../../kit/errors.ts";
+import { registerOp } from "../registry.ts";
+
 export const CSV_OP = "csv.parse@1";
 
-/** The delimiter a tabular mime uses. */
+/** The delimiter a tabular mime uses (the attester's default; the ontology names it as the op's arg otherwise). */
 export const delimiterFor = (mime: string): string => (mime === "text/tab-separated-values" ? "\t" : ",");
+
+/** Why the op's arg does not name a delimiter (`tab`, or one literal character; none = the comma), or null. */
+export const delimiterProblem = (arg: string | undefined): string | null =>
+  arg === undefined || arg === "tab" || arg.length === 1
+    ? null
+    : `${CSV_OP}: the arg names the delimiter — 'tab' or one character, not '${arg}'`;
+
+export function delimiterArg(arg: string | undefined): string {
+  const why = delimiterProblem(arg);
+  if (why) throw new AthError("CONFIG", why);
+  return arg === undefined ? "," : arg === "tab" ? "\t" : arg;
+}
 
 export interface Cell {
   value: string;
@@ -105,3 +120,12 @@ export function csvSurface(p: CsvParse, row: number, col?: number): string | nul
   if (col === undefined) return r.cells.map((c) => c.value).join("\t");
   return r.cells[col]?.value ?? null;
 }
+
+registerOp<CsvParse>({
+  name: CSV_OP,
+  family: "csv",
+  parseArg: true,
+  arg: delimiterProblem,
+  parse: (bytes, arg) => parseCsv(bytes, delimiterArg(arg)),
+  surface: (p, m) => (m.kind === "row" ? csvSurface(p, m.row, m.col) : null),
+});

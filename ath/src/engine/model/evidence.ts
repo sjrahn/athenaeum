@@ -1,7 +1,7 @@
 // evidence.ts — an evidence entry (spec §9.2) and the binding grammar (Appendix D-F3): `rev` | `derived:<op>@<v>[ <arg>]`
 // | `line:<predicate>[ <field>]` | null (held).
 import { z } from "../../../contracts/index.ts";
-import { OP_REF, REV } from "./line.ts";
+import { parseOpRef, REV } from "./line.ts";
 
 export type Binding =
   | { kind: "rev"; rev: string }
@@ -12,12 +12,12 @@ export type Binding =
 export function parseBinding(s: string | null | undefined): Binding | { kind: "invalid"; why: string } {
   if (s === null || s === undefined) return { kind: "held" };
   if (REV.test(s)) return { kind: "rev", rev: s };
-  let m = /^derived:(\S+)(?: (.+))?$/.exec(s);
-  if (m) {
-    if (!OP_REF.test(m[1]!)) return { kind: "invalid", why: `derived op must be <name>@<version>: '${m[1]}'` };
-    return m[2] ? { kind: "derived", op: m[1]!, arg: m[2] } : { kind: "derived", op: m[1]! };
+  if (s.startsWith("derived:")) {
+    const r = parseOpRef(s.slice("derived:".length));
+    if (!r) return { kind: "invalid", why: `derived op must be <name>@<version>[ <arg>]: '${s}'` };
+    return r.arg ? { kind: "derived", op: r.op, arg: r.arg } : { kind: "derived", op: r.op };
   }
-  m = /^line:([a-z_]+)(?: (\S+))?$/.exec(s);
+  const m = /^line:([a-z_]+)(?: (\S+))?$/.exec(s);
   if (m) return m[2] ? { kind: "line", predicate: m[1]!, field: m[2] } : { kind: "line", predicate: m[1]! };
   return { kind: "invalid", why: `not a binding: '${s}' (rev, derived:<op>@<v>[ <arg>], line:<predicate>[ <field>], or null)` };
 }

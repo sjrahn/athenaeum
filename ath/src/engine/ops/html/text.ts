@@ -3,7 +3,8 @@
 // tab, whitespace runs collapsed to one space, lines trimmed, blank runs collapsed. Also `html.attr@1 <name>` and
 // `html.title@1`.
 import { type Element, isTag, isText, type Node } from "domhandler";
-import { elementAt, type HtmlDoc, select, spanOf } from "./dom.ts";
+import { registerOp } from "../registry.ts";
+import { elementAt, type HtmlDoc, parseHtml, select, spanOf } from "./dom.ts";
 
 export const HTML_TEXT_OP = "html.text@1";
 export const HTML_ATTR_OP = "html.attr@1";
@@ -141,3 +142,38 @@ export function textRuns(d: HtmlDoc): { start: number; end: number; text: string
   walk(d.doc);
   return out;
 }
+
+// ── the ops the ontology names (D-derivation) ───────────────────────────────────────────────────────────────────────
+const parse = (bytes: Uint8Array) => parseHtml(bytes);
+
+registerOp<HtmlDoc>({
+  name: HTML_TEXT_OP,
+  family: "html",
+  parse,
+  surface: (d, m) => {
+    if (m.kind === "whole") {
+      const root = select(d, "html")[0];
+      return root ? elementText(root) : null;
+    }
+    return m.kind === "bytes" ? textAt(d, m.start, m.end) : null;
+  },
+});
+
+registerOp<HtmlDoc>({
+  name: HTML_ATTR_OP,
+  family: "html",
+  parse,
+  arg: (a) => (a ? null : `${HTML_ATTR_OP} needs the attribute name as its argument`),
+  surface: (d, m, arg) => {
+    if (!arg) return null;
+    if (m.kind === "whole") return rootAttr(d, arg);
+    return m.kind === "bytes" ? attrAt(d, m.start, m.end, arg) : null;
+  },
+});
+
+registerOp<HtmlDoc>({
+  name: HTML_TITLE_OP,
+  family: "html",
+  parse,
+  surface: (d, m) => (m.kind === "whole" ? titleOf(d) : null),
+});

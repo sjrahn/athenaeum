@@ -12,12 +12,14 @@ import { refinesChain } from "../ontology/chain.ts";
 import { effectiveRules, resolveAlong } from "../ontology/effective.ts";
 import { linesOf, type Ontology } from "../ontology/load.ts";
 import { classify } from "../ontology/match.ts";
-import { CSV_OP, type CsvParse, delimiterFor, parseCsv } from "../ops/csv/parse.ts";
-import { type HtmlDoc, matchesSelector, parseHtml, select, spanOf } from "../ops/html/dom.ts";
-import { elementText, HTML_TEXT_OP } from "../ops/html/text.ts";
-import { isBodyPart, leaves, type Message, parseMessage } from "../ops/mail/parse.ts";
-import { blocks, EML_TEXT_OP, spanText } from "../ops/mail/text.ts";
-import { allPages, type ChromeLine, detectChrome, type PageWords } from "../ops/pdf/words.ts";
+import type { CsvParse } from "../ops/csv/parse.ts";
+import { type HtmlDoc, matchesSelector, select, spanOf } from "../ops/html/dom.ts";
+import { elementText } from "../ops/html/text.ts";
+import { formKey } from "../ops/index.ts";
+import { isBodyPart, leaves, type Message } from "../ops/mail/parse.ts";
+import { blocks } from "../ops/mail/text.ts";
+import type { PdfForm } from "../ops/pdf/words.ts";
+import { type Derivation, derivationAlong, derivationAt, derivationFor, opOf } from "./resolve.ts";
 import { ScopeTable } from "./tree.ts";
 
 export interface Artifact {
@@ -35,11 +37,13 @@ export interface Artifact {
   rootChain: string[];
   tree: "asserted" | "derived" | null;
   table: ScopeTable;
-  /** Parsed forms, by mime family. */
+  /** Every parsed form an op named along the way, by family (D-derivation); the typed slots below are the same
+   * objects, for the consumers that still read a form by family (bind, G3, harvest, export). */
+  forms: Map<string, unknown>;
   html?: HtmlDoc;
   csv?: CsvParse;
-  /** PDF: words per page (loaded on demand by `pdfPages`) and chrome by repetition. */
-  pdf?: { pages: PageWords[]; chrome: ChromeLine[] };
+  /** PDF: words per page and chrome by repetition. */
+  pdf?: PdfForm;
   /** A message: its MIME tree with raw spans. */
   mail?: Message;
   /** Byte spans the root term declares as chrome (markup). */
@@ -68,19 +72,17 @@ export async function loadArtifact(chain: Chain, o: Ontology, blake3: string, op
     rootChain: [],
     tree: null,
     table: new ScopeTable(),
+    forms: new Map(),
     chromeSpans: [],
     passes: new Map(),
   };
   for (const l of lines) if (l.predicate === "pass") a.passes.set(String((l.value as JsonObject).id), l);
 
-  // parse the bytes by family
-  if (bytes) {
-    if (mime === "text/html" || mime === "application/xhtml+xml") a.html = parseHtml(bytes);
-    else if (mime === "text/csv" || mime === "text/tab-separated-values") a.csv = parseCsv(bytes, delimiterFor(mime));
-    else if (mime === "application/pdf") {
-      const pages = await allPages(bytes);
-      a.pdf = { pages, chrome: detectChrome(pages) };
-    } else if (mime === "message/rfc822") a.mail = parseMessage(bytes);
+  // parse the bytes under the op the mime root names: the classification probes (a header, a selector) read the form
+  const mimeRoot = classify(o, { mime });
+  if (mimeRoot) {
+    const d = derivationAlong(a, refinesChain(o, mimeRoot));
+    if (d) await parseForm(a, d);
   }
   // a member's container, for classification by package (D-epub)
   const containerRef = (a.capturedFrom?.value as { container?: string } | null)?.container;
@@ -109,7 +111,6 @@ export async function loadArtifact(chain: Chain, o: Ontology, blake3: string, op
   }
   if (storedRoot) a.root = String(storedRoot.term);
   // the mime root (axes, tree, derivation, physical) joins the expression root's chain
-  const mimeRoot = classify(o, { mime });
   if (a.root) {
     a.rootChain = refinesChain(o, a.root);
     if (mimeRoot && !a.rootChain.includes(mimeRoot))
@@ -122,8 +123,46 @@ export async function loadArtifact(chain: Chain, o: Ontology, blake3: string, op
   if (a.csv && a.root) deriveCsv(a);
   if (a.mail && a.root) deriveMail(a);
   if (a.root) deriveSpine(a);
+  await ensureForms(a);
+  deriveReadings(a);
   overlayStored(a);
   return a;
+}
+
+/** Parse the bytes under an op once per family (and per parse-shaping arg); the family's typed slot is the same form. */
+async function parseForm(a: Artifact, d: Derivation): Promise<void> {
+  const op = opOf(d);
+  const key = formKey(op, d.arg);
+  if (a.forms.has(key) || !a.bytes) return;
+  const form = await op.parse(a.bytes, d.arg);
+  a.forms.set(key, form);
+  if (op.family === "html" && !a.html) a.html = form as HtmlDoc;
+  else if (op.family === "csv" && !a.csv) a.csv = form as CsvParse;
+  else if (op.family === "pdf" && !a.pdf) a.pdf = form as PdfForm;
+  else if (op.family === "mail" && !a.mail) a.mail = form as Message;
+}
+
+/** Every op a scope's terms name (a `timestamp` under `html.attr@1 datetime`) has its form resident before any
+ * surface is asked for, so resolution stays synchronous. */
+async function ensureForms(a: Artifact): Promise<void> {
+  const root = derivationAlong(a, a.rootChain);
+  if (root) await parseForm(a, root);
+  for (const s of a.table.scopes.values()) {
+    const d = derivationFor(a, s.at);
+    if (d) await parseForm(a, d);
+  }
+}
+
+/** A derived scope whose terms read text carries the surface its derivation yields as its reading, stamped
+ * `derived:<op>@<v>[ <arg>]` from the ontology, never from code. `whole` carries none (its text is the export). */
+function deriveReadings(a: Artifact): void {
+  if (!a.bytes) return;
+  for (const s of a.table.scopes.values()) {
+    if (s.at === "whole" || s.readings.length) continue;
+    if (effectiveRules(a.ontology, s.terms).reads !== "text") continue;
+    const d = derivationAt(a, s.at, "text");
+    if (d) s.readings.push({ aspect: "text", body: d.text, rev: `derived:${d.source}`, stored: false });
+  }
 }
 
 /** The derived tree of a message (D-rfc822-parts): the header block, then every text body part as a scope in whole,
@@ -144,17 +183,15 @@ function deriveMail(a: Artifact): void {
     const at = `bytes=${p.bodyStart},${p.bodyEnd}`;
     const fields: Record<string, unknown> = { part: p.path || "1", encoding: p.cte };
     if (p.charset) fields.charset = p.charset;
-    const s = a.table.addTerm(at, "message-body", fields, `${a.root}.expects`);
+    a.table.addTerm(at, "message-body", fields, `${a.root}.expects`);
     a.table.place(at, "whole", ord++);
-    s.readings.push({ aspect: "text", body: spanText(m, p, p.bodyStart, p.bodyEnd), rev: `derived:${EML_TEXT_OP}`, stored: false });
     let k = 0;
     for (const b of blocks(m, p)) {
       if (!has(b.kind)) continue;
       const bat = `bytes=${b.start},${b.end}`;
       if (bat === at) continue;
-      const bs = a.table.addTerm(bat, b.kind, {}, `${a.root}.blocks`);
+      a.table.addTerm(bat, b.kind, {}, `${a.root}.blocks`);
       a.table.place(bat, at, k++);
-      bs.readings.push({ aspect: "text", body: spanText(m, p, b.start, b.end), rev: `derived:${EML_TEXT_OP}`, stored: false });
     }
   }
 }
@@ -256,18 +293,6 @@ function deriveHtml(a: Artifact): void {
       }
     }
   }
-  // derived readings: every selected scope whose term reads text has the derivation as its surface
-  for (const m of made) {
-    const s = a.table.get(m.at)!;
-    const rules = effectiveRules(o, s.terms);
-    if (rules.reads === "text" && !s.readings.length) {
-      const el = select(d, "*").find((e) => {
-        const sp = spanOf(d, e);
-        return sp && sp.start === m.start && sp.end === m.end;
-      });
-      if (el) s.readings.push({ aspect: "text", body: elementText(el), rev: `derived:${HTML_TEXT_OP}`, stored: false });
-    }
-  }
   // chrome: declared selectors on the root chain
   for (const t of a.rootChain) {
     for (const l of linesOf(o, t, "chrome")) {
@@ -296,10 +321,15 @@ function deriveCsv(a: Artifact): void {
   const headerTerm = expects.includes("header") ? "header" : null;
   const recordTerm = expects.includes("record") ? "record" : null;
   const columnTerm = expects.includes("column") ? "column" : null;
+  const rev = (at: string) => {
+    const d = derivationFor(a, at);
+    return d ? `derived:${d.source}` : null;
+  };
   if (headerTerm) {
     const s = a.table.addTerm("row=0", headerTerm, {}, `${a.root}.expects`);
     a.table.place("row=0", "whole", 0);
-    s.readings.push({ aspect: "cells", body: header.cells.map((c) => c.value), rev: `derived:${CSV_OP}`, stored: false });
+    const r = rev("row=0");
+    if (r) s.readings.push({ aspect: "cells", body: header.cells.map((c) => c.value), rev: r, stored: false });
   }
   const shapes = a.rootChain.flatMap((t) =>
     linesOf(o, t, "shape")
@@ -318,7 +348,8 @@ function deriveCsv(a: Artifact): void {
       const at = `row=${r.index}`;
       const s = a.table.addTerm(at, recordTerm, {}, `${a.root}.expects`);
       a.table.place(at, "whole", headerTerm ? r.index : r.index - 1);
-      s.readings.push({ aspect: "cells", body: r.cells.map((c) => c.value), rev: `derived:${CSV_OP}`, stored: false });
+      const rv = rev(at);
+      if (rv) s.readings.push({ aspect: "cells", body: r.cells.map((c) => c.value), rev: rv, stored: false });
     }
   }
 }

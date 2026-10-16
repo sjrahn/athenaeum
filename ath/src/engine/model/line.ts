@@ -7,6 +7,22 @@ import { ASPECTS, compareAt, scopeAt } from "./address.ts";
 import { REPEATABLE } from "./term.ts";
 
 export const OP_REF = /^[a-z][a-z0-9.-]*@\d+(\.\d+)*$/; // ath.ingest@1, pdf.words@1, corpus.ingest@0.1.0
+
+/** An op reference with an optional argument — `<op>@<v>[ <arg>]` — the one grammar a term's `derivation` line and a
+ * `derived:` binding share (D-derivation, D-F3). */
+export interface OpRef {
+  op: string;
+  arg?: string;
+}
+
+export function parseOpRef(s: unknown): OpRef | null {
+  if (typeof s !== "string") return null;
+  const m = /^(\S+)(?: (\S.*))?$/.exec(s);
+  if (!m || !OP_REF.test(m[1]!)) return null;
+  return m[2] ? { op: m[1]!, arg: m[2] } : { op: m[1]! };
+}
+
+export const opRefString = (r: OpRef): string => (r.arg ? `${r.op} ${r.arg}` : r.op);
 export const PASS_REF = /^p[0-9a-z]+$/; // p1, p2a
 export const HARVEST_BY = /^harvest:[a-z0-9-]+@[0-9a-f]{6}$/; // harvest:<term>@<6 hex of the ontology pin>
 export const LEDGER_BY = /^(harvest:[a-z0-9-]+@[0-9a-f]{6}|[a-z][a-z0-9.-]*@\d+(\.\d+)*)$/;

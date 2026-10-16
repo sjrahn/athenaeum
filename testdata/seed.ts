@@ -5,7 +5,7 @@
 // and `ath ingest` them; a container's members become subjects on their own. Idempotent.
 //
 //   bun testdata/seed.ts [--from SOURCE_INSTANCE_ROOT]
-import { existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { parseArgs } from "node:util";
 
@@ -48,9 +48,9 @@ if (!existsSync(join(INSTANCE, "athenaeum.yaml"))) {
   mkdirSync(INSTANCE, { recursive: true });
   const r = ath(["layer", "init", INSTANCE, "--name", "testdata"]);
   if (r.code !== 0) throw new Error(`layer init failed: ${r.err}`);
-  // the regression ontology is the foundation's
-  const r2 = Bun.spawnSync(["cp", "-r", join(HERE, "ontology", "."), join(INSTANCE, "ontology")]);
-  if (r2.exitCode !== 0) throw new Error("could not copy the ontology");
+  // the regression ontology is the foundation's (path.join drops a trailing "/.", so cp -r would nest the directory)
+  cpSync(join(HERE, "ontology"), join(INSTANCE, "ontology"), { recursive: true });
+  if (!existsSync(join(INSTANCE, "ontology", "html.claims.jsonl"))) throw new Error("the ontology did not copy");
 }
 
 let seeded = 0;
