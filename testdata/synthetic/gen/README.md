@@ -18,6 +18,10 @@ tier"). Run from the repo root.
 | `bundles2.ts` | `orders-delivery.zip`, `rides-export.zip`, `health-export.zip`, `host-diagnostics.zip`, `vault-subtree.zip`, `vendor-share.zip`, `agent-session.zip`, `takeout-slice.zip`, `profile-year.zip`, each with a `.capture.yaml` | the script itself (`lib/zip.ts`, `lib/png.ts`; typst for the PDFs inside) | yes |
 | `bundles2.ts` | `statements-year.zip`, `drive-folder.zip` | typst 0.15.1 for the PDFs | yes |
 | `bundles2.ts` | `card-dump.zip` | hand-written TIFF-shaped ARW; heif-enc and ffmpeg for the HIF and the clip | no (encoders) |
+| `media.ts` | `harbour-clip.mov`, `phone-clip.3gp`, `stream.h264`, `stream.h265`, `stream.ivf`, `tone.opus`, `tone.aac`, `tone.mp3`, `animation.gif` | ffmpeg (libx264, libx265, libaom-av1, libopus, aac, lame) | no (encoders) |
+| `media.ts` | `scan.tiff`, `still.avif`, `favicon.ico` | ImageMagick 7 | no (encoder) |
+| `documents.ts` | `statement-2026-03.pdf`, `tax-slip-2025.pdf`, `policy-schedule.pdf`, `account-confirmation.pdf`, `chart-printout.pdf`, `design-export.pdf` (each with a `.capture.yaml`) | typst 0.15.1 | yes |
+| `documents.ts` | `regatta-roles.docx`, `owner-statement.md`, `contact-card.vcf`, `sms-2026-03.ndjson`, `location-history.json`, `tidewatch.css`, `tidewatch.ts`, `tidewatch.py`, `harbour-events.ics`, `walk.gpx` | the script itself | yes |
 | `mailing.ts` | `regatta-mailing.eml` | the script itself (its xlsx attachment through `lib/zip.ts`; the jpeg and pdf are the committed `garden.jpg` and `till-receipt.pdf`) | yes, given those two files |
 | `novel.ts` | `lantern-novel.epub` | the script itself (`lib/zip.ts`, `lib/png.ts` for the images) | yes |
 | `chat-archive.ts` | `quay-chat.mbox` | the script itself | yes |

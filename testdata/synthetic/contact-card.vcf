@@ -1,0 +1,15 @@
+BEGIN:VCARD
+VERSION:3.0
+PRODID:-//Example//Address Book 2.1//EN
+N:Calder;Bo;;;
+FN:Bo Calder
+ORG:Harbour Stores
+TITLE:Chandler
+EMAIL;type=INTERNET;type=WORK;type=pref:bo.calder@example.invalid
+TEL;type=CELL;type=VOICE;type=pref:+44 7700 900456
+ADR;type=HOME;type=pref:;;12 Quay Street;Port Ellen;;PE1 1AB;United Kingdom
+BDAY:1988-07-04
+NOTE:Mooring neighbour, berth A2.
+REV:2026-03-01T09:00:00Z
+UID:00000011-0000-4000-8000-00000000c0de
+END:VCARD

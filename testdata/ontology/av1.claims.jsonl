@@ -1,0 +1,3 @@
+{"subject":"av1","predicate":"refines","value":"video"}
+{"subject":"av1","predicate":"matches","value":{"mime":"video/av1"}}
+{"subject":"av1","predicate":"definition","value":"AV1 in an IVF wrapper"}

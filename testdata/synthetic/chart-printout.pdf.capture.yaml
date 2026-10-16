@@ -1,0 +1,14 @@
+# provenance of a local file, as the producer leaves it beside the bytes (D-sidecar)
+origin: health-record
+via: export
+origin_fields:
+  provider: Quay Medical Practice
+  practitioner: Dr B. Calder
+  system: ExampleEMR 9
+  document_type: chart print-out
+  printed_at: "2026-03-05T10:12:00Z"
+  covers_from: "2025-09-01"
+  covers_to: "2026-03-01"
+  delivered_via: in person
+  actor: owner
+  redacted: none

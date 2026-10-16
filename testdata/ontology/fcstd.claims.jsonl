@@ -1,0 +1,3 @@
+{"subject":"fcstd","predicate":"refines","value":"zip"}
+{"subject":"fcstd","predicate":"matches","value":{"mime":"application/x-extension-fcstd"}}
+{"subject":"fcstd","predicate":"definition","value":"a FreeCAD document: a zip holding Document.xml and GuiDocument.xml"}

@@ -1,0 +1,9 @@
+# provenance of a local file, as the producer leaves it beside the bytes (D-sidecar)
+origin: tax-slip
+via: export
+origin_fields:
+  slip_type: remuneration
+  tax_year: 2025
+  issuer: Harbour Stores Ltd
+  slip_status: original
+  as_of: "2026-03-02"

@@ -1,0 +1,1 @@
+:root{--ink:#202020;--sea:#2d5f8a}body{font:16px/1.5 system-ui,sans-serif;color:var(--ink);max-width:40rem;margin:auto}table{border-collapse:collapse}td,th{padding:.25rem .5rem;border-bottom:1px solid #ddd}.high{color:var(--sea)}

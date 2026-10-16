@@ -550,3 +550,230 @@
   shape: single-track-audio
   note: single-track ISOBMFF/M4A, AAC, 1s mono sine wave, synthetic (ffmpeg); brand M4A
   source: synthetic
+
+# ── loose media, documents and sources (gen/media.ts, gen/documents.ts) ───────────────────────────────────
+
+- file: harbour-clip.mov
+  blake3: ada2d918e9e268ac957f2e9140959a1805fb38e8b2f602a159098aafa8265014
+  mime: video/quicktime
+  root: quicktime
+  shape: multi-track-media
+  note: "a QuickTime clip, h264 + aac, one second (gen/media.ts, ffmpeg); brand qt"
+  source: synthetic
+
+- file: phone-clip.3gp
+  blake3: 7bf351b2bd3035a54a5d32e92b2c6dbcab599171f2c20e3b7397514059947a20
+  mime: video/3gpp
+  root: threegpp
+  shape: single-track-video
+  note: "a 3GPP clip, baseline h264, no audio (gen/media.ts, ffmpeg); brand 3gp6"
+  source: synthetic
+
+- file: stream.h264
+  blake3: 69a157184ffd6285e3f13fc08ab134c46883d399a9cbd9c12b3ebd83c57b52e2
+  mime: video/h264
+  root: h264
+  shape: elementary-stream
+  note: "a raw H.264 Annex B stream, no container (gen/media.ts, ffmpeg); told by its first NAL header"
+  source: synthetic
+
+- file: stream.h265
+  blake3: 88ef6e37cb4772f9194c62a6d9527f09fac90f1dfbe73f90f334181f92484bea
+  mime: video/hevc
+  root: hevc
+  shape: elementary-stream
+  note: "a raw HEVC Annex B stream, no container (gen/media.ts, ffmpeg); told by its VPS NAL header"
+  source: synthetic
+
+- file: stream.ivf
+  blake3: 44d43946a57c6f2fc8a00f634e80fd55eb47743a1717e4377c38e8d4542b0f2d
+  mime: video/av1
+  root: av1
+  shape: elementary-stream
+  note: "AV1 in an IVF wrapper (gen/media.ts, ffmpeg libaom); told by DKIF + AV01"
+  source: synthetic
+
+- file: tone.opus
+  blake3: 3e49142d1aa4a260f2058f9e3edc09823a865669b9552c19a8ffe884a6b95039
+  mime: audio/opus
+  root: opus
+  shape: audio
+  note: "Opus in Ogg, a one-second tone (gen/media.ts, ffmpeg); told by OggS + OpusHead"
+  source: synthetic
+
+- file: tone.aac
+  blake3: b76ae5a216cc49454ffa89745afe247b09c596d8e8a690ce64de394f31b8a9df
+  mime: audio/aac
+  root: aac
+  shape: audio
+  note: "AAC in ADTS frames (gen/media.ts, ffmpeg); told by the sync word"
+  source: synthetic
+
+- file: tone.mp3
+  blake3: 0dde812f04f06b69309bf024703b1ac4a3587cf60866e894d6cd4c4a412a3dd0
+  mime: audio/mpeg
+  root: mpeg-audio
+  shape: audio
+  note: "MPEG audio with an ID3 header (gen/media.ts, ffmpeg lame)"
+  source: synthetic
+
+- file: scan.tiff
+  blake3: 484cd48f7d249aae60565a9af72fc54245ea95d5b49f031a78e177779f0e2694
+  mime: image/tiff
+  root: tiff
+  shape: image-tiff
+  note: "a TIFF gradient (gen/media.ts, ImageMagick)"
+  source: synthetic
+
+- file: still.avif
+  blake3: 923a5a61e46c536524ffd949cbcdd4f01a7e6e0729a52bf93d21df5877e4ee7d
+  mime: image/avif
+  root: avif
+  shape: image-avif
+  note: "an AVIF still (gen/media.ts, ImageMagick); brand avif"
+  source: synthetic
+
+- file: favicon.ico
+  blake3: fd0743a47e680eedd93e6100762870d20d8a3451771cd59aa8eb64d49df13c86
+  mime: image/x-icon
+  root: icon
+  shape: image-icon
+  note: "a two-size icon (gen/media.ts, ImageMagick); told by its header, ahead of the Annex B check"
+  source: synthetic
+
+- file: animation.gif
+  blake3: f967637f322ea716fd7d20533b7f39b3c5138ae275de93c656a75e23eac8c599
+  mime: image/gif
+  root: gif
+  shape: image-gif-animated
+  note: "a three-frame animated GIF (gen/media.ts, ffmpeg)"
+  source: synthetic
+
+- file: statement-2026-03.pdf
+  blake3: 409245363c6bf171d93a05a4c3df8b87145d2a6411e36f5c7c2676583b17f02d
+  mime: application/pdf
+  root: pdf
+  shape: pdf-statement
+  note: "the twin of a loose monthly statement (gen/documents.ts, typst); provenance in its .capture.yaml"
+  source: synthetic
+
+- file: tax-slip-2025.pdf
+  blake3: 9c7ac767810beee6fbb6c41dd874ed5915d70026c8c054ae42be7332d6ba0ae4
+  mime: application/pdf
+  root: pdf
+  shape: pdf-form
+  note: "the twin of a tax slip as a portal renders it — boxed amounts (gen/documents.ts, typst)"
+  source: synthetic
+
+- file: policy-schedule.pdf
+  blake3: c662da40ef0466ef873181c07902d07583842c6fc930fe90d23821b6832d872f
+  mime: application/pdf
+  root: pdf
+  shape: pdf-document
+  note: "the twin of an insurance policy schedule (gen/documents.ts, typst)"
+  source: synthetic
+
+- file: account-confirmation.pdf
+  blake3: 7b2edf118bd04aca3b665e230b1a75ef9925130d30e249671b53390aa8b5efa5
+  mime: application/pdf
+  root: pdf
+  shape: pdf-letter
+  note: "the twin of a banking letter (gen/documents.ts, typst)"
+  source: synthetic
+
+- file: chart-printout.pdf
+  blake3: 24c1477b3562892536c1e39587659065673147397d3eae0f6a47eaa99ad441ec
+  mime: application/pdf
+  root: pdf
+  shape: pdf-printout
+  note: "the twin of a health-care chart print-out (gen/documents.ts, typst)"
+  source: synthetic
+
+- file: design-export.pdf
+  blake3: 38cc78eb0aec488d7e71ab9ba19f08450ffea6ab4b44060f5574bebb31959790
+  mime: application/pdf
+  root: pdf
+  shape: pdf-design
+  note: "the twin of a design-surface export — one wide page of frames (gen/documents.ts, typst)"
+  source: synthetic
+
+- file: regatta-roles.docx
+  blake3: 63d98d4acacde3289468b291cf0ff0d257fa12fad908a327b0546a840e973573
+  mime: application/vnd.openxmlformats-officedocument.wordprocessingml.document
+  root: docx
+  shape: docx
+  note: "a minimal Word document — [Content_Types], rels, document.xml with a heading and two paragraphs (gen/documents.ts)"
+  source: synthetic
+
+- file: owner-statement.md
+  blake3: 6d4a69b2935ac22f1eb8e5b3236448a1a2e07bdc6ed51aa00cfc3b744ce430e8
+  mime: text/markdown
+  root: markdown
+  shape: owner-statement
+  note: "the twin of an owner statement — a few lines of the owner's words under frontmatter (gen/documents.ts)"
+  source: synthetic
+
+- file: contact-card.vcf
+  blake3: 75eee68fdbadde02da00b5004924dc771245aca6a4b864b0b257cf254d9844fe
+  mime: text/vcard
+  root: vcard
+  shape: vcard-card
+  note: "the twin of a single contact card promoted from an address-book export (gen/documents.ts)"
+  source: synthetic
+
+- file: sms-2026-03.ndjson
+  blake3: 2275613d697f25e2846499b364fa223facbbd568598fd6ce84223c9950e35e34
+  mime: application/x-ndjson
+  root: ndjson
+  shape: sms-backup
+  note: "the twin of an SMS backup — one NDJSON per peer per month, an MMS with inlined media, a call (gen/documents.ts)"
+  source: synthetic
+
+- file: location-history.json
+  blake3: 8c73633d06364efe3dd483cb1fceebccae53dbbbc43586ea3bc704827c1fada9
+  mime: application/json
+  root: json
+  shape: timeline-json
+  note: "the twin of an on-device Timeline export — a JSON array of visit and activity segments (gen/documents.ts)"
+  source: synthetic
+
+- file: tidewatch.css
+  blake3: 0c863bdc35532ac5e3cec8dc621a98aa3431e1b5dbdf9a1cb2250f8861776a5d
+  mime: text/css
+  root: css
+  shape: source-text
+  note: "a stylesheet (gen/documents.ts)"
+  source: synthetic
+
+- file: tidewatch.ts
+  blake3: a35b5872683c4f7afdafcf85ac7fcd7e492a3f2f06fc1ed9e8206889fe3f26c8
+  mime: text/typescript
+  root: typescript
+  shape: source-text
+  note: "a TypeScript source (gen/documents.ts)"
+  source: synthetic
+
+- file: tidewatch.py
+  blake3: d87072261d42a840b66aab832d31070ba05e54000d67475df9149c36fb611cea
+  mime: text/x-python
+  root: python
+  shape: source-text
+  note: "a Python source (gen/documents.ts)"
+  source: synthetic
+
+- file: harbour-events.ics
+  blake3: 7f3b8136c799feb3292e7056028d3380913104bc9620d6ba111aac208ab16a04
+  mime: text/calendar
+  root: calendar
+  shape: calendar
+  note: "an iCalendar stream with two events (gen/documents.ts)"
+  source: synthetic
+
+- file: walk.gpx
+  blake3: 0249f38682f2d7167d5676f9e805a1c63183fced52878dcb6e3d97288986dd26
+  mime: application/xml
+  root: xml
+  shape: gpx-track
+  note: "a GPX track of thirty points (gen/documents.ts); XML by sniff"
+  source: synthetic
+

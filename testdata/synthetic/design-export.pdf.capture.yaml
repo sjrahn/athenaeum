@@ -1,0 +1,5 @@
+# provenance of a local file, as the producer leaves it beside the bytes (D-sidecar)
+origin: claude-export
+via: export
+origin_fields:
+  surface: design

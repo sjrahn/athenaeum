@@ -18,7 +18,7 @@ describe("ontology", () => {
   const o = loadOntology(loadChain(f));
 
   test("loads the 66 regression terms; chains and classes resolve", () => {
-    expect(o.terms.size).toBe(162);
+    expect(o.terms.size).toBe(174);
     expect(refinesChain(o, "methodological-tool")).toEqual(["methodological-tool", "regulation", "document", "unit"]);
     expect(refinesChain(o, "xenforo-thread")).toEqual(["xenforo-thread", "web-page", "html", "document", "unit"]);
     expect(classOf(o, "pdf")).toBe("document");
@@ -56,7 +56,7 @@ describe("ontology", () => {
     expect(classify(o, { mime: "text/html", selectorMatches: () => false })).toBe("html");
     expect(classify(o, { mime: "image/jpeg" })).toBe("jpeg");
     expect(classOf(o, "jpeg")).toBe("lossy");
-    expect(classify(o, { mime: "audio/opus" })).toBeNull();
+    expect(classify(o, { mime: "application/x-nothing-matches" })).toBeNull();
   });
 
   test("fields: undeclared refused, derived never stored, kinds checked", () => {
@@ -83,7 +83,7 @@ describe("ontology", () => {
     expect(await ontologyPin(loadOntology(loadChain(f)))).toBe(pin);
     expect(harvestPin(pin)).toHaveLength(6);
     const pins = await termPins(o);
-    expect(pins.size).toBe(162);
+    expect(pins.size).toBe(174);
     const f2 = foundation();
     writeFileSync(
       join(f2, "ontology", "heading.claims.jsonl"),
@@ -115,7 +115,7 @@ describe("ontology", () => {
       '{"subject":"heading","predicate":"field","value":{"name":"anchor","kind":"string"}}\n',
     );
     const oe = loadOntology(loadChain(e));
-    expect(oe.terms.size).toBe(163);
+    expect(oe.terms.size).toBe(175);
     expect(refinesChain(oe, "biography")).toEqual(["biography", "paragraph", "unit"]);
     expect(effectiveRules(oe, ["heading"]).fields.map((x) => x.name)).toEqual(["num", "level", "anchor"]);
     writeFileSync(join(e, "ontology", "heading.claims.jsonl"), '{"subject":"heading","predicate":"reads","value":"cells"}\n');

@@ -19,6 +19,10 @@ const BRANDS: Record<string, string> = {
   "qt  ": "video/quicktime",
   "3gp4": "video/3gpp",
   "3gp5": "video/3gpp",
+  "3gp6": "video/3gpp",
+  "3gp7": "video/3gpp",
+  "3ge6": "video/3gpp",
+  "3gg6": "video/3gpp",
 };
 
 /** A zip's kind from its roster: epub by the OCF mimetype member, OOXML by its parts; else a plain zip. */
@@ -44,6 +48,7 @@ function zipKind(b: Uint8Array): string {
     if (names.some((n) => n.startsWith("xl/"))) return "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
     if (names.some((n) => n.startsWith("word/"))) return "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
     if (names.some((n) => n.startsWith("ppt/"))) return "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+    if (names.includes("Document.xml") && names.includes("GuiDocument.xml")) return "application/x-extension-fcstd";
   }
   return "application/zip";
 }
@@ -103,6 +108,24 @@ export function sniffMime(bytes: Uint8Array, name = ""): string {
   if (starts([0x37, 0x7a, 0xbc, 0xaf, 0x27, 0x1c])) return "application/x-7z-compressed";
   if (starts([0x4d, 0x5a])) return "application/x-msdownload";
   if (starts([0x7f, 0x45, 0x4c, 0x46])) return "application/x-executable";
+  if (starts([0x4f, 0x67, 0x67, 0x53])) return text(b.subarray(0, 512), 512).includes("OpusHead") ? "audio/opus" : "application/ogg";
+  if (starts([0x49, 0x44, 0x33]) || (b[0] === 0xff && (b[1]! & 0xf6) === 0xf2)) return "audio/mpeg";
+  if (b[0] === 0xff && (b[1]! & 0xf6) === 0xf0) return "audio/aac";
+  if (starts([0x44, 0x4b, 0x49, 0x46])) return text(b.subarray(8, 12), 4) === "AV01" ? "video/av1" : "video/x-ivf";
+  if (starts([0x00, 0x00, 0x01, 0x00]) && b.length > 6 && b[4]! + (b[5]! << 8) <= 64) return "image/x-icon";
+  if (starts([0x00, 0x00, 0x00, 0x01]) || starts([0x00, 0x00, 0x01])) {
+    // an Annex B elementary stream: the first NAL unit's header says which codec (H.264 types 1–23 in the low five
+    // bits; HEVC types in bits 1–6 with the forbidden bit clear)
+    const off = starts([0x00, 0x00, 0x00, 0x01]) ? 4 : 3;
+    const h = b[off]!;
+    if ((h & 0x80) === 0) {
+      const hevcType = (h >> 1) & 0x3f;
+      const hevcTid = (b[off + 1] ?? 0) & 0x07;
+      if ([32, 33, 34, 39, 40].includes(hevcType) && hevcTid >= 1 && (h & 0x01) === 0) return "video/hevc";
+      const h264Type = h & 0x1f;
+      if (h264Type >= 1 && h264Type <= 23) return "video/h264";
+    }
+  }
   if (b.length >= 12 && starts([0x66, 0x74, 0x79, 0x70], 4)) {
     const brand = text(b.subarray(8, 12), 4);
     return BRANDS[brand] ?? (ext === "m4a" ? "audio/mp4" : ext === "mov" ? "video/quicktime" : "video/mp4");

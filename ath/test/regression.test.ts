@@ -505,6 +505,87 @@ describe("regression: export bundles (zip, containers — generated twins of the
   }
 });
 
+/** Loose files a producer left a `.capture.yaml` beside (D-sidecar): the origin folds in; classification is by the bytes. */
+describe("regression: loose documents with sidecars", () => {
+  const docs: { file: string; blake3: string; root: string; origin: string }[] = [
+    {
+      file: "statement-2026-03.pdf",
+      blake3: "409245363c6bf171d93a05a4c3df8b87145d2a6411e36f5c7c2676583b17f02d",
+      root: "pdf",
+      origin: "bank-statement",
+    },
+    {
+      file: "tax-slip-2025.pdf",
+      blake3: "9c7ac767810beee6fbb6c41dd874ed5915d70026c8c054ae42be7332d6ba0ae4",
+      root: "pdf",
+      origin: "tax-slip",
+    },
+    {
+      file: "policy-schedule.pdf",
+      blake3: "c662da40ef0466ef873181c07902d07583842c6fc930fe90d23821b6832d872f",
+      root: "pdf",
+      origin: "insurance-document",
+    },
+    {
+      file: "account-confirmation.pdf",
+      blake3: "7b2edf118bd04aca3b665e230b1a75ef9925130d30e249671b53390aa8b5efa5",
+      root: "pdf",
+      origin: "banking-document",
+    },
+    {
+      file: "chart-printout.pdf",
+      blake3: "24c1477b3562892536c1e39587659065673147397d3eae0f6a47eaa99ad441ec",
+      root: "pdf",
+      origin: "health-record",
+    },
+    {
+      file: "design-export.pdf",
+      blake3: "38cc78eb0aec488d7e71ab9ba19f08450ffea6ab4b44060f5574bebb31959790",
+      root: "pdf",
+      origin: "claude-export",
+    },
+    {
+      file: "owner-statement.md",
+      blake3: "6d4a69b2935ac22f1eb8e5b3236448a1a2e07bdc6ed51aa00cfc3b744ce430e8",
+      root: "markdown",
+      origin: "owner-statement",
+    },
+    {
+      file: "contact-card.vcf",
+      blake3: "75eee68fdbadde02da00b5004924dc771245aca6a4b864b0b257cf254d9844fe",
+      root: "vcard",
+      origin: "icloud-contacts-card",
+    },
+    {
+      file: "sms-2026-03.ndjson",
+      blake3: "2275613d697f25e2846499b364fa223facbbd568598fd6ce84223c9950e35e34",
+      root: "ndjson",
+      origin: "sms-backup",
+    },
+    {
+      file: "location-history.json",
+      blake3: "8c73633d06364efe3dd483cb1fceebccae53dbbbc43586ea3bc704827c1fada9",
+      root: "json",
+      origin: "google-timeline-export",
+    },
+  ];
+  for (const d of docs) {
+    test(`${d.file}: ${d.root} from ${d.origin}`, async () => {
+      const f = foundation();
+      const chain = loadChain(f);
+      const o = loadOntology(chain);
+      const r = await ath(["--json", "ingest", join(SYN, d.file), "--received", "2026-10-16"], { cwd: f, env });
+      expect(r.code, r.stderr).toBe(0);
+      expect((r.json() as { data: { ingested: { blake3: string }[] } }).data.ingested[0]!.blake3).toBe(d.blake3);
+      const a = await loadArtifact(chain, o, d.blake3);
+      expect(a.root).toBe(d.root);
+      expect((a.capturedFrom!.value as { origin: string; fields: Record<string, unknown> }).origin).toBe(d.origin);
+      expect(Object.keys((a.capturedFrom!.value as { fields: Record<string, unknown> }).fields).length).toBeGreaterThan(0);
+      expect((await ath(["lint", d.blake3], { cwd: f, env })).code).toBe(0);
+    });
+  }
+});
+
 describe("regression: the regatta mailing (rfc822, derived tree — the generated twin of the festival mailing)", () => {
   test("header + body + blocks; the HTML alternative and three attachments are subjects; the message harvests", async () => {
     const f = foundation();

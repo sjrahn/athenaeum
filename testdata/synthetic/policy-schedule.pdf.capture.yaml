@@ -1,0 +1,11 @@
+# provenance of a local file, as the producer leaves it beside the bytes (D-sidecar)
+origin: insurance-document
+via: export
+origin_fields:
+  insurer: Example Mutual
+  brand: Harbour Cover
+  policy_number: HC-0000001
+  line: home contents
+  document_type: schedule
+  effective_date: "2026-04-01"
+  expiry_date: "2027-03-31"

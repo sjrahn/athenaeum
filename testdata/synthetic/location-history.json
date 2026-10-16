@@ -1,0 +1,282 @@
+[
+  {
+    "startTime": "2026-03-01T07:00:00.000+00:00",
+    "endTime": "2026-03-01T08:27:42.000+00:00",
+    "activity": {
+      "start": "geo:55.627,-6.190",
+      "end": "geo:55.630,-6.185",
+      "distanceMeters": 1347,
+      "probability": 0.7,
+      "topCandidate": {
+        "type": "walking",
+        "probability": 0.8
+      }
+    }
+  },
+  {
+    "startTime": "2026-03-01T08:27:42.000+00:00",
+    "endTime": "2026-03-01T08:43:52.000+00:00",
+    "visit": {
+      "hierarchyLevel": 0,
+      "probability": 0.9,
+      "topCandidate": {
+        "placeID": "ChIJ000000000000001",
+        "semanticType": "HOME",
+        "probability": 0.8,
+        "placeLocation": "geo:55.627,-6.190"
+      }
+    }
+  },
+  {
+    "startTime": "2026-03-01T08:43:52.000+00:00",
+    "endTime": "2026-03-01T10:40:29.000+00:00",
+    "activity": {
+      "start": "geo:55.627,-6.190",
+      "end": "geo:55.630,-6.185",
+      "distanceMeters": 3934,
+      "probability": 0.7,
+      "topCandidate": {
+        "type": "walking",
+        "probability": 0.8
+      }
+    }
+  },
+  {
+    "startTime": "2026-03-01T10:40:29.000+00:00",
+    "endTime": "2026-03-01T11:30:03.000+00:00",
+    "visit": {
+      "hierarchyLevel": 0,
+      "probability": 0.9,
+      "topCandidate": {
+        "placeID": "ChIJ000000000000003",
+        "semanticType": "UNKNOWN",
+        "probability": 0.8,
+        "placeLocation": "geo:55.627,-6.190"
+      }
+    }
+  },
+  {
+    "startTime": "2026-03-01T11:30:03.000+00:00",
+    "endTime": "2026-03-01T12:08:08.000+00:00",
+    "activity": {
+      "start": "geo:55.627,-6.190",
+      "end": "geo:55.630,-6.185",
+      "distanceMeters": 2858,
+      "probability": 0.7,
+      "topCandidate": {
+        "type": "walking",
+        "probability": 0.8
+      }
+    }
+  },
+  {
+    "startTime": "2026-03-01T12:08:08.000+00:00",
+    "endTime": "2026-03-01T12:20:11.000+00:00",
+    "visit": {
+      "hierarchyLevel": 0,
+      "probability": 0.9,
+      "topCandidate": {
+        "placeID": "ChIJ000000000000005",
+        "semanticType": "HOME",
+        "probability": 0.8,
+        "placeLocation": "geo:55.627,-6.190"
+      }
+    }
+  },
+  {
+    "startTime": "2026-03-01T12:20:11.000+00:00",
+    "endTime": "2026-03-01T14:16:21.000+00:00",
+    "activity": {
+      "start": "geo:55.627,-6.190",
+      "end": "geo:55.630,-6.185",
+      "distanceMeters": 2063,
+      "probability": 0.7,
+      "topCandidate": {
+        "type": "walking",
+        "probability": 0.8
+      }
+    }
+  },
+  {
+    "startTime": "2026-03-01T14:16:21.000+00:00",
+    "endTime": "2026-03-01T16:08:09.000+00:00",
+    "visit": {
+      "hierarchyLevel": 0,
+      "probability": 0.9,
+      "topCandidate": {
+        "placeID": "ChIJ000000000000007",
+        "semanticType": "UNKNOWN",
+        "probability": 0.8,
+        "placeLocation": "geo:55.627,-6.190"
+      }
+    }
+  },
+  {
+    "startTime": "2026-03-01T16:08:09.000+00:00",
+    "endTime": "2026-03-01T17:32:52.000+00:00",
+    "activity": {
+      "start": "geo:55.627,-6.190",
+      "end": "geo:55.630,-6.185",
+      "distanceMeters": 551,
+      "probability": 0.7,
+      "topCandidate": {
+        "type": "walking",
+        "probability": 0.8
+      }
+    }
+  },
+  {
+    "startTime": "2026-03-01T17:32:52.000+00:00",
+    "endTime": "2026-03-01T18:32:31.000+00:00",
+    "visit": {
+      "hierarchyLevel": 0,
+      "probability": 0.9,
+      "topCandidate": {
+        "placeID": "ChIJ000000000000009",
+        "semanticType": "HOME",
+        "probability": 0.8,
+        "placeLocation": "geo:55.627,-6.190"
+      }
+    }
+  },
+  {
+    "startTime": "2026-03-01T18:32:31.000+00:00",
+    "endTime": "2026-03-01T19:41:31.000+00:00",
+    "activity": {
+      "start": "geo:55.627,-6.190",
+      "end": "geo:55.630,-6.185",
+      "distanceMeters": 2061,
+      "probability": 0.7,
+      "topCandidate": {
+        "type": "walking",
+        "probability": 0.8
+      }
+    }
+  },
+  {
+    "startTime": "2026-03-01T19:41:31.000+00:00",
+    "endTime": "2026-03-01T21:01:11.000+00:00",
+    "visit": {
+      "hierarchyLevel": 0,
+      "probability": 0.9,
+      "topCandidate": {
+        "placeID": "ChIJ0000000000000011",
+        "semanticType": "UNKNOWN",
+        "probability": 0.8,
+        "placeLocation": "geo:55.627,-6.190"
+      }
+    }
+  },
+  {
+    "startTime": "2026-03-01T21:01:11.000+00:00",
+    "endTime": "2026-03-01T22:31:11.000+00:00",
+    "activity": {
+      "start": "geo:55.627,-6.190",
+      "end": "geo:55.630,-6.185",
+      "distanceMeters": 4336,
+      "probability": 0.7,
+      "topCandidate": {
+        "type": "walking",
+        "probability": 0.8
+      }
+    }
+  },
+  {
+    "startTime": "2026-03-01T22:31:11.000+00:00",
+    "endTime": "2026-03-01T22:52:34.000+00:00",
+    "visit": {
+      "hierarchyLevel": 0,
+      "probability": 0.9,
+      "topCandidate": {
+        "placeID": "ChIJ0000000000000013",
+        "semanticType": "HOME",
+        "probability": 0.8,
+        "placeLocation": "geo:55.627,-6.190"
+      }
+    }
+  },
+  {
+    "startTime": "2026-03-01T22:52:34.000+00:00",
+    "endTime": "2026-03-01T23:44:00.000+00:00",
+    "activity": {
+      "start": "geo:55.627,-6.190",
+      "end": "geo:55.630,-6.185",
+      "distanceMeters": 4691,
+      "probability": 0.7,
+      "topCandidate": {
+        "type": "walking",
+        "probability": 0.8
+      }
+    }
+  },
+  {
+    "startTime": "2026-03-01T23:44:00.000+00:00",
+    "endTime": "2026-03-02T00:59:32.000+00:00",
+    "visit": {
+      "hierarchyLevel": 0,
+      "probability": 0.9,
+      "topCandidate": {
+        "placeID": "ChIJ0000000000000015",
+        "semanticType": "UNKNOWN",
+        "probability": 0.8,
+        "placeLocation": "geo:55.627,-6.190"
+      }
+    }
+  },
+  {
+    "startTime": "2026-03-02T00:59:32.000+00:00",
+    "endTime": "2026-03-02T02:06:38.000+00:00",
+    "activity": {
+      "start": "geo:55.627,-6.190",
+      "end": "geo:55.630,-6.185",
+      "distanceMeters": 294,
+      "probability": 0.7,
+      "topCandidate": {
+        "type": "walking",
+        "probability": 0.8
+      }
+    }
+  },
+  {
+    "startTime": "2026-03-02T02:06:38.000+00:00",
+    "endTime": "2026-03-02T03:08:15.000+00:00",
+    "visit": {
+      "hierarchyLevel": 0,
+      "probability": 0.9,
+      "topCandidate": {
+        "placeID": "ChIJ0000000000000017",
+        "semanticType": "HOME",
+        "probability": 0.8,
+        "placeLocation": "geo:55.627,-6.190"
+      }
+    }
+  },
+  {
+    "startTime": "2026-03-02T03:08:15.000+00:00",
+    "endTime": "2026-03-02T04:05:22.000+00:00",
+    "activity": {
+      "start": "geo:55.627,-6.190",
+      "end": "geo:55.630,-6.185",
+      "distanceMeters": 2560,
+      "probability": 0.7,
+      "topCandidate": {
+        "type": "walking",
+        "probability": 0.8
+      }
+    }
+  },
+  {
+    "startTime": "2026-03-02T04:05:22.000+00:00",
+    "endTime": "2026-03-02T04:52:16.000+00:00",
+    "visit": {
+      "hierarchyLevel": 0,
+      "probability": 0.9,
+      "topCandidate": {
+        "placeID": "ChIJ0000000000000019",
+        "semanticType": "UNKNOWN",
+        "probability": 0.8,
+        "placeLocation": "geo:55.627,-6.190"
+      }
+    }
+  }
+]
