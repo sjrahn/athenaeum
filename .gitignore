@@ -14,5 +14,5 @@ research
 
 __pycache__/
 
-# regression bytes (private exports + a public PDF placed by hand): never tracked
+# private bytes once placed here for the regression set; the set is synthetic now, the guard stays
 /testdata/regression/

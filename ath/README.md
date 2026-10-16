@@ -19,7 +19,7 @@ bun run src/main.ts whoami            # or: bun run build && dist/ath whoami
 - `src/engine/` — the contract: lines, addresses, layers, ontology, derivation ops, trees, lints, L7, verify, harvest,
   export, serve. Never imports the kit except its error type.
 - `src/commands/` — thin: parse → engine → data (+ a text renderer).
-- `test/` — `bun test`; `test/harness.ts` runs the CLI in-process; regression tests self-skip without the bytes.
+- `test/` — `bun test`; `test/harness.ts` runs the CLI in-process; the regression set runs over committed synthetic fixtures.
 
 ## A layer
 

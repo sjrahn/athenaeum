@@ -66,8 +66,8 @@ the wire. Its manifest format is a versioned contract
 ([`scanner/MANIFEST-SCHEMA.md`](scanner/MANIFEST-SCHEMA.md)).
 
 [`testdata/`](testdata/) is the regression library: the regression ontology,
-a tracked manifest and seeder for a gitignored scratch layer, synthetic
-fixtures, and the place the private regression bytes are placed by hand.
+a tracked manifest and seeder for a gitignored scratch layer, and the synthetic
+fixtures (a generated twin of every byte shape in the owner's corpus) with their generators.
 
 ## License
 

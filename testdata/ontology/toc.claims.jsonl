@@ -1,5 +1,5 @@
 {"subject":"toc","predicate":"refines","value":"unit"}
 {"subject":"toc","predicate":"reads","value":"cells"}
 {"subject":"toc","predicate":"lint","value":"every row (num, title) names a heading"}
-{"subject":"toc","predicate":"renders","value":{"md":"**{title}** then - {num} {title} — {page}"}}
+{"subject":"toc","predicate":"renders","value":{"md":"{body}"}}
 {"subject":"toc","predicate":"aligns","value":"doco:TableOfContents"}

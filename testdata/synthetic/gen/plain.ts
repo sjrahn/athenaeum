@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
-// plain.ts — the twins whose test is classify + attest + lint: fictional content in the shape of the private
-// regression artifacts (testdata/exemplars.yaml, `source: regression`), one function each. The text formats are
+// plain.ts — the twins whose test is classify + attest + lint: fictional content in the shape of the corpus's
+// plain artifacts (testdata/exemplars.yaml), one function each. The text formats are
 // written by this script and reproduce byte-for-byte; the raster, video and the receipt PDF come from a tool
 // (ImageMagick, ffmpeg, typst — versions in gen/README.md) and are pinned by the committed bytes, as the README says.
 //

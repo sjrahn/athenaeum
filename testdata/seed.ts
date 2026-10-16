@@ -1,8 +1,7 @@
 #!/usr/bin/env bun
 // seed.ts — seed testdata/instance (a gitignored foundation layer) from testdata/exemplars.yaml: for each entry,
-// locate the artifact's bytes (testdata/regression/<file> for a `regression` entry, placed by hand; the committed
-// testdata/synthetic/<file> for a `synthetic` one; or, with --from, a source instance's corpus/artifacts/<ab>/<blake3>.*)
-// and `ath ingest` them; a container's members become subjects on their own. Idempotent.
+// locate the artifact's bytes (the committed testdata/synthetic/<file>; or, with --from, a source instance's
+// corpus/artifacts/<ab>/<blake3>.*) and `ath ingest` them; a container's members become subjects on their own. Idempotent.
 //
 //   bun testdata/seed.ts [--from SOURCE_INSTANCE_ROOT]
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync } from "node:fs";
@@ -23,7 +22,6 @@ interface Entry {
   root: string;
   shape: string;
   note?: string;
-  source: "regression" | "synthetic";
 }
 
 const manifest = Bun.YAML.parse(readFileSync(join(HERE, "exemplars.yaml"), "utf8")) as Entry[];
@@ -33,9 +31,9 @@ function ath(args: string[]): { code: number; out: string; err: string } {
   return { code: r.exitCode, out: r.stdout.toString(), err: r.stderr.toString() };
 }
 
-/** Where the entry's bytes are: the placed/committed file, else the source instance's artifact by blake3. */
+/** Where the entry's bytes are: the committed file, else the source instance's artifact by blake3. */
 function locate(e: Entry): string | null {
-  const local = join(HERE, e.source === "synthetic" ? "synthetic" : "regression", e.file);
+  const local = join(HERE, "synthetic", e.file);
   if (existsSync(local)) return local;
   if (!from) return null;
   const dir = join(from, "corpus", "artifacts", e.blake3.slice(0, 2));
@@ -63,11 +61,11 @@ for (const e of manifest) {
   }
   const path = locate(e);
   if (!path) {
-    console.error(`missing bytes for ${e.mime} ${e.blake3.slice(0, 12)}… (${e.source}/${e.file}${e.source === "regression" ? ", or --from" : ""})`);
+    console.error(`missing bytes for ${e.mime} ${e.blake3.slice(0, 12)}… (synthetic/${e.file}, or --from)`);
     missing++;
     continue;
   }
-  const r = ath(["ingest", path, "--origin", e.source === "synthetic" ? "synthetic" : "source-instance", "--via", "upload"]);
+  const r = ath(["ingest", path, "--origin", path === join(HERE, "synthetic", e.file) ? "synthetic" : "source-instance", "--via", "upload"]);
   if (r.code !== 0) {
     console.error(`ingest failed for ${e.blake3.slice(0, 12)}…: ${r.err.trim()}`);
     missing++;

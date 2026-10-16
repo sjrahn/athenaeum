@@ -33,10 +33,10 @@ migration story, together (Part I §8). Normative spec changes are owner-gated.
 - `testdata/` — the regression library: `ontology/` (the regression ontology a
   foundation starts from, a root term per mime), `exemplars.yaml` (one artifact
   per mime: file, blake3, mime, root) + `seed.ts` (a gitignored scratch layer),
-  `synthetic/` (committed fixtures and their generators), `passes/` (the generated
-  pass of the asserted-tree PDF), and
-  `regression/` (gitignored: the private regression bytes, placed by hand under
-  the names the manifest gives). See `testdata/README.md`.
+  `synthetic/` (committed fixtures and their generators: a twin of every byte
+  shape in the owner's corpus, inventoried in `synthetic/gen/COVERAGE.md`) and
+  `passes/` (the generated pass of the asserted-tree PDF). No private byte is in
+  the set. See `testdata/README.md`.
 
 The v52 Python tooling (`tools/`) is retired on this branch; it lives on the
 `v52` tag and keeps serving the current instance from a worktree of that tag.
@@ -46,8 +46,7 @@ The v52 Python tooling (`tools/`) is retired on this branch; it lives on the
     cd ath && bun run check      # tsc --noEmit, biome check, bun test
     cd ath && bun run build      # the compiled binary still loads pdfium
 
-The regression suite (`ath/test/regression.test.ts`) self-skips per missing
-file under `testdata/regression/`; place the bytes to include it. Run the tests
-with `TMPDIR` on a filesystem with room (`/tmp` is a 16 GB tmpfs here). A change
-that touches the contract's behaviour also owes a row in `spec/successor.md`
+The regression suite (`ath/test/regression.test.ts`) runs entirely over the
+committed synthetic fixtures; nothing self-skips. Run the tests with `TMPDIR`
+on a filesystem with room (`/tmp` is a 16 GB tmpfs here). A change that touches the contract's behaviour also owes a row in `spec/successor.md`
 Appendix D with the test that pins it.

@@ -5,6 +5,9 @@
 // user stats, footer, forms, buttons), and a script and style blob so the remainder is realistic. Fictional forum.
 //
 //   bun testdata/synthetic/gen/thread.ts
+//
+// `model` (the title and the posts: author, datetime, paragraphs, which earlier post is quoted) is exported so the
+// regression leg can check every derived body against what the generator meant, byte for byte.
 import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { FIRST, LAST, int, lcg, paragraph, pick } from "./lib/rand.ts";
@@ -29,9 +32,10 @@ const shown = (iso: string) => {
 const posts = Array.from({ length: 10 }, (_, i) => {
   const m = members[[0, 1, 0, 2, 0, 3, 0, 2, 0, 4][i]!]!;
   const body: string[] = [];
-  for (let k = 0; k < int(r, 1, 3); k++) body.push(esc(paragraph(r)));
+  for (let k = 0; k < int(r, 1, 3); k++) body.push(paragraph(r));
   return { n: i + 1, id: 48213 * 10 + i + 1, m, at: stamp(i), body, quotes: i === 4 ? 3 : i === 7 ? 6 : null };
 });
+export const model = { title: TITLE, posts };
 
 const chrome = `<div class="p-nav"><nav><a href="/">Home</a> <a href="/forums/">Forums</a> <a href="/whats-new/">What's new</a></nav><form action="/search/" method="post"><input name="keywords" placeholder="Search…"><button type="submit">Search</button></form></div>
 <ul class="p-breadcrumbs"><li><a href="/forums/">Forums</a></li><li><a href="/forums/moorings.12/">Moorings and berths</a></li></ul>`;
@@ -42,7 +46,7 @@ const post = (p: (typeof posts)[number]) => `<article class="message message--po
 <div class="message-cell message-cell--main"><header class="message-attribution"><a href="/threads/mooring-line-chafe.48213/post-${p.id}" qid="post-number" class="message-attribution-opposite">
  #${p.n}
  </a><time class="u-dt" dir="auto" datetime="${p.at}" data-time="${Math.floor(Date.parse(p.at) / 1000)}" qid="post-date-time" title="${shown(p.at)} at 7:${String(p.n * 7 % 60).padStart(2, "0")} AM">${shown(p.at)}</time></header>
-<div class="bbWrapper">${p.quotes ? `<blockquote class="bbCodeBlock bbCodeBlock--expandable bbCodeBlock--quote"><div class="bbCodeBlock-title"><a href="/goto/post?id=${posts[p.quotes - 1]!.id}" class="bbCodeBlock-sourceJump" data-xf-click="attribution" data-content-selector="#post-${posts[p.quotes - 1]!.id}">${posts[p.quotes - 1]!.m.name} said:</a></div><div class="bbCodeBlock-content"><div class="bbCodeBlock-expandContent js-expandContent">${posts[p.quotes - 1]!.body[0]}</div><div class="bbCodeBlock-expandLink js-expandLink"><a role="button">Click to expand...</a></div></div></blockquote>` : ""}${p.body.join("<br>\n<br>\n")}</div>
+<div class="bbWrapper">${p.quotes ? `<blockquote class="bbCodeBlock bbCodeBlock--expandable bbCodeBlock--quote"><div class="bbCodeBlock-title"><a href="/goto/post?id=${posts[p.quotes - 1]!.id}" class="bbCodeBlock-sourceJump" data-xf-click="attribution" data-content-selector="#post-${posts[p.quotes - 1]!.id}">${posts[p.quotes - 1]!.m.name} said:</a></div><div class="bbCodeBlock-content"><div class="bbCodeBlock-expandContent js-expandContent">${esc(posts[p.quotes - 1]!.body[0]!)}</div><div class="bbCodeBlock-expandLink js-expandLink"><a role="button">Click to expand...</a></div></div></blockquote>` : ""}${p.body.map(esc).join("<br>\n<br>\n")}</div>
 <footer class="message-footer"><div class="message-actionBar actionBar"><a href="#" class="actionBar-action">Like</a> <a href="#" class="actionBar-action">Reply</a> <button type="button" class="button--link">Report</button></div></footer></div>
 </article>`;
 
@@ -63,5 +67,7 @@ ${posts.map(post).join("\n")}
 <footer class="p-footer"><div class="p-footer-inner"><ul class="p-footer-linkList"><li><a href="/help/terms/">Terms and rules</a></li><li><a href="/help/privacy-policy/">Privacy policy</a></li><li><a href="/help/">Help</a></li></ul><div class="p-footer-copyright">Community platform by Example Software © 2026</div></div></footer>
 </div>${script}</body></html>
 `;
-writeFileSync(OUT, html);
-console.log(`wrote ${OUT} (${html.length} chars)`);
+if (import.meta.main) {
+  writeFileSync(OUT, html);
+  console.log(`wrote ${OUT} (${html.length} chars)`);
+}
