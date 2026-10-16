@@ -41,7 +41,7 @@ An instance is a **chain of layers**, the bottom public. A private instance is a
 - **Schema and ontology are foundation-owned.** An extension adds terms and fields; it never redefines a foundation term. A local mint is a proposal, nagged upward.
 - **Publication is the foundation.** `ath serve` on an extension serves the union on the owner plane and the foundation on the public plane (§12).
 
-> v52 → one private repository, tenancy derived per origin, sensitivity computed upward. Replaced by layering (direction §1–2). The 400 floor records in ath-steven are the placement worklist.
+> v52 → one private repository, tenancy derived per origin, sensitivity computed upward. Replaced by layering (direction §1–2). The 400 floor records in the owner's instance are the placement worklist.
 
 ## 3. Three trees, one grammar
 
@@ -364,7 +364,7 @@ The markdown record and its zones · form / atom / section / segment / placement
 - **L7 for tex** — the multiset comparator is specified, not built; Equation (1) is accepted by hand today.
 - **Two root classes at once** (a scanned regulation): resolved by the most specific `matches` and one stored override; needs an exemplar.
 - **Term governance** — who reviews a proposed term into a foundation. Not a spec question; must exist before the first extension ships one.
-- **Migration** — ath-steven's authored statuses become checks; records become exports; the 400 floor records are placed in a layer. The measured cost is owed with the amendment.
+- **Migration** — the instance's authored statuses become checks; records become exports; the 400 floor records are placed in a layer. The measured cost is owed with the amendment.
 
 Borrowed vocabulary, by design: Web Annotation (anchor + quote with prefix/suffix) · PROV (pass, by, verify, lineage) · nanopublications (claim + provenance as named graphs) · Akoma Ntoso (designated addressing) · Datomic (fact log + transaction entity = line + pass). What no precedent combines — intrinsic addresses, structure as verified judgment, readings as revisions bound per evidence entry, status and demand derived, the ontology as the recipe, one-way layering — is the system.
 

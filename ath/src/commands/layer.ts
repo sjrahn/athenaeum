@@ -25,7 +25,7 @@ export const layerInit = defineCommand({
     summary: "make a layer: athenaeum.yaml, ontology/ corpus/ ledger/, .ath/ (a foundation, or an extension of one)",
     tier: "write",
     mutating: true,
-    examples: ["ath layer init ./foundation --name public", "ath layer init ./mine --name steven --extends ../foundation --tier private"],
+    examples: ["ath layer init ./foundation --name public", "ath layer init ./mine --name mine --extends ../foundation --tier private"],
   },
   contract: defineContract({
     key: "layer-init",
