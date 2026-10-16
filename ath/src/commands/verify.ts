@@ -22,7 +22,7 @@ export const verify = defineCommand({
     summary: "bindings (bound · held · flagged), derived status per claim, demand, stale passes",
     tier: "read",
     mutating: false,
-    examples: ["ath verify --all", "ath verify g8board-post-3758863 --bindings", "ath verify --stale"],
+    examples: ["ath verify --all", "ath verify forum-post-482135 --bindings", "ath verify --stale"],
   },
   contract: defineContract({
     key: "verify",

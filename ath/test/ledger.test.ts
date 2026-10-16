@@ -19,12 +19,12 @@ describe("slugs", () => {
     expect(mintSlug("product", "B005OVCJN6", { slug: "asin-{key}", case: "keep" })).toBe("asin-B005OVCJN6");
     expect(mintSlug("marketplace", "Amazon.ca", { slug: "{key}" })).toBe("amazon-ca");
     expect(
-      mintSlug("forum-thread", "https://www.g8board.com/threads/idle-stall.292301/", {
-        slug: "g8board-thread-{1}",
+      mintSlug("forum-thread", "https://www.harbourboard.example/threads/mooring-line-chafe.48213/", {
+        slug: "forum-thread-{1}",
         extract: "\\.(\\d+)/?$",
       }),
-    ).toBe("g8board-thread-292301");
-    expect(mintSlug("member", "Davisb1983", { slug: "member-{key}" })).toBe("member-davisb1983");
+    ).toBe("forum-thread-48213");
+    expect(mintSlug("member", "Harbourmaster", { slug: "member-{key}" })).toBe("member-harbourmaster");
     expect(() => mintSlug("x", "nodigits", { extract: "(\\d+)" })).toThrow("does not match");
   });
 });
@@ -81,8 +81,8 @@ describe("harvest + verify over the fixtures", () => {
     const h = await ath(["--json", "harvest", id], { cwd: f, env });
     const d = (h.json() as { data: { concepts: number; claims: number; written: string[] } }).data;
     expect(d.concepts).toBe(3);
-    expect(d.written.sort()).toEqual(["g8board-post-1", "g8board-thread-123", "member-alice"]);
-    const post = readJsonl(join(f, "ledger", "g8board-post-1.claims.jsonl"));
+    expect(d.written.sort()).toEqual(["forum-post-1", "forum-thread-123", "member-alice"]);
+    const post = readJsonl(join(f, "ledger", "forum-post-1.claims.jsonl"));
     expect(post.map((l) => l.predicate)).toEqual(["term", "manifested_by", "author", "body", "position", "posted"]);
     const author = post.find((l) => l.predicate === "author")!;
     expect(author).toMatchObject({
@@ -100,7 +100,7 @@ describe("harvest + verify over the fixtures", () => {
       reading: "line:manifests datetime",
       quote: "2026-04-03T23:48:07Z",
     });
-    const thread = readJsonl(join(f, "ledger", "g8board-thread-123.claims.jsonl"));
+    const thread = readJsonl(join(f, "ledger", "forum-thread-123.claims.jsonl"));
     expect(thread.find((l) => l.predicate === "url")!.evidence).toEqual([
       {
         anchor: `corpus://${id}?whole`,
@@ -110,7 +110,7 @@ describe("harvest + verify over the fixtures", () => {
         reading: "line:captured_from uri",
       },
     ]);
-    expect(thread.find((l) => l.predicate === "post")).toMatchObject({ object: "g8board-post-1" });
+    expect(thread.find((l) => l.predicate === "post")).toMatchObject({ object: "forum-post-1" });
     const member = readJsonl(join(f, "ledger", "member-alice.claims.jsonl"));
     expect(member.find((l) => l.predicate === "user_id")!.value).toBe("42");
     // again: nothing changes

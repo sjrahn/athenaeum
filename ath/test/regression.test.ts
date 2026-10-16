@@ -133,8 +133,8 @@ describe("regression: the forum thread (html, derived tree — the generated twi
       v.json() as { data: { counts: { bound: number; entries: number; flagged: number; held: number; byStatus: Record<string, number> } } }
     ).data;
     expect(vd.counts).toMatchObject({ entries: 85, bound: 85, flagged: 0, held: 0, byStatus: { confirmed: 58, provisional: 12 } });
-    const quoting = readJsonl(join(f, "ledger", "g8board-post-482135.claims.jsonl")).find((l) => l.predicate === "quotes")!;
-    expect(quoting).toMatchObject({ object: "g8board-post-482133", qualifiers: { as: "post-482133" } });
+    const quoting = readJsonl(join(f, "ledger", "forum-post-482135.claims.jsonl")).find((l) => l.predicate === "quotes")!;
+    expect(quoting).toMatchObject({ object: "forum-post-482133", qualifiers: { as: "post-482133" } });
     expect((quoting.evidence as { reading: string }[])[0]!.reading).toBe("line:manifests target");
     expect((await ath(["lint", "--all"], { cwd: f, env })).code).toBe(0);
     expect((await ath(["tree", "at", ing.blake3, "post=4"], { cwd: f, env })).stdout.trim()).toBe("bytes=9216,10770  (post)");

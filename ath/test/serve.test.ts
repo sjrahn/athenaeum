@@ -49,7 +49,7 @@ describe("serve", () => {
     const tree = await get(pub, `/corpus/${id}/tree`);
     expect(tree.status).toBe(200);
     expect((tree.body.scopes as unknown[]).length).toBe(8);
-    const post = await get(pub, "/ledger/g8board-post-1");
+    const post = await get(pub, "/ledger/forum-post-1");
     expect(post.status).toBe(200);
     expect((post.body.claims as { status: string }[]).every((c) => c.status === "confirmed")).toBe(true);
     expect(post.body.demand).toBeUndefined();
