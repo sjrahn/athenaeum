@@ -32,7 +32,7 @@ describe("ontology", () => {
     const h = effectiveRules(o, ["heading"], [["document"]]);
     expect(h.reads).toBe("text");
     expect(h.fields.map((x) => x.name)).toEqual(["num", "level"]);
-    expect(h.renders).toEqual({ md: "#{level+1} {num} {body}" });
+    expect(h.renders).toEqual({ md: "{level+1} {num} {body}" });
     expect(h.conventions).toContain("sub/superscripts flattened outside math");
     const pt = effectiveRules(o, ["parameter-table"]);
     expect(pt.expects).toEqual(["caption", "row"]); // inherited from table

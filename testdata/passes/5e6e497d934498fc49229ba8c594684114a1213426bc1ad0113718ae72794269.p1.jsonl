@@ -1,0 +1,436 @@
+{"at":"whole","predicate":"manifests","term":"methodological-tool","version":"02.1"}
+{"at":"page=1","predicate":"manifests","term":"page"}
+{"at":"page=2","predicate":"manifests","term":"page"}
+{"at":"page=3","predicate":"manifests","term":"page"}
+{"at":"page=4","predicate":"manifests","term":"page"}
+{"at":"page=5","predicate":"manifests","term":"page"}
+{"at":"page=6","predicate":"manifests","term":"page"}
+{"at":"page=7","predicate":"manifests","term":"page"}
+{"at":"page=8","predicate":"manifests","term":"page"}
+{"at":"page=1","predicate":"manifests","term":"cover-page"}
+{"at":"page=1","predicate":"in","value":{"at":"whole","ord":0}}
+{"at":"page=1&bbox=0.1432,0.1007,0.2526,0.0081","predicate":"manifests","term":"label"}
+{"at":"page=1&bbox=0.1432,0.1007,0.2526,0.0081","predicate":"in","value":{"at":"page=1","ord":0}}
+{"at":"page=1&bbox=0.1432,0.1007,0.2526,0.0081","predicate":"reads_as","aspect":"text","rev":"b3:9f55506c70aa384c","body":"HARBOUR STANDARDS OFFICE"}
+{"at":"page=1&bbox=0.1433,0.1928,0.0591,0.0103","predicate":"manifests","term":"label"}
+{"at":"page=1&bbox=0.1433,0.1928,0.0591,0.0103","predicate":"in","value":{"at":"page=1","ord":1}}
+{"at":"page=1&bbox=0.1433,0.1928,0.0591,0.0103","predicate":"reads_as","aspect":"text","rev":"b3:1abe56f0a5480196","body":"HL-02"}
+{"at":"page=1&bbox=0.144,0.4271,0.3028,0.0201","predicate":"manifests","term":"label"}
+{"at":"page=1&bbox=0.144,0.4271,0.3028,0.0201","predicate":"in","value":{"at":"page=1","ord":2}}
+{"at":"page=1&bbox=0.144,0.4271,0.3028,0.0201","predicate":"reads_as","aspect":"text","rev":"b3:369bc949a5ed8427","body":"Calculation procedure"}
+{"at":"page=1&bbox=0.1435,0.5031,0.6121,0.0975","predicate":"manifests","term":"heading","level":0}
+{"at":"page=1&bbox=0.1435,0.5031,0.6121,0.0975","predicate":"in","value":{"at":"page=1","ord":3}}
+{"at":"page=1&bbox=0.1435,0.5031,0.6121,0.0975","predicate":"reads_as","aspect":"text","rev":"b3:70fdd5d670beee3a","body":"Procedure to estimate heat loss from insulated pipework over a reporting period"}
+{"at":"page=1&bbox=0.1429,0.6906,0.0901,0.0087","predicate":"manifests","term":"label"}
+{"at":"page=1&bbox=0.1429,0.6906,0.0901,0.0087","predicate":"in","value":{"at":"page=1","ord":4}}
+{"at":"page=1&bbox=0.1429,0.6906,0.0901,0.0087","predicate":"reads_as","aspect":"text","rev":"b3:aae7b6bb9c216abb","body":"Version 02.1"}
+{"at":"page=1&bbox=0.1429,0.8316,0.1905,0.0673","predicate":"manifests","term":"figure"}
+{"at":"page=1&bbox=0.1429,0.8316,0.1905,0.0673","predicate":"in","value":{"at":"page=1","ord":5}}
+{"at":"page=2","predicate":"manifests","term":"table-of-contents"}
+{"at":"page=2","predicate":"in","value":{"at":"whole","ord":1}}
+{"at":"page=2&bbox=0.1429,0.1,0.7138,0.3402","predicate":"manifests","term":"toc"}
+{"at":"page=2&bbox=0.1429,0.1,0.7138,0.3402","predicate":"in","value":{"at":"page=2","ord":0}}
+{"at":"page=2&bbox=0.1429,0.1,0.7138,0.3402","predicate":"reads_as","aspect":"cells","rev":"b3:3fd4ca5f856cb70f","body":[["Table of contents","",""],["1.","Introduction","3"],["1.1.","Background","3"],["2.","Scope, applicability and entry into force","3"],["2.1.","Scope and applicability","3"],["2.2.","Entry into force","3"],["3.","Definitions","3"],["4.","Parameters","3"],["5.","Calculation procedure","4"],["5.1.","Heat loss from a pipe run","4"],["5.2.","Surface heat transfer coefficient","4"],["5.3.","Annual total and uncertainty allowance","5"],["6.","Data and parameters","6"],["6.1.","Data and parameters not monitored","6"],["6.2.","Data and parameters monitored","6"],["6.3.","Monitoring plan","7"],["7.","Document information","8"]]}
+{"at":"page=3&bbox=0.145,0.1118,0.1574,0.0119","predicate":"manifests","term":"heading","num":"1.","level":1}
+{"at":"page=3&bbox=0.145,0.1118,0.1574,0.0119","predicate":"in","value":{"at":"whole","ord":2}}
+{"at":"page=3&bbox=0.145,0.1118,0.1574,0.0119","predicate":"reads_as","aspect":"text","rev":"b3:8188b31ff86bb127","body":"Introduction"}
+{"at":"page=3&bbox=0.1447,0.1529,0.1443,0.0135","predicate":"manifests","term":"heading","num":"1.1.","level":2}
+{"at":"page=3&bbox=0.1447,0.1529,0.1443,0.0135","predicate":"in","value":{"at":"page=3&bbox=0.145,0.1118,0.1574,0.0119","ord":0}}
+{"at":"page=3&bbox=0.1447,0.1529,0.1443,0.0135","predicate":"reads_as","aspect":"text","rev":"b3:bbd330c545aeb2bb","body":"Background"}
+{"at":"page=3&bbox=0.1429,0.1803,0.6623,0.0537","predicate":"manifests","term":"paragraph","num":"1."}
+{"at":"page=3&bbox=0.1429,0.1803,0.6623,0.0537","predicate":"in","value":{"at":"page=3&bbox=0.1447,0.1529,0.1443,0.0135","ord":0}}
+{"at":"page=3&bbox=0.1429,0.1803,0.6623,0.0537","predicate":"reads_as","aspect":"text","rev":"b3:063c4900b357c18a","body":"This procedure provides steps to estimate the heat lost from a run of insulated pipework over a reporting period, from the measured surface temperature of the insulation and the ambient temperature of the space the run passes through."}
+{"at":"page=3&bbox=0.1436,0.2455,0.6692,0.0336","predicate":"manifests","term":"paragraph","num":"2."}
+{"at":"page=3&bbox=0.1436,0.2455,0.6692,0.0336","predicate":"in","value":{"at":"page=3&bbox=0.1447,0.1529,0.1443,0.0135","ord":1}}
+{"at":"page=3&bbox=0.1436,0.2455,0.6692,0.0336","predicate":"reads_as","aspect":"text","rev":"b3:2281ce693b3db367","body":"It is intended for operators who report thermal losses of a distribution network against a baseline and who hold measurements at the segment level only."}
+{"at":"page=3&bbox=0.143,0.2906,0.6964,0.0737","predicate":"manifests","term":"paragraph","num":"3."}
+{"at":"page=3&bbox=0.143,0.2906,0.6964,0.0737","predicate":"in","value":{"at":"page=3&bbox=0.1447,0.1529,0.1443,0.0135","ord":2}}
+{"at":"page=3&bbox=0.143,0.2906,0.6964,0.0737","predicate":"reads_as","aspect":"text","rev":"b3:ae458a7e04f69914","body":"Earlier versions of this procedure treated the surface coefficient as a single default. Since version 02.0 the radiative part is calculated from the emissivity of the cladding, which matters for bright metal cladding in cold spaces, where the default overstated the loss by up to a fifth."}
+{"at":"page=3&bbox=0.1438,0.3901,0.4468,0.0156","predicate":"manifests","term":"heading","num":"2.","level":1}
+{"at":"page=3&bbox=0.1438,0.3901,0.4468,0.0156","predicate":"in","value":{"at":"whole","ord":3}}
+{"at":"page=3&bbox=0.1438,0.3901,0.4468,0.0156","predicate":"reads_as","aspect":"text","rev":"b3:031c8eb16dbe0e7b","body":"Scope, applicability and entry into force"}
+{"at":"page=3&bbox=0.1436,0.4311,0.2459,0.0134","predicate":"manifests","term":"heading","num":"2.1.","level":2}
+{"at":"page=3&bbox=0.1436,0.4311,0.2459,0.0134","predicate":"in","value":{"at":"page=3&bbox=0.1438,0.3901,0.4468,0.0156","ord":0}}
+{"at":"page=3&bbox=0.1436,0.4311,0.2459,0.0134","predicate":"reads_as","aspect":"text","rev":"b3:45bead352c906dac","body":"Scope and applicability"}
+{"at":"page=3&bbox=0.1434,0.4585,0.7022,0.0536","predicate":"manifests","term":"paragraph","num":"4."}
+{"at":"page=3&bbox=0.1434,0.4585,0.7022,0.0536","predicate":"in","value":{"at":"page=3&bbox=0.1436,0.4311,0.2459,0.0134","ord":0}}
+{"at":"page=3&bbox=0.1434,0.4585,0.7022,0.0536","predicate":"reads_as","aspect":"text","rev":"b3:07f0ff1c623fbf6c","body":"This procedure applies to runs of pipework carrying a heated fluid where every segment is wrapped in an insulation of known thickness and conductivity, and where the surface temperature of each segment is measured at least monthly."}
+{"at":"page=3&bbox=0.143,0.5237,0.6984,0.0336","predicate":"manifests","term":"paragraph","num":"5."}
+{"at":"page=3&bbox=0.143,0.5237,0.6984,0.0336","predicate":"in","value":{"at":"page=3&bbox=0.1436,0.4311,0.2459,0.0134","ord":1}}
+{"at":"page=3&bbox=0.143,0.5237,0.6984,0.0336","predicate":"reads_as","aspect":"text","rev":"b3:03aeecfe70b7d128","body":"The procedure does not apply to buried pipework, to segments whose insulation is wet or damaged, or to runs shorter than twenty metres in total."}
+{"at":"page=3&bbox=0.143,0.5689,0.7055,0.0536","predicate":"manifests","term":"paragraph","num":"6."}
+{"at":"page=3&bbox=0.143,0.5689,0.7055,0.0536","predicate":"in","value":{"at":"page=3&bbox=0.1436,0.4311,0.2459,0.0134","ord":2}}
+{"at":"page=3&bbox=0.143,0.5689,0.7055,0.0536","predicate":"reads_as","aspect":"text","rev":"b3:1182a65b514006e7","body":"Where a run passes through more than one space, the operator shall split it at the boundary and treat each part as a run of its own, with the ambient temperature of the space it passes through. A fitting at the boundary belongs to the part upstream of it."}
+{"at":"page=3&bbox=0.1436,0.641,0.1799,0.0134","predicate":"manifests","term":"heading","num":"2.2.","level":2}
+{"at":"page=3&bbox=0.1436,0.641,0.1799,0.0134","predicate":"in","value":{"at":"page=3&bbox=0.1438,0.3901,0.4468,0.0156","ord":1}}
+{"at":"page=3&bbox=0.1436,0.641,0.1799,0.0134","predicate":"reads_as","aspect":"text","rev":"b3:2e6652eced59899f","body":"Entry into force"}
+{"at":"page=3&bbox=0.1436,0.6684,0.7081,0.0335","predicate":"manifests","term":"paragraph","num":"7."}
+{"at":"page=3&bbox=0.1436,0.6684,0.7081,0.0335","predicate":"in","value":{"at":"page=3&bbox=0.1436,0.641,0.1799,0.0134","ord":0}}
+{"at":"page=3&bbox=0.1436,0.6684,0.7081,0.0335","predicate":"reads_as","aspect":"text","rev":"b3:c0aeda4e8eb171d4","body":"The date of entry into force is the date of publication of this version by the Office. It applies to reporting periods starting on or after that date."}
+{"at":"page=3&bbox=0.1439,0.7277,0.1409,0.0119","predicate":"manifests","term":"heading","num":"3.","level":1}
+{"at":"page=3&bbox=0.1439,0.7277,0.1409,0.0119","predicate":"in","value":{"at":"whole","ord":4}}
+{"at":"page=3&bbox=0.1439,0.7277,0.1409,0.0119","predicate":"reads_as","aspect":"text","rev":"b3:8635a8c388793754","body":"Definitions"}
+{"at":"page=3&bbox=0.1432,0.7618,0.7102,0.0336","predicate":"manifests","term":"paragraph","num":"8."}
+{"at":"page=3&bbox=0.1432,0.7618,0.7102,0.0336","predicate":"in","value":{"at":"page=3&bbox=0.1439,0.7277,0.1409,0.0119","ord":0}}
+{"at":"page=3&bbox=0.1432,0.7618,0.7102,0.0336","predicate":"reads_as","aspect":"text","rev":"b3:6b969b1673df49b3","body":"The definitions contained in the glossary of the Office apply. A segment is a straight length of pipe between two fittings; a run is an ordered sequence of segments."}
+{"at":"page=3&bbox=0.1433,0.807,0.7116,0.0536","predicate":"manifests","term":"paragraph","num":"9."}
+{"at":"page=3&bbox=0.1433,0.807,0.7116,0.0536","predicate":"in","value":{"at":"page=3&bbox=0.1439,0.7277,0.1409,0.0119","ord":1}}
+{"at":"page=3&bbox=0.1433,0.807,0.7116,0.0536","predicate":"reads_as","aspect":"text","rev":"b3:5130c7935ca09ed2","body":"The surface temperature of a segment is the temperature of the outer face of its insulation or cladding, measured at the middle of the segment. The ambient temperature is the air temperature of the space at mid-height, away from heat sources."}
+{"at":"page=3&bbox=0.1434,0.887,0.1431,0.0112","predicate":"manifests","term":"heading","num":"4.","level":1}
+{"at":"page=3&bbox=0.1434,0.887,0.1431,0.0112","predicate":"in","value":{"at":"whole","ord":5}}
+{"at":"page=3&bbox=0.1434,0.887,0.1431,0.0112","predicate":"reads_as","aspect":"text","rev":"b3:4da4873191f7ea6b","body":"Parameters"}
+{"at":"page=4&bbox=0.1447,0.1003,0.5983,0.0135","predicate":"manifests","term":"paragraph","num":"10."}
+{"at":"page=4&bbox=0.1447,0.1003,0.5983,0.0135","predicate":"in","value":{"at":"page=3&bbox=0.1434,0.887,0.1431,0.0112","ord":0}}
+{"at":"page=4&bbox=0.1447,0.1003,0.5983,0.0135","predicate":"reads_as","aspect":"text","rev":"b3:78472e73b4b80ecc","body":"This procedure provides steps to determine the following parameters:"}
+{"at":"page=4&bbox=0.1534,0.1305,0.6083,0.0939","predicate":"manifests","term":"table","layout":"grid"}
+{"at":"page=4&bbox=0.1534,0.1305,0.6083,0.0939","predicate":"in","value":{"at":"page=3&bbox=0.1434,0.887,0.1431,0.0112","ord":1}}
+{"at":"page=4&bbox=0.2955,0.211,0.4082,0.0134","predicate":"manifests","term":"caption"}
+{"at":"page=4&bbox=0.2955,0.211,0.4082,0.0134","predicate":"in","value":{"at":"page=4&bbox=0.1534,0.1305,0.6083,0.0939","ord":0}}
+{"at":"page=4&bbox=0.2955,0.211,0.4082,0.0134","predicate":"reads_as","aspect":"text","rev":"b3:a3601e7c8faa93a6","body":"Table 1: Parameters determined by this procedure"}
+{"at":"page=4&bbox=0.1534,0.1305,0.3023,0.0128","predicate":"manifests","term":"row"}
+{"at":"page=4&bbox=0.1534,0.1305,0.3023,0.0128","predicate":"in","value":{"at":"page=4&bbox=0.1534,0.1305,0.6083,0.0939","ord":1}}
+{"at":"page=4&bbox=0.1534,0.1305,0.3023,0.0128","predicate":"reads_as","aspect":"cells","rev":"b3:4dd94cde65767605","body":["Parameter","SI unit","Description"]}
+{"at":"page=4&bbox=0.1539,0.1488,0.482,0.016","predicate":"manifests","term":"row"}
+{"at":"page=4&bbox=0.1539,0.1488,0.482,0.016","predicate":"in","value":{"at":"page=4&bbox=0.1534,0.1305,0.6083,0.0939","ord":2}}
+{"at":"page=4&bbox=0.1539,0.1488,0.482,0.016","predicate":"reads_as","aspect":"cells","rev":"b3:8d12a73a4685f051","body":["$Q_{L,k,y}$","GJ/yr","Heat lost from pipe run k in year y"]}
+{"at":"page=4&bbox=0.1539,0.168,0.4588,0.0161","predicate":"manifests","term":"row"}
+{"at":"page=4&bbox=0.1539,0.168,0.4588,0.0161","predicate":"in","value":{"at":"page=4&bbox=0.1534,0.1305,0.6083,0.0939","ord":3}}
+{"at":"page=4&bbox=0.1539,0.168,0.4588,0.0161","predicate":"reads_as","aspect":"cells","rev":"b3:df49aed1a41cc236","body":["$Q_{T,y}$","GJ/yr","Heat lost from all runs in year y"]}
+{"at":"page=4&bbox=0.1539,0.1873,0.6078,0.016","predicate":"manifests","term":"row"}
+{"at":"page=4&bbox=0.1539,0.1873,0.6078,0.016","predicate":"in","value":{"at":"page=4&bbox=0.1534,0.1305,0.6083,0.0939","ord":4}}
+{"at":"page=4&bbox=0.1539,0.1873,0.6078,0.016","predicate":"reads_as","aspect":"cells","rev":"b3:4f94c5ac1012d8ab","body":["$Q_{U,y}$","GJ/yr","Heat loss reported with the uncertainty allowance"]}
+{"at":"page=4&bbox=0.1441,0.2502,0.2589,0.0156","predicate":"manifests","term":"heading","num":"5.","level":1}
+{"at":"page=4&bbox=0.1441,0.2502,0.2589,0.0156","predicate":"in","value":{"at":"whole","ord":6}}
+{"at":"page=4&bbox=0.1441,0.2502,0.2589,0.0156","predicate":"reads_as","aspect":"text","rev":"b3:369bc949a5ed8427","body":"Calculation procedure"}
+{"at":"page=4&bbox=0.1439,0.2913,0.2672,0.0134","predicate":"manifests","term":"heading","num":"5.1.","level":2}
+{"at":"page=4&bbox=0.1439,0.2913,0.2672,0.0134","predicate":"in","value":{"at":"page=4&bbox=0.1441,0.2502,0.2589,0.0156","ord":0}}
+{"at":"page=4&bbox=0.1439,0.2913,0.2672,0.0134","predicate":"reads_as","aspect":"text","rev":"b3:84172601fc9d201e","body":"Heat loss from a pipe run"}
+{"at":"page=4&bbox=0.1436,0.3187,0.7061,0.0536","predicate":"manifests","term":"paragraph","num":"11."}
+{"at":"page=4&bbox=0.1436,0.3187,0.7061,0.0536","predicate":"in","value":{"at":"page=4&bbox=0.1439,0.2913,0.2672,0.0134","ord":0}}
+{"at":"page=4&bbox=0.1436,0.3187,0.7061,0.0536","predicate":"reads_as","aspect":"text","rev":"b3:5462b395798836bf","body":"The heat lost from pipe run k in year y is the sum over its segments of the product of the outer surface area, the surface heat transfer coefficient and the temperature difference to the ambient, over the hours of operation, as follows:"}
+{"at":"page=4&bbox=0.2842,0.3844,0.572,0.0293","predicate":"manifests","term":"equation","label":"Equation (1)"}
+{"at":"page=4&bbox=0.2842,0.3844,0.572,0.0293","predicate":"in","value":{"at":"page=4&bbox=0.1439,0.2913,0.2672,0.0134","ord":1}}
+{"at":"page=4&bbox=0.2842,0.3844,0.572,0.0293","predicate":"reads_as","aspect":"tex","rev":"b3:75b825f04c4c0796","body":"Q_{L,k,y} = \\sum_{i} A_{i,k,y} \\times U_{i,y} \\times \\Delta T_{i,y} \\times t_{y}"}
+{"at":"page=4&bbox=0.1429,0.4286,0.0589,0.0102","predicate":"manifests","term":"paragraph"}
+{"at":"page=4&bbox=0.1429,0.4286,0.0589,0.0102","predicate":"in","value":{"at":"page=4&bbox=0.1439,0.2913,0.2672,0.0134","ord":2}}
+{"at":"page=4&bbox=0.1429,0.4286,0.0589,0.0102","predicate":"reads_as","aspect":"text","rev":"b3:83e38f0f4e9aa105","body":"Where:"}
+{"at":"page=4&bbox=0.15,0.4571,0.6974,0.123","predicate":"manifests","term":"definition-list"}
+{"at":"page=4&bbox=0.15,0.4571,0.6974,0.123","predicate":"in","value":{"at":"page=4&bbox=0.1439,0.2913,0.2672,0.0134","ord":3}}
+{"at":"page=4&bbox=0.1506,0.4571,0.4382,0.0162","predicate":"manifests","term":"definition"}
+{"at":"page=4&bbox=0.1506,0.4571,0.4382,0.0162","predicate":"in","value":{"at":"page=4&bbox=0.15,0.4571,0.6974,0.123","ord":0}}
+{"at":"page=4&bbox=0.1506,0.4571,0.4382,0.0162","predicate":"reads_as","aspect":"cells","rev":"b3:efd915f530aa4d6b","body":["$Q_{L,k,y}$","=","Heat lost from pipe run k in year y (GJ/yr)"]}
+{"at":"page=4&bbox=0.1503,0.4741,0.6788,0.033","predicate":"manifests","term":"definition"}
+{"at":"page=4&bbox=0.1503,0.4741,0.6788,0.033","predicate":"in","value":{"at":"page=4&bbox=0.15,0.4571,0.6974,0.123","ord":1}}
+{"at":"page=4&bbox=0.1503,0.4741,0.6788,0.033","predicate":"reads_as","aspect":"cells","rev":"b3:869c619d483e978e","body":["$A_{i,k,y}$","=","Outer surface area of the insulation of segment i of pipe run k in year y (m2)"]}
+{"at":"page=4&bbox=0.1509,0.5105,0.6212,0.0162","predicate":"manifests","term":"definition"}
+{"at":"page=4&bbox=0.1509,0.5105,0.6212,0.0162","predicate":"in","value":{"at":"page=4&bbox=0.15,0.4571,0.6974,0.123","ord":2}}
+{"at":"page=4&bbox=0.1509,0.5105,0.6212,0.0162","predicate":"reads_as","aspect":"cells","rev":"b3:1e08977f1dfcdbe9","body":["$U_{i,y}$","=","Surface heat transfer coefficient of segment i in year y (W/m2 K)"]}
+{"at":"page=4&bbox=0.1505,0.5276,0.6969,0.0334","predicate":"manifests","term":"definition"}
+{"at":"page=4&bbox=0.1505,0.5276,0.6969,0.0334","predicate":"in","value":{"at":"page=4&bbox=0.15,0.4571,0.6974,0.123","ord":3}}
+{"at":"page=4&bbox=0.1505,0.5276,0.6969,0.0334","predicate":"reads_as","aspect":"cells","rev":"b3:3b1acb211f701f3e","body":["$\\Delta T_{i,y}$","=","Difference between the surface temperature of segment i and the ambient temperature in year y (K)"]}
+{"at":"page=4&bbox=0.15,0.564,0.4405,0.0161","predicate":"manifests","term":"definition"}
+{"at":"page=4&bbox=0.15,0.564,0.4405,0.0161","predicate":"in","value":{"at":"page=4&bbox=0.15,0.4571,0.6974,0.123","ord":4}}
+{"at":"page=4&bbox=0.15,0.564,0.4405,0.0161","predicate":"reads_as","aspect":"cells","rev":"b3:4d560131c461e841","body":["$t_{y}$","=","Hours of operation of the run in year y (h)"]}
+{"at":"page=4&bbox=0.1439,0.6001,0.325,0.0102","predicate":"manifests","term":"heading","num":"5.2.","level":2}
+{"at":"page=4&bbox=0.1439,0.6001,0.325,0.0102","predicate":"in","value":{"at":"page=4&bbox=0.1441,0.2502,0.2589,0.0156","ord":1}}
+{"at":"page=4&bbox=0.1439,0.6001,0.325,0.0102","predicate":"reads_as","aspect":"text","rev":"b3:b91e8cae56c06d56","body":"Surface heat transfer coefficient"}
+{"at":"page=4&bbox=0.1433,0.6275,0.7043,0.0737","predicate":"manifests","term":"paragraph","num":"12."}
+{"at":"page=4&bbox=0.1433,0.6275,0.7043,0.0737","predicate":"in","value":{"at":"page=4&bbox=0.1439,0.6001,0.325,0.0102","ord":0}}
+{"at":"page=4&bbox=0.1433,0.6275,0.7043,0.0737","predicate":"reads_as","aspect":"text","rev":"b3:fda52718e0741c2f","body":"The surface heat transfer coefficient combines convection and radiation from the outer face of the insulation. Where no site measurement of the convective part is available, the default convective coefficient of the Office applies and the radiative part is calculated from the emissivity of the cladding, as follows:[^1]"}
+{"at":"page=4&bbox=0.1435,0.8764,0.6474,0.0254","predicate":"manifests","term":"footnote","mark":"1"}
+{"at":"page=4&bbox=0.1435,0.8764,0.6474,0.0254","predicate":"in","value":{"at":"page=4&bbox=0.1439,0.6001,0.325,0.0102","ord":1}}
+{"at":"page=4&bbox=0.1435,0.8764,0.6474,0.0254","predicate":"reads_as","aspect":"text","rev":"b3:9cea14d9d8a1b15e","body":"The default convective coefficient is published in the Office's table of defaults and revised annually."}
+{"at":"page=4&bbox=0.3154,0.7134,0.5408,0.0178","predicate":"manifests","term":"equation","label":"Equation (2)"}
+{"at":"page=4&bbox=0.3154,0.7134,0.5408,0.0178","predicate":"in","value":{"at":"page=4&bbox=0.1439,0.6001,0.325,0.0102","ord":2}}
+{"at":"page=4&bbox=0.3154,0.7134,0.5408,0.0178","predicate":"reads_as","aspect":"tex","rev":"b3:1f16a0d5762b97e1","body":"U_{i,y} = h_{i,y} + 4 \\times \\epsilon_{i} \\times \\sigma \\times T_{s,i,y}^{3}"}
+{"at":"page=4&bbox=0.1429,0.7462,0.0589,0.0102","predicate":"manifests","term":"paragraph"}
+{"at":"page=4&bbox=0.1429,0.7462,0.0589,0.0102","predicate":"in","value":{"at":"page=4&bbox=0.1439,0.6001,0.325,0.0102","ord":3}}
+{"at":"page=4&bbox=0.1429,0.7462,0.0589,0.0102","predicate":"reads_as","aspect":"text","rev":"b3:83e38f0f4e9aa105","body":"Where:"}
+{"at":"page=4&bbox=0.1501,0.7747,0.6736,0.0676;page=5&bbox=0.1501,0.1037,0.4611,0.033","predicate":"manifests","term":"definition-list"}
+{"at":"page=4&bbox=0.1501,0.7747,0.6736,0.0676;page=5&bbox=0.1501,0.1037,0.4611,0.033","predicate":"in","value":{"at":"page=4&bbox=0.1439,0.6001,0.325,0.0102","ord":4}}
+{"at":"page=4&bbox=0.1509,0.7747,0.6105,0.0161","predicate":"manifests","term":"definition"}
+{"at":"page=4&bbox=0.1509,0.7747,0.6105,0.0161","predicate":"in","value":{"at":"page=4&bbox=0.1501,0.7747,0.6736,0.0676;page=5&bbox=0.1501,0.1037,0.4611,0.033","ord":0}}
+{"at":"page=4&bbox=0.1509,0.7747,0.6105,0.0161","predicate":"reads_as","aspect":"cells","rev":"b3:1e08977f1dfcdbe9","body":["$U_{i,y}$","=","Surface heat transfer coefficient of segment i in year y (W/m2 K)"]}
+{"at":"page=4&bbox=0.1507,0.7917,0.673,0.033","predicate":"manifests","term":"definition"}
+{"at":"page=4&bbox=0.1507,0.7917,0.673,0.033","predicate":"in","value":{"at":"page=4&bbox=0.1501,0.7747,0.6736,0.0676;page=5&bbox=0.1501,0.1037,0.4611,0.033","ord":1}}
+{"at":"page=4&bbox=0.1507,0.7917,0.673,0.033","predicate":"reads_as","aspect":"cells","rev":"b3:711fa3540a1baea0","body":["$h_{i,y}$","=","Convective heat transfer coefficient at the surface of segment i in year y (W/m2 K)"]}
+{"at":"page=4&bbox=0.1501,0.8281,0.5327,0.0142","predicate":"manifests","term":"definition"}
+{"at":"page=4&bbox=0.1501,0.8281,0.5327,0.0142","predicate":"in","value":{"at":"page=4&bbox=0.1501,0.7747,0.6736,0.0676;page=5&bbox=0.1501,0.1037,0.4611,0.033","ord":2}}
+{"at":"page=4&bbox=0.1501,0.8281,0.5327,0.0142","predicate":"reads_as","aspect":"cells","rev":"b3:b6962cb3bdb4e234","body":["$\\epsilon_{i}$","=","Emissivity of the cladding of segment i (dimensionless)"]}
+{"at":"page=5&bbox=0.1503,0.1037,0.3982,0.0131","predicate":"manifests","term":"definition"}
+{"at":"page=5&bbox=0.1503,0.1037,0.3982,0.0131","predicate":"in","value":{"at":"page=4&bbox=0.1501,0.7747,0.6736,0.0676;page=5&bbox=0.1501,0.1037,0.4611,0.033","ord":3}}
+{"at":"page=5&bbox=0.1503,0.1037,0.3982,0.0131","predicate":"reads_as","aspect":"cells","rev":"b3:7785bafb0afeab92","body":["$\\sigma$","=","Stefan-Boltzmann constant (W/m2 K4)"]}
+{"at":"page=5&bbox=0.1501,0.1206,0.4611,0.0161","predicate":"manifests","term":"definition"}
+{"at":"page=5&bbox=0.1501,0.1206,0.4611,0.0161","predicate":"in","value":{"at":"page=4&bbox=0.1501,0.7747,0.6736,0.0676;page=5&bbox=0.1501,0.1037,0.4611,0.033","ord":4}}
+{"at":"page=5&bbox=0.1501,0.1206,0.4611,0.0161","predicate":"reads_as","aspect":"cells","rev":"b3:452f4e9d64442e0d","body":["$T_{s,i,y}$","=","Surface temperature of segment i in year y (K)"]}
+{"at":"page=5&bbox=0.1434,0.1497,0.6606,0.0335","predicate":"manifests","term":"paragraph","num":"13."}
+{"at":"page=5&bbox=0.1434,0.1497,0.6606,0.0335","predicate":"in","value":{"at":"page=4&bbox=0.1439,0.6001,0.325,0.0102","ord":5}}
+{"at":"page=5&bbox=0.1434,0.1497,0.6606,0.0335","predicate":"reads_as","aspect":"text","rev":"b3:3dc60300bdd8a031","body":"The temperature difference of a segment is the difference between its surface temperature and the ambient temperature of the space:"}
+{"at":"page=5&bbox=0.3621,0.1954,0.4941,0.016","predicate":"manifests","term":"equation","label":"Equation (3)"}
+{"at":"page=5&bbox=0.3621,0.1954,0.4941,0.016","predicate":"in","value":{"at":"page=4&bbox=0.1439,0.6001,0.325,0.0102","ord":6}}
+{"at":"page=5&bbox=0.3621,0.1954,0.4941,0.016","predicate":"reads_as","aspect":"tex","rev":"b3:814ba2fbd2d39ae2","body":"\\Delta T_{i,y} = T_{s,i,y} - T_{a,y}"}
+{"at":"page=5&bbox=0.1429,0.2263,0.0589,0.0102","predicate":"manifests","term":"paragraph"}
+{"at":"page=5&bbox=0.1429,0.2263,0.0589,0.0102","predicate":"in","value":{"at":"page=4&bbox=0.1439,0.6001,0.325,0.0102","ord":7}}
+{"at":"page=5&bbox=0.1429,0.2263,0.0589,0.0102","predicate":"reads_as","aspect":"text","rev":"b3:83e38f0f4e9aa105","body":"Where:"}
+{"at":"page=5&bbox=0.1501,0.2549,0.691,0.0694","predicate":"manifests","term":"definition-list"}
+{"at":"page=5&bbox=0.1501,0.2549,0.691,0.0694","predicate":"in","value":{"at":"page=4&bbox=0.1439,0.6001,0.325,0.0102","ord":8}}
+{"at":"page=5&bbox=0.1505,0.2549,0.6906,0.0335","predicate":"manifests","term":"definition"}
+{"at":"page=5&bbox=0.1505,0.2549,0.6906,0.0335","predicate":"in","value":{"at":"page=5&bbox=0.1501,0.2549,0.691,0.0694","ord":0}}
+{"at":"page=5&bbox=0.1505,0.2549,0.6906,0.0335","predicate":"reads_as","aspect":"cells","rev":"b3:3b1acb211f701f3e","body":["$\\Delta T_{i,y}$","=","Difference between the surface temperature of segment i and the ambient temperature in year y (K)"]}
+{"at":"page=5&bbox=0.1501,0.2913,0.4655,0.0161","predicate":"manifests","term":"definition"}
+{"at":"page=5&bbox=0.1501,0.2913,0.4655,0.0161","predicate":"in","value":{"at":"page=5&bbox=0.1501,0.2549,0.691,0.0694","ord":1}}
+{"at":"page=5&bbox=0.1501,0.2913,0.4655,0.0161","predicate":"reads_as","aspect":"cells","rev":"b3:452f4e9d64442e0d","body":["$T_{s,i,y}$","=","Surface temperature of segment i in year y (K)"]}
+{"at":"page=5&bbox=0.1501,0.3082,0.4728,0.0161","predicate":"manifests","term":"definition"}
+{"at":"page=5&bbox=0.1501,0.3082,0.4728,0.0161","predicate":"in","value":{"at":"page=5&bbox=0.1501,0.2549,0.691,0.0694","ord":2}}
+{"at":"page=5&bbox=0.1501,0.3082,0.4728,0.0161","predicate":"reads_as","aspect":"cells","rev":"b3:6b88baa52845b0fc","body":["$T_{a,y}$","=","Ambient temperature of the space in year y (K)"]}
+{"at":"page=5&bbox=0.1439,0.3442,0.397,0.0134","predicate":"manifests","term":"heading","num":"5.3.","level":2}
+{"at":"page=5&bbox=0.1439,0.3442,0.397,0.0134","predicate":"in","value":{"at":"page=4&bbox=0.1441,0.2502,0.2589,0.0156","ord":2}}
+{"at":"page=5&bbox=0.1439,0.3442,0.397,0.0134","predicate":"reads_as","aspect":"text","rev":"b3:3d043f99a9cf8725","body":"Annual total and uncertainty allowance"}
+{"at":"page=5&bbox=0.1433,0.3717,0.6648,0.0335","predicate":"manifests","term":"paragraph","num":"14."}
+{"at":"page=5&bbox=0.1433,0.3717,0.6648,0.0335","predicate":"in","value":{"at":"page=5&bbox=0.1439,0.3442,0.397,0.0134","ord":0}}
+{"at":"page=5&bbox=0.1433,0.3717,0.6648,0.0335","predicate":"reads_as","aspect":"text","rev":"b3:7064739224e86373","body":"The heat lost from all runs is the sum of the losses of the individual runs. The reported figure carries an uncertainty allowance, as follows:"}
+{"at":"page=5&bbox=0.3236,0.4173,0.5326,0.0296","predicate":"manifests","term":"equation","label":"Equation (4)"}
+{"at":"page=5&bbox=0.3236,0.4173,0.5326,0.0296","predicate":"in","value":{"at":"page=5&bbox=0.1439,0.3442,0.397,0.0134","ord":1}}
+{"at":"page=5&bbox=0.3236,0.4173,0.5326,0.0296","predicate":"reads_as","aspect":"tex","rev":"b3:78a653a993a76c2e","body":"Q_{U,y} = (1 + u_{y}) \\times \\sum_{k} Q_{L,k,y}"}
+{"at":"page=5&bbox=0.1429,0.4618,0.0589,0.0102","predicate":"manifests","term":"paragraph"}
+{"at":"page=5&bbox=0.1429,0.4618,0.0589,0.0102","predicate":"in","value":{"at":"page=5&bbox=0.1439,0.3442,0.397,0.0134","ord":2}}
+{"at":"page=5&bbox=0.1429,0.4618,0.0589,0.0102","predicate":"reads_as","aspect":"text","rev":"b3:83e38f0f4e9aa105","body":"Where:"}
+{"at":"page=5&bbox=0.1502,0.4903,0.6429,0.0499","predicate":"manifests","term":"definition-list"}
+{"at":"page=5&bbox=0.1502,0.4903,0.6429,0.0499","predicate":"in","value":{"at":"page=5&bbox=0.1439,0.3442,0.397,0.0134","ord":3}}
+{"at":"page=5&bbox=0.1506,0.4903,0.6425,0.0162","predicate":"manifests","term":"definition"}
+{"at":"page=5&bbox=0.1506,0.4903,0.6425,0.0162","predicate":"in","value":{"at":"page=5&bbox=0.1502,0.4903,0.6429,0.0499","ord":0}}
+{"at":"page=5&bbox=0.1506,0.4903,0.6425,0.0162","predicate":"reads_as","aspect":"cells","rev":"b3:1e9bce434eb046c1","body":["$Q_{U,y}$","=","Heat loss reported with the uncertainty allowance in year y (GJ/yr)"]}
+{"at":"page=5&bbox=0.1502,0.5072,0.4358,0.0161","predicate":"manifests","term":"definition"}
+{"at":"page=5&bbox=0.1502,0.5072,0.4358,0.0161","predicate":"in","value":{"at":"page=5&bbox=0.1502,0.4903,0.6429,0.0499","ord":1}}
+{"at":"page=5&bbox=0.1502,0.5072,0.4358,0.0161","predicate":"reads_as","aspect":"cells","rev":"b3:e21df6c978114c55","body":["$u_{y}$","=","Uncertainty allowance in year y (fraction)"]}
+{"at":"page=5&bbox=0.1506,0.524,0.4382,0.0162","predicate":"manifests","term":"definition"}
+{"at":"page=5&bbox=0.1506,0.524,0.4382,0.0162","predicate":"in","value":{"at":"page=5&bbox=0.1502,0.4903,0.6429,0.0499","ord":2}}
+{"at":"page=5&bbox=0.1506,0.524,0.4382,0.0162","predicate":"reads_as","aspect":"cells","rev":"b3:efd915f530aa4d6b","body":["$Q_{L,k,y}$","=","Heat lost from pipe run k in year y (GJ/yr)"]}
+{"at":"page=5&bbox=0.1433,0.5532,0.7006,0.032","predicate":"manifests","term":"paragraph","num":"15."}
+{"at":"page=5&bbox=0.1433,0.5532,0.7006,0.032","predicate":"in","value":{"at":"page=5&bbox=0.1439,0.3442,0.397,0.0134","ord":4}}
+{"at":"page=5&bbox=0.1433,0.5532,0.7006,0.032","predicate":"reads_as","aspect":"text","rev":"b3:af9be174e71f7d4b","body":"The uncertainty allowance is determined by the measurement arrangement of the run, as follows:"}
+{"at":"page=5&bbox=0.1437,0.5981,0.7051,0.1311","predicate":"manifests","term":"list"}
+{"at":"page=5&bbox=0.1437,0.5981,0.7051,0.1311","predicate":"in","value":{"at":"page=5&bbox=0.1439,0.3442,0.397,0.0134","ord":5}}
+{"at":"page=5&bbox=0.1437,0.5981,0.7051,0.0322","predicate":"manifests","term":"list-item","num":"(a)"}
+{"at":"page=5&bbox=0.1437,0.5981,0.7051,0.0322","predicate":"in","value":{"at":"page=5&bbox=0.1437,0.5981,0.7051,0.1311","ord":0}}
+{"at":"page=5&bbox=0.1437,0.5981,0.7051,0.0322","predicate":"reads_as","aspect":"text","rev":"b3:489a957c6afeab70","body":"Where every segment carries a calibrated surface sensor read at least weekly, the allowance is 0.05;"}
+{"at":"page=5&bbox=0.1437,0.6468,0.6196,0.0322","predicate":"manifests","term":"list-item","num":"(b)"}
+{"at":"page=5&bbox=0.1437,0.6468,0.6196,0.0322","predicate":"in","value":{"at":"page=5&bbox=0.1437,0.5981,0.7051,0.1311","ord":1}}
+{"at":"page=5&bbox=0.1437,0.6468,0.6196,0.0322","predicate":"reads_as","aspect":"text","rev":"b3:7d0ed3a3db0356dd","body":"Where the surface temperature is measured monthly with a hand-held instrument, the allowance is 0.10;"}
+{"at":"page=5&bbox=0.1437,0.6955,0.6173,0.0337","predicate":"manifests","term":"list-item","num":"(c)"}
+{"at":"page=5&bbox=0.1437,0.6955,0.6173,0.0337","predicate":"in","value":{"at":"page=5&bbox=0.1437,0.5981,0.7051,0.1311","ord":2}}
+{"at":"page=5&bbox=0.1437,0.6955,0.6173,0.0337","predicate":"reads_as","aspect":"text","rev":"b3:0c2136ed81208e78","body":"In all other cases the allowance is 0.20, and the operator shall state the arrangement in the report."}
+{"at":"page=5&bbox=0.1434,0.7444,0.6521,0.0334","predicate":"manifests","term":"paragraph","num":"16."}
+{"at":"page=5&bbox=0.1434,0.7444,0.6521,0.0334","predicate":"in","value":{"at":"page=5&bbox=0.1439,0.3442,0.397,0.0134","ord":6}}
+{"at":"page=5&bbox=0.1434,0.7444,0.6521,0.0334","predicate":"reads_as","aspect":"text","rev":"b3:ae6d4970c96066c1","body":"Figure 1 shows the segments of a run and the positions at which the surface temperature is measured."}
+{"at":"page=5&bbox=0.2316,0.8252,0.537,0.0135","predicate":"manifests","term":"figure"}
+{"at":"page=5&bbox=0.2316,0.8252,0.537,0.0135","predicate":"in","value":{"at":"page=5&bbox=0.1439,0.3442,0.397,0.0134","ord":7}}
+{"at":"page=5&bbox=0.3217,0.8796,0.3566,0.0135","predicate":"manifests","term":"caption"}
+{"at":"page=5&bbox=0.3217,0.8796,0.3566,0.0135","predicate":"in","value":{"at":"page=5&bbox=0.2316,0.8252,0.537,0.0135","ord":0}}
+{"at":"page=5&bbox=0.3217,0.8796,0.3566,0.0135","predicate":"reads_as","aspect":"text","rev":"b3:93167b2a4fe9b0fb","body":"Figure 1: Segments of an insulated pipe run"}
+{"at":"page=6&bbox=0.1439,0.1,0.2425,0.0156","predicate":"manifests","term":"heading","num":"6.","level":1}
+{"at":"page=6&bbox=0.1439,0.1,0.2425,0.0156","predicate":"in","value":{"at":"whole","ord":7}}
+{"at":"page=6&bbox=0.1439,0.1,0.2425,0.0156","predicate":"reads_as","aspect":"text","rev":"b3:e669df932107d3cd","body":"Data and parameters"}
+{"at":"page=6&bbox=0.1437,0.141,0.3612,0.0135","predicate":"manifests","term":"heading","num":"6.1.","level":2}
+{"at":"page=6&bbox=0.1437,0.141,0.3612,0.0135","predicate":"in","value":{"at":"page=6&bbox=0.1439,0.1,0.2425,0.0156","ord":0}}
+{"at":"page=6&bbox=0.1437,0.141,0.3612,0.0135","predicate":"reads_as","aspect":"text","rev":"b3:95ab9b316870b0ac","body":"Data and parameters not monitored"}
+{"at":"page=6&bbox=0.1436,0.1684,0.7008,0.0335","predicate":"manifests","term":"paragraph","num":"17."}
+{"at":"page=6&bbox=0.1436,0.1684,0.7008,0.0335","predicate":"in","value":{"at":"page=6&bbox=0.1437,0.141,0.3612,0.0135","ord":0}}
+{"at":"page=6&bbox=0.1436,0.1684,0.7008,0.0335","predicate":"reads_as","aspect":"text","rev":"b3:69450e9fc1a15b9b","body":"The following parameters are determined once at the start of the reporting period and kept fixed:"}
+{"at":"page=6&bbox=0.1433,0.2134,0.6994,0.2561","predicate":"manifests","term":"parameter-table","layout":"key-value","num":"1"}
+{"at":"page=6&bbox=0.1433,0.2134,0.6994,0.2561","predicate":"in","value":{"at":"page=6&bbox=0.1437,0.141,0.3612,0.0135","ord":1}}
+{"at":"page=6&bbox=0.1433,0.2134,0.2226,0.0103","predicate":"manifests","term":"caption"}
+{"at":"page=6&bbox=0.1433,0.2134,0.2226,0.0103","predicate":"in","value":{"at":"page=6&bbox=0.1433,0.2134,0.6994,0.2561","ord":0}}
+{"at":"page=6&bbox=0.1433,0.2134,0.2226,0.0103","predicate":"reads_as","aspect":"text","rev":"b3:7b22b4ca8a118424","body":"Data / Parameter table 1."}
+{"at":"page=6&bbox=0.1532,0.2433,0.3751,0.0159","predicate":"manifests","term":"row"}
+{"at":"page=6&bbox=0.1532,0.2433,0.3751,0.0159","predicate":"in","value":{"at":"page=6&bbox=0.1433,0.2134,0.6994,0.2561","ord":1}}
+{"at":"page=6&bbox=0.1532,0.2433,0.3751,0.0159","predicate":"reads_as","aspect":"cells","rev":"b3:350ef24f8db8c932","body":["Data / parameter:","$A_{i,k,y}$"]}
+{"at":"page=6&bbox=0.1532,0.2632,0.3525,0.0095","predicate":"manifests","term":"row"}
+{"at":"page=6&bbox=0.1532,0.2632,0.3525,0.0095","predicate":"in","value":{"at":"page=6&bbox=0.1433,0.2134,0.6994,0.2561","ord":2}}
+{"at":"page=6&bbox=0.1532,0.2632,0.3525,0.0095","predicate":"reads_as","aspect":"cells","rev":"b3:45b7d77909aa7df1","body":["Data unit:","m2"]}
+{"at":"page=6&bbox=0.1532,0.2813,0.6434,0.0335","predicate":"manifests","term":"row"}
+{"at":"page=6&bbox=0.1532,0.2813,0.6434,0.0335","predicate":"in","value":{"at":"page=6&bbox=0.1433,0.2134,0.6994,0.2561","ord":3}}
+{"at":"page=6&bbox=0.1532,0.2813,0.6434,0.0335","predicate":"reads_as","aspect":"cells","rev":"b3:3d75c2d592a2ddea","body":["Description:","Outer surface area of the insulation of segment i of pipe run k"]}
+{"at":"page=6&bbox=0.1535,0.3203,0.6892,0.0135","predicate":"manifests","term":"row"}
+{"at":"page=6&bbox=0.1535,0.3203,0.6892,0.0135","predicate":"in","value":{"at":"page=6&bbox=0.1433,0.2134,0.6994,0.2561","ord":4}}
+{"at":"page=6&bbox=0.1535,0.3203,0.6892,0.0135","predicate":"reads_as","aspect":"cells","rev":"b3:1436dbd04337d630","body":["Source of data:","Design drawings of the run, or a site survey"]}
+{"at":"page=6&bbox=0.1532,0.339,0.6698,0.0337","predicate":"manifests","term":"row"}
+{"at":"page=6&bbox=0.1532,0.339,0.6698,0.0337","predicate":"in","value":{"at":"page=6&bbox=0.1433,0.2134,0.6994,0.2561","ord":5}}
+{"at":"page=6&bbox=0.1532,0.339,0.6698,0.0337","predicate":"reads_as","aspect":"cells","rev":"b3:4cea67ae7dc28b65","body":["Measurement procedures (if any):","Calculated from the outer diameter of the insulation and the length of the segment"]}
+{"at":"page=6&bbox=0.1532,0.3781,0.6586,0.0134","predicate":"manifests","term":"row"}
+{"at":"page=6&bbox=0.1532,0.3781,0.6586,0.0134","predicate":"in","value":{"at":"page=6&bbox=0.1433,0.2134,0.6994,0.2561","ord":6}}
+{"at":"page=6&bbox=0.1532,0.3781,0.6586,0.0134","predicate":"reads_as","aspect":"cells","rev":"b3:a23416f02490fcc7","body":["Monitoring frequency:","Once at the start of the reporting period"]}
+{"at":"page=6&bbox=0.1537,0.397,0.651,0.0303","predicate":"manifests","term":"row"}
+{"at":"page=6&bbox=0.1537,0.397,0.651,0.0303","predicate":"in","value":{"at":"page=6&bbox=0.1433,0.2134,0.6994,0.2561","ord":7}}
+{"at":"page=6&bbox=0.1537,0.397,0.651,0.0303","predicate":"reads_as","aspect":"cells","rev":"b3:11f2ac7c3939e09e","body":["QA/QC procedures:","Cross-check against the as-built survey where one exists"]}
+{"at":"page=6&bbox=0.153,0.4359,0.6659,0.0336","predicate":"manifests","term":"row"}
+{"at":"page=6&bbox=0.153,0.4359,0.6659,0.0336","predicate":"in","value":{"at":"page=6&bbox=0.1433,0.2134,0.6994,0.2561","ord":8}}
+{"at":"page=6&bbox=0.153,0.4359,0.6659,0.0336","predicate":"reads_as","aspect":"cells","rev":"b3:e690841d73caa9e7","body":["Any comment:","Segments shorter than one metre may be merged with a neighbour"]}
+{"at":"page=6&bbox=0.1433,0.4856,0.6793,0.2159","predicate":"manifests","term":"parameter-table","layout":"key-value","num":"2"}
+{"at":"page=6&bbox=0.1433,0.4856,0.6793,0.2159","predicate":"in","value":{"at":"page=6&bbox=0.1437,0.141,0.3612,0.0135","ord":2}}
+{"at":"page=6&bbox=0.1433,0.4856,0.2226,0.0103","predicate":"manifests","term":"caption"}
+{"at":"page=6&bbox=0.1433,0.4856,0.2226,0.0103","predicate":"in","value":{"at":"page=6&bbox=0.1433,0.4856,0.6793,0.2159","ord":0}}
+{"at":"page=6&bbox=0.1433,0.4856,0.2226,0.0103","predicate":"reads_as","aspect":"text","rev":"b3:7cc95b36d5a492e9","body":"Data / Parameter table 2."}
+{"at":"page=6&bbox=0.1532,0.5162,0.3426,0.0133","predicate":"manifests","term":"row"}
+{"at":"page=6&bbox=0.1532,0.5162,0.3426,0.0133","predicate":"in","value":{"at":"page=6&bbox=0.1433,0.4856,0.6793,0.2159","ord":1}}
+{"at":"page=6&bbox=0.1532,0.5162,0.3426,0.0133","predicate":"reads_as","aspect":"cells","rev":"b3:56d06297c75c0096","body":["Data / parameter:","$\\epsilon_{i}$"]}
+{"at":"page=6&bbox=0.1532,0.5347,0.4475,0.0102","predicate":"manifests","term":"row"}
+{"at":"page=6&bbox=0.1532,0.5347,0.4475,0.0102","predicate":"in","value":{"at":"page=6&bbox=0.1433,0.4856,0.6793,0.2159","ord":2}}
+{"at":"page=6&bbox=0.1532,0.5347,0.4475,0.0102","predicate":"reads_as","aspect":"cells","rev":"b3:2ac88b8aec426f32","body":["Data unit:","Dimensionless"]}
+{"at":"page=6&bbox=0.1532,0.5535,0.648,0.0135","predicate":"manifests","term":"row"}
+{"at":"page=6&bbox=0.1532,0.5535,0.648,0.0135","predicate":"in","value":{"at":"page=6&bbox=0.1433,0.4856,0.6793,0.2159","ord":3}}
+{"at":"page=6&bbox=0.1532,0.5535,0.648,0.0135","predicate":"reads_as","aspect":"cells","rev":"b3:76f98478956bf630","body":["Description:","Emissivity of the cladding of segment i"]}
+{"at":"page=6&bbox=0.1535,0.5724,0.6662,0.0304","predicate":"manifests","term":"row"}
+{"at":"page=6&bbox=0.1535,0.5724,0.6662,0.0304","predicate":"in","value":{"at":"page=6&bbox=0.1433,0.4856,0.6793,0.2159","ord":4}}
+{"at":"page=6&bbox=0.1535,0.5724,0.6662,0.0304","predicate":"reads_as","aspect":"cells","rev":"b3:70763e840439b1b7","body":["Source of data:","Manufacturer's data sheet, or the Office's table of defaults"]}
+{"at":"page=6&bbox=0.1532,0.6112,0.4433,0.0136","predicate":"manifests","term":"row"}
+{"at":"page=6&bbox=0.1532,0.6112,0.4433,0.0136","predicate":"in","value":{"at":"page=6&bbox=0.1433,0.4856,0.6793,0.2159","ord":5}}
+{"at":"page=6&bbox=0.1532,0.6112,0.4433,0.0136","predicate":"reads_as","aspect":"cells","rev":"b3:d9e17064d4018d77","body":["Measurement procedures (if any):","Not measured"]}
+{"at":"page=6&bbox=0.1532,0.6303,0.6586,0.0134","predicate":"manifests","term":"row"}
+{"at":"page=6&bbox=0.1532,0.6303,0.6586,0.0134","predicate":"in","value":{"at":"page=6&bbox=0.1433,0.4856,0.6793,0.2159","ord":6}}
+{"at":"page=6&bbox=0.1532,0.6303,0.6586,0.0134","predicate":"reads_as","aspect":"cells","rev":"b3:a23416f02490fcc7","body":["Monitoring frequency:","Once at the start of the reporting period"]}
+{"at":"page=6&bbox=0.1537,0.6491,0.6689,0.0304","predicate":"manifests","term":"row"}
+{"at":"page=6&bbox=0.1537,0.6491,0.6689,0.0304","predicate":"in","value":{"at":"page=6&bbox=0.1433,0.4856,0.6793,0.2159","ord":7}}
+{"at":"page=6&bbox=0.1537,0.6491,0.6689,0.0304","predicate":"reads_as","aspect":"cells","rev":"b3:3b41cadd0ee5ebe1","body":["QA/QC procedures:","Use the default where the data sheet does not state a value"]}
+{"at":"page=6&bbox=0.153,0.6887,0.3345,0.0128","predicate":"manifests","term":"row"}
+{"at":"page=6&bbox=0.153,0.6887,0.3345,0.0128","predicate":"in","value":{"at":"page=6&bbox=0.1433,0.4856,0.6793,0.2159","ord":8}}
+{"at":"page=6&bbox=0.153,0.6887,0.3345,0.0128","predicate":"reads_as","aspect":"cells","rev":"b3:1ee657b96e083b17","body":["Any comment:","-"]}
+{"at":"page=6&bbox=0.1437,0.7248,0.3254,0.0135","predicate":"manifests","term":"heading","num":"6.2.","level":2}
+{"at":"page=6&bbox=0.1437,0.7248,0.3254,0.0135","predicate":"in","value":{"at":"page=6&bbox=0.1439,0.1,0.2425,0.0156","ord":1}}
+{"at":"page=6&bbox=0.1437,0.7248,0.3254,0.0135","predicate":"reads_as","aspect":"text","rev":"b3:b167cc1bdc6aa936","body":"Data and parameters monitored"}
+{"at":"page=6&bbox=0.1431,0.7523,0.7012,0.0335","predicate":"manifests","term":"paragraph","num":"18."}
+{"at":"page=6&bbox=0.1431,0.7523,0.7012,0.0335","predicate":"in","value":{"at":"page=6&bbox=0.1437,0.7248,0.3254,0.0135","ord":0}}
+{"at":"page=6&bbox=0.1431,0.7523,0.7012,0.0335","predicate":"reads_as","aspect":"text","rev":"b3:0f1b845da1d4b095","body":"The following parameters are measured during the reporting period. Readings are kept in the operating log with the date, the instrument and the person taking them:"}
+{"at":"page=6&bbox=0.1433,0.7972,0.6893,0.0971;page=7&bbox=0.153,0.1049,0.6701,0.1506","predicate":"manifests","term":"parameter-table","layout":"key-value","num":"3"}
+{"at":"page=6&bbox=0.1433,0.7972,0.6893,0.0971;page=7&bbox=0.153,0.1049,0.6701,0.1506","predicate":"in","value":{"at":"page=6&bbox=0.1437,0.7248,0.3254,0.0135","ord":1}}
+{"at":"page=6&bbox=0.1433,0.7972,0.2227,0.0103","predicate":"manifests","term":"caption"}
+{"at":"page=6&bbox=0.1433,0.7972,0.2227,0.0103","predicate":"in","value":{"at":"page=6&bbox=0.1433,0.7972,0.6893,0.0971;page=7&bbox=0.153,0.1049,0.6701,0.1506","ord":0}}
+{"at":"page=6&bbox=0.1433,0.7972,0.2227,0.0103","predicate":"reads_as","aspect":"text","rev":"b3:2547f0dc4071c6d4","body":"Data / Parameter table 3."}
+{"at":"page=6&bbox=0.1532,0.8277,0.3703,0.0153","predicate":"manifests","term":"row"}
+{"at":"page=6&bbox=0.1532,0.8277,0.3703,0.0153","predicate":"in","value":{"at":"page=6&bbox=0.1433,0.7972,0.6893,0.0971;page=7&bbox=0.153,0.1049,0.6701,0.1506","ord":1}}
+{"at":"page=6&bbox=0.1532,0.8277,0.3703,0.0153","predicate":"reads_as","aspect":"cells","rev":"b3:56ad7c210bd376b8","body":["Data / parameter:","$T_{s,i,y}$"]}
+{"at":"page=6&bbox=0.1532,0.847,0.3411,0.0095","predicate":"manifests","term":"row"}
+{"at":"page=6&bbox=0.1532,0.847,0.3411,0.0095","predicate":"in","value":{"at":"page=6&bbox=0.1433,0.7972,0.6893,0.0971;page=7&bbox=0.153,0.1049,0.6701,0.1506","ord":2}}
+{"at":"page=6&bbox=0.1532,0.847,0.3411,0.0095","predicate":"reads_as","aspect":"cells","rev":"b3:6136d56691376108","body":["Data unit:","K"]}
+{"at":"page=6&bbox=0.1532,0.8651,0.6794,0.0135","predicate":"manifests","term":"row"}
+{"at":"page=6&bbox=0.1532,0.8651,0.6794,0.0135","predicate":"in","value":{"at":"page=6&bbox=0.1433,0.7972,0.6893,0.0971;page=7&bbox=0.153,0.1049,0.6701,0.1506","ord":3}}
+{"at":"page=6&bbox=0.1532,0.8651,0.6794,0.0135","predicate":"reads_as","aspect":"cells","rev":"b3:8ddb40b8f854c3d7","body":["Description:","Surface temperature of segment i in year y"]}
+{"at":"page=6&bbox=0.1535,0.884,0.4747,0.0103","predicate":"manifests","term":"row"}
+{"at":"page=6&bbox=0.1535,0.884,0.4747,0.0103","predicate":"in","value":{"at":"page=6&bbox=0.1433,0.7972,0.6893,0.0971;page=7&bbox=0.153,0.1049,0.6701,0.1506","ord":4}}
+{"at":"page=6&bbox=0.1535,0.884,0.4747,0.0103","predicate":"reads_as","aspect":"cells","rev":"b3:47be4adef531aead","body":["Source of data:","Site measurement"]}
+{"at":"page=7&bbox=0.1532,0.1049,0.659,0.0337","predicate":"manifests","term":"row"}
+{"at":"page=7&bbox=0.1532,0.1049,0.659,0.0337","predicate":"in","value":{"at":"page=6&bbox=0.1433,0.7972,0.6893,0.0971;page=7&bbox=0.153,0.1049,0.6701,0.1506","ord":5}}
+{"at":"page=7&bbox=0.1532,0.1049,0.659,0.0337","predicate":"reads_as","aspect":"cells","rev":"b3:506c5e9cb1db00f4","body":["Measurement procedures (if any):","Contact sensor or hand-held infrared instrument at the middle of the segment"]}
+{"at":"page=7&bbox=0.1532,0.144,0.654,0.0336","predicate":"manifests","term":"row"}
+{"at":"page=7&bbox=0.1532,0.144,0.654,0.0336","predicate":"in","value":{"at":"page=6&bbox=0.1433,0.7972,0.6893,0.0971;page=7&bbox=0.153,0.1049,0.6701,0.1506","ord":6}}
+{"at":"page=7&bbox=0.1532,0.144,0.654,0.0336","predicate":"reads_as","aspect":"cells","rev":"b3:70dbaa1c2eb68120","body":["Monitoring frequency:","At least monthly; weekly where the allowance of paragraph 13(a) is claimed"]}
+{"at":"page=7&bbox=0.1537,0.1829,0.6694,0.0505","predicate":"manifests","term":"row"}
+{"at":"page=7&bbox=0.1537,0.1829,0.6694,0.0505","predicate":"in","value":{"at":"page=6&bbox=0.1433,0.7972,0.6893,0.0971;page=7&bbox=0.153,0.1049,0.6701,0.1506","ord":7}}
+{"at":"page=7&bbox=0.1537,0.1829,0.6694,0.0505","predicate":"reads_as","aspect":"cells","rev":"b3:d5e79c07f151dc1b","body":["QA/QC procedures:","Instruments calibrated annually; readings outside the range of the instrument discarded"]}
+{"at":"page=7&bbox=0.153,0.242,0.6663,0.0135","predicate":"manifests","term":"row"}
+{"at":"page=7&bbox=0.153,0.242,0.6663,0.0135","predicate":"in","value":{"at":"page=6&bbox=0.1433,0.7972,0.6893,0.0971;page=7&bbox=0.153,0.1049,0.6701,0.1506","ord":8}}
+{"at":"page=7&bbox=0.153,0.242,0.6663,0.0135","predicate":"reads_as","aspect":"cells","rev":"b3:b338aac1f6da4116","body":["Any comment:","Readings during shutdowns are excluded"]}
+{"at":"page=7&bbox=0.1433,0.2716,0.6966,0.1958","predicate":"manifests","term":"parameter-table","layout":"key-value","num":"4"}
+{"at":"page=7&bbox=0.1433,0.2716,0.6966,0.1958","predicate":"in","value":{"at":"page=6&bbox=0.1437,0.7248,0.3254,0.0135","ord":2}}
+{"at":"page=7&bbox=0.1433,0.2716,0.2226,0.0103","predicate":"manifests","term":"caption"}
+{"at":"page=7&bbox=0.1433,0.2716,0.2226,0.0103","predicate":"in","value":{"at":"page=7&bbox=0.1433,0.2716,0.6966,0.1958","ord":0}}
+{"at":"page=7&bbox=0.1433,0.2716,0.2226,0.0103","predicate":"reads_as","aspect":"text","rev":"b3:6d07c00291066e7b","body":"Data / Parameter table 4."}
+{"at":"page=7&bbox=0.1532,0.3021,0.3609,0.0153","predicate":"manifests","term":"row"}
+{"at":"page=7&bbox=0.1532,0.3021,0.3609,0.0153","predicate":"in","value":{"at":"page=7&bbox=0.1433,0.2716,0.6966,0.1958","ord":1}}
+{"at":"page=7&bbox=0.1532,0.3021,0.3609,0.0153","predicate":"reads_as","aspect":"cells","rev":"b3:ed1a1917d985b6b9","body":["Data / parameter:","$T_{a,y}$"]}
+{"at":"page=7&bbox=0.1532,0.3214,0.3411,0.0095","predicate":"manifests","term":"row"}
+{"at":"page=7&bbox=0.1532,0.3214,0.3411,0.0095","predicate":"in","value":{"at":"page=7&bbox=0.1433,0.2716,0.6966,0.1958","ord":2}}
+{"at":"page=7&bbox=0.1532,0.3214,0.3411,0.0095","predicate":"reads_as","aspect":"cells","rev":"b3:6136d56691376108","body":["Data unit:","K"]}
+{"at":"page=7&bbox=0.1532,0.3395,0.6867,0.0134","predicate":"manifests","term":"row"}
+{"at":"page=7&bbox=0.1532,0.3395,0.6867,0.0134","predicate":"in","value":{"at":"page=7&bbox=0.1433,0.2716,0.6966,0.1958","ord":3}}
+{"at":"page=7&bbox=0.1532,0.3395,0.6867,0.0134","predicate":"reads_as","aspect":"cells","rev":"b3:7371f54241bebf3f","body":["Description:","Ambient temperature of the space in year y"]}
+{"at":"page=7&bbox=0.1535,0.3584,0.4747,0.0103","predicate":"manifests","term":"row"}
+{"at":"page=7&bbox=0.1535,0.3584,0.4747,0.0103","predicate":"in","value":{"at":"page=7&bbox=0.1433,0.2716,0.6966,0.1958","ord":4}}
+{"at":"page=7&bbox=0.1535,0.3584,0.4747,0.0103","predicate":"reads_as","aspect":"cells","rev":"b3:47be4adef531aead","body":["Source of data:","Site measurement"]}
+{"at":"page=7&bbox=0.1532,0.3771,0.682,0.0337","predicate":"manifests","term":"row"}
+{"at":"page=7&bbox=0.1532,0.3771,0.682,0.0337","predicate":"in","value":{"at":"page=7&bbox=0.1433,0.2716,0.6966,0.1958","ord":5}}
+{"at":"page=7&bbox=0.1532,0.3771,0.682,0.0337","predicate":"reads_as","aspect":"cells","rev":"b3:27f56952b99394f5","body":["Measurement procedures (if any):","Shielded thermometer at the mid-height of the space"]}
+{"at":"page=7&bbox=0.1532,0.4162,0.617,0.0135","predicate":"manifests","term":"row"}
+{"at":"page=7&bbox=0.1532,0.4162,0.617,0.0135","predicate":"in","value":{"at":"page=7&bbox=0.1433,0.2716,0.6966,0.1958","ord":6}}
+{"at":"page=7&bbox=0.1532,0.4162,0.617,0.0135","predicate":"reads_as","aspect":"cells","rev":"b3:3eefedd8a9931a16","body":["Monitoring frequency:","At the time of each surface reading"]}
+{"at":"page=7&bbox=0.1537,0.4351,0.5902,0.0134","predicate":"manifests","term":"row"}
+{"at":"page=7&bbox=0.1537,0.4351,0.5902,0.0134","predicate":"in","value":{"at":"page=7&bbox=0.1433,0.2716,0.6966,0.1958","ord":7}}
+{"at":"page=7&bbox=0.1537,0.4351,0.5902,0.0134","predicate":"reads_as","aspect":"cells","rev":"b3:e49a3128286719cd","body":["QA/QC procedures:","Instruments calibrated annually"]}
+{"at":"page=7&bbox=0.153,0.4546,0.3345,0.0128","predicate":"manifests","term":"row"}
+{"at":"page=7&bbox=0.153,0.4546,0.3345,0.0128","predicate":"in","value":{"at":"page=7&bbox=0.1433,0.2716,0.6966,0.1958","ord":8}}
+{"at":"page=7&bbox=0.153,0.4546,0.3345,0.0128","predicate":"reads_as","aspect":"cells","rev":"b3:1ee657b96e083b17","body":["Any comment:","-"]}
+{"at":"page=7&bbox=0.1433,0.4836,0.6837,0.2359","predicate":"manifests","term":"parameter-table","layout":"key-value","num":"5"}
+{"at":"page=7&bbox=0.1433,0.4836,0.6837,0.2359","predicate":"in","value":{"at":"page=6&bbox=0.1437,0.7248,0.3254,0.0135","ord":3}}
+{"at":"page=7&bbox=0.1433,0.4836,0.2226,0.0103","predicate":"manifests","term":"caption"}
+{"at":"page=7&bbox=0.1433,0.4836,0.2226,0.0103","predicate":"in","value":{"at":"page=7&bbox=0.1433,0.4836,0.6837,0.2359","ord":0}}
+{"at":"page=7&bbox=0.1433,0.4836,0.2226,0.0103","predicate":"reads_as","aspect":"text","rev":"b3:1d18ba5aada70cf4","body":"Data / Parameter table 5."}
+{"at":"page=7&bbox=0.1532,0.5142,0.3435,0.0152","predicate":"manifests","term":"row"}
+{"at":"page=7&bbox=0.1532,0.5142,0.3435,0.0152","predicate":"in","value":{"at":"page=7&bbox=0.1433,0.4836,0.6837,0.2359","ord":1}}
+{"at":"page=7&bbox=0.1532,0.5142,0.3435,0.0152","predicate":"reads_as","aspect":"cells","rev":"b3:50ca9f6cb5573834","body":["Data / parameter:","$t_{y}$"]}
+{"at":"page=7&bbox=0.1532,0.5327,0.3389,0.0102","predicate":"manifests","term":"row"}
+{"at":"page=7&bbox=0.1532,0.5327,0.3389,0.0102","predicate":"in","value":{"at":"page=7&bbox=0.1433,0.4836,0.6837,0.2359","ord":2}}
+{"at":"page=7&bbox=0.1532,0.5327,0.3389,0.0102","predicate":"reads_as","aspect":"cells","rev":"b3:a9bd5728195bd4c4","body":["Data unit:","h"]}
+{"at":"page=7&bbox=0.1532,0.5515,0.6498,0.0135","predicate":"manifests","term":"row"}
+{"at":"page=7&bbox=0.1532,0.5515,0.6498,0.0135","predicate":"in","value":{"at":"page=7&bbox=0.1433,0.4836,0.6837,0.2359","ord":3}}
+{"at":"page=7&bbox=0.1532,0.5515,0.6498,0.0135","predicate":"reads_as","aspect":"cells","rev":"b3:aaa3ee37953d5a78","body":["Description:","Hours of operation of the run in year y"]}
+{"at":"page=7&bbox=0.1535,0.5704,0.4415,0.0135","predicate":"manifests","term":"row"}
+{"at":"page=7&bbox=0.1535,0.5704,0.4415,0.0135","predicate":"in","value":{"at":"page=7&bbox=0.1433,0.4836,0.6837,0.2359","ord":4}}
+{"at":"page=7&bbox=0.1535,0.5704,0.4415,0.0135","predicate":"reads_as","aspect":"cells","rev":"b3:3abfbb282e66817c","body":["Source of data:","Operating log"]}
+{"at":"page=7&bbox=0.1532,0.5892,0.6738,0.0505","predicate":"manifests","term":"row"}
+{"at":"page=7&bbox=0.1532,0.5892,0.6738,0.0505","predicate":"in","value":{"at":"page=7&bbox=0.1433,0.4836,0.6837,0.2359","ord":5}}
+{"at":"page=7&bbox=0.1532,0.5892,0.6738,0.0505","predicate":"reads_as","aspect":"cells","rev":"b3:e396b2608d379d32","body":["Measurement procedures (if any):","Hours during which the fluid temperature at the inlet exceeded the ambient by more than ten kelvin"]}
+{"at":"page=7&bbox=0.1532,0.6483,0.4402,0.0135","predicate":"manifests","term":"row"}
+{"at":"page=7&bbox=0.1532,0.6483,0.4402,0.0135","predicate":"in","value":{"at":"page=7&bbox=0.1433,0.4836,0.6837,0.2359","ord":6}}
+{"at":"page=7&bbox=0.1532,0.6483,0.4402,0.0135","predicate":"reads_as","aspect":"cells","rev":"b3:847d1a3b4f35bca0","body":["Monitoring frequency:","Continuously"]}
+{"at":"page=7&bbox=0.1537,0.6672,0.6337,0.0335","predicate":"manifests","term":"row"}
+{"at":"page=7&bbox=0.1537,0.6672,0.6337,0.0335","predicate":"in","value":{"at":"page=7&bbox=0.1433,0.4836,0.6837,0.2359","ord":7}}
+{"at":"page=7&bbox=0.1537,0.6672,0.6337,0.0335","predicate":"reads_as","aspect":"cells","rev":"b3:e93b7d4bf6fbce1b","body":["QA/QC procedures:","Log reconciled with the plant control system quarterly"]}
+{"at":"page=7&bbox=0.153,0.7067,0.3345,0.0128","predicate":"manifests","term":"row"}
+{"at":"page=7&bbox=0.153,0.7067,0.3345,0.0128","predicate":"in","value":{"at":"page=7&bbox=0.1433,0.4836,0.6837,0.2359","ord":8}}
+{"at":"page=7&bbox=0.153,0.7067,0.3345,0.0128","predicate":"reads_as","aspect":"cells","rev":"b3:1ee657b96e083b17","body":["Any comment:","-"]}
+{"at":"page=7&bbox=0.1437,0.7429,0.185,0.0135","predicate":"manifests","term":"heading","num":"6.3.","level":2}
+{"at":"page=7&bbox=0.1437,0.7429,0.185,0.0135","predicate":"in","value":{"at":"page=6&bbox=0.1439,0.1,0.2425,0.0156","ord":2}}
+{"at":"page=7&bbox=0.1437,0.7429,0.185,0.0135","predicate":"reads_as","aspect":"text","rev":"b3:40d0490ae4f879b4","body":"Monitoring plan"}
+{"at":"page=7&bbox=0.1447,0.7703,0.5266,0.0135","predicate":"manifests","term":"paragraph","num":"19."}
+{"at":"page=7&bbox=0.1447,0.7703,0.5266,0.0135","predicate":"in","value":{"at":"page=7&bbox=0.1437,0.7429,0.185,0.0135","ord":0}}
+{"at":"page=7&bbox=0.1447,0.7703,0.5266,0.0135","predicate":"reads_as","aspect":"text","rev":"b3:62bb6fd6af471447","body":"The monitoring plan of the operator shall state, for each run:"}
+{"at":"page=7&bbox=0.1437,0.7952,0.6876,0.0909","predicate":"manifests","term":"list"}
+{"at":"page=7&bbox=0.1437,0.7952,0.6876,0.0909","predicate":"in","value":{"at":"page=7&bbox=0.1437,0.7429,0.185,0.0135","ord":1}}
+{"at":"page=7&bbox=0.1437,0.7952,0.5664,0.0137","predicate":"manifests","term":"list-item","num":"(a)"}
+{"at":"page=7&bbox=0.1437,0.7952,0.5664,0.0137","predicate":"in","value":{"at":"page=7&bbox=0.1437,0.7952,0.6876,0.0909","ord":0}}
+{"at":"page=7&bbox=0.1437,0.7952,0.5664,0.0137","predicate":"reads_as","aspect":"text","rev":"b3:6c7b5d3f1e5ccc1a","body":"The segments of the run with their lengths and outer diameters;"}
+{"at":"page=7&bbox=0.1437,0.8239,0.6105,0.0136","predicate":"manifests","term":"list-item","num":"(b)"}
+{"at":"page=7&bbox=0.1437,0.8239,0.6105,0.0136","predicate":"in","value":{"at":"page=7&bbox=0.1437,0.7952,0.6876,0.0909","ord":1}}
+{"at":"page=7&bbox=0.1437,0.8239,0.6105,0.0136","predicate":"reads_as","aspect":"text","rev":"b3:2a4337aa452d2701","body":"The instrument used for each surface reading and its calibration date;"}
+{"at":"page=7&bbox=0.1437,0.8525,0.6876,0.0336","predicate":"manifests","term":"list-item","num":"(c)"}
+{"at":"page=7&bbox=0.1437,0.8525,0.6876,0.0336","predicate":"in","value":{"at":"page=7&bbox=0.1437,0.7952,0.6876,0.0909","ord":2}}
+{"at":"page=7&bbox=0.1437,0.8525,0.6876,0.0336","predicate":"reads_as","aspect":"text","rev":"b3:4806cb86a8f7ccb0","body":"The measurement arrangement claimed under paragraph 13 and the allowance applied."}
+{"at":"page=8&bbox=0.143,0.1003,0.6909,0.0335","predicate":"manifests","term":"paragraph","num":"20."}
+{"at":"page=8&bbox=0.143,0.1003,0.6909,0.0335","predicate":"in","value":{"at":"page=7&bbox=0.1437,0.7429,0.185,0.0135","ord":2}}
+{"at":"page=8&bbox=0.143,0.1003,0.6909,0.0335","predicate":"reads_as","aspect":"text","rev":"b3:bcb7b8fdf1237d5d","body":"Deviations from the plan during the reporting period shall be listed in the report with their effect on the uncertainty allowance."}
+{"at":"page=8&bbox=0.1443,0.1596,0.2698,0.0119","predicate":"manifests","term":"heading","num":"7.","level":1}
+{"at":"page=8&bbox=0.1443,0.1596,0.2698,0.0119","predicate":"in","value":{"at":"whole","ord":8}}
+{"at":"page=8&bbox=0.1443,0.1596,0.2698,0.0119","predicate":"reads_as","aspect":"text","rev":"b3:d843b893bcf993a8","body":"Document information"}
+{"at":"page=8&bbox=0.1431,0.1937,0.1378,0.0134","predicate":"manifests","term":"paragraph"}
+{"at":"page=8&bbox=0.1431,0.1937,0.1378,0.0134","predicate":"in","value":{"at":"page=8&bbox=0.1443,0.1596,0.2698,0.0119","ord":0}}
+{"at":"page=8&bbox=0.1431,0.1937,0.1378,0.0134","predicate":"reads_as","aspect":"text","rev":"b3:eada8dc8ff2b4025","body":"Revision history:"}
+{"at":"page=8&bbox=0.1529,0.2239,0.6877,0.1297","predicate":"manifests","term":"revision-history","layout":"grid"}
+{"at":"page=8&bbox=0.1529,0.2239,0.6877,0.1297","predicate":"in","value":{"at":"page=8&bbox=0.1443,0.1596,0.2698,0.0119","ord":1}}
+{"at":"page=8&bbox=0.1529,0.2239,0.3605,0.0128","predicate":"manifests","term":"row"}
+{"at":"page=8&bbox=0.1529,0.2239,0.3605,0.0128","predicate":"in","value":{"at":"page=8&bbox=0.1529,0.2239,0.6877,0.1297","ord":0}}
+{"at":"page=8&bbox=0.1529,0.2239,0.3605,0.0128","predicate":"reads_as","aspect":"cells","rev":"b3:5f7c4d4d57dab1d5","body":["Version","Date","Description"]}
+{"at":"page=8&bbox=0.1537,0.2422,0.6273,0.0536","predicate":"manifests","term":"row"}
+{"at":"page=8&bbox=0.1537,0.2422,0.6273,0.0536","predicate":"in","value":{"at":"page=8&bbox=0.1529,0.2239,0.6877,0.1297","ord":1}}
+{"at":"page=8&bbox=0.1537,0.2422,0.6273,0.0536","predicate":"reads_as","aspect":"cells","rev":"b3:fe454fca82a93bb0","body":["02.1","12 March 2026","Uncertainty allowance restated as a fraction; parameter tables aligned with the monitoring guidance"]}
+{"at":"page=8&bbox=0.1537,0.3012,0.6869,0.0304","predicate":"manifests","term":"row"}
+{"at":"page=8&bbox=0.1537,0.3012,0.6869,0.0304","predicate":"in","value":{"at":"page=8&bbox=0.1529,0.2239,0.6877,0.1297","ord":2}}
+{"at":"page=8&bbox=0.1537,0.3012,0.6869,0.0304","predicate":"reads_as","aspect":"cells","rev":"b3:4d11b0929c6d3524","body":["02.0","3 September 2024","Radiative part of the surface coefficient added; figure of a run added"]}
+{"at":"page=8&bbox=0.1537,0.3402,0.3798,0.0134","predicate":"manifests","term":"row"}
+{"at":"page=8&bbox=0.1537,0.3402,0.3798,0.0134","predicate":"in","value":{"at":"page=8&bbox=0.1529,0.2239,0.6877,0.1297","ord":3}}
+{"at":"page=8&bbox=0.1537,0.3402,0.3798,0.0134","predicate":"reads_as","aspect":"cells","rev":"b3:7f3ba3f3360a9f09","body":["01.0","21 May 2021","Initial adoption"]}
+{"at":"page=8&bbox=0.1498,0.3842,0.5892,0.0558","predicate":"manifests","term":"metadata"}
+{"at":"page=8&bbox=0.1498,0.3842,0.5892,0.0558","predicate":"in","value":{"at":"page=8&bbox=0.1443,0.1596,0.2698,0.0119","ord":2}}
+{"at":"page=8&bbox=0.1498,0.3842,0.5892,0.0558","predicate":"reads_as","aspect":"text","rev":"b3:ac3ae62c0a0589eb","body":"Decision class: Regulatory\nDocument type: Procedure\nBusiness function: Reporting\nKeywords: heat loss, insulation, pipework, surface temperature"}
+{"at":"page=8&bbox=0.4756,0.4937,0.0526,0.0009","predicate":"manifests","term":"end-mark"}
+{"at":"page=8&bbox=0.4756,0.4937,0.0526,0.0009","predicate":"in","value":{"at":"whole","ord":9}}
+{"at":"page=8&bbox=0.4756,0.4937,0.0526,0.0009","predicate":"reads_as","aspect":"text","rev":"b3:cc74d42fcac434c9","body":"- - - - -"}

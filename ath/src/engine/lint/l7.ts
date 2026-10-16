@@ -78,11 +78,8 @@ export function compareCells(body: unknown, derivation: string, conventions: rea
   const cells: string[] = Array.isArray(body) ? body.flatMap((c) => (Array.isArray(c) ? c.map(String) : [String(c)])) : [String(body)];
   const hay = squash(derivation);
   for (const c of cells) {
-    const needle = squash(
-      applyConventions(c, conventions)
-        .replace(/\$([^$]+)\$/g, "$1")
-        .replace(/[_^{}\\]/g, ""),
-    );
+    // a cell written as TeX ($\Delta T_{i,y}$) is compared through the same symbol map as a tex reading
+    const needle = squash(stripTex(applyConventions(c, conventions)));
     if (!needle || needle === "-" || needle === "–") continue;
     if (!hay.includes(needle)) return `cell '${c.slice(0, 40)}' not a contiguous run of the row's words`;
   }

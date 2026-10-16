@@ -19,6 +19,9 @@ const EML = join(R, "gocf-2026-wpg.eml");
 const EPUB = join(R, "novel.epub");
 const MBOX = join(R, "gmail-slice.mbox");
 const PASS = join(TESTDATA, "passes", "404d090fea45729f3e5933835fbd833ec7859595ccc5b6cf47f77ac0850f5232.p1.jsonl");
+const TWIN_PDF = join(TESTDATA, "synthetic", "procedure.pdf");
+const TWIN_ID = "5e6e497d934498fc49229ba8c594684114a1213426bc1ad0113718ae72794269";
+const TWIN_PASS = join(TESTDATA, "passes", `${TWIN_ID}.p1.jsonl`);
 const env = { ATH_ACTOR: "regression" };
 
 describe("regression: the XenForo thread (html, derived tree)", () => {
@@ -166,6 +169,69 @@ describe("regression: CDM TOOL03 (pdf, asserted tree)", () => {
       expect(md.stdout).toContain("\\tag*{Equation (1)}");
     },
   );
+});
+
+describe("regression: the calculation procedure (pdf, asserted tree — the generated twin of TOOL03)", () => {
+  test("ingest → pass open → append the generated pass → sign --walked → inspect → lint → tree at → harvest → verify → export", async () => {
+    const f = foundation();
+    const ing = await ath(["--json", "ingest", TWIN_PDF, "--origin", "synthetic", "--via", "upload", "--received", "2026-10-15"], {
+      cwd: f,
+      env,
+    });
+    const id = (ing.json() as { data: { ingested: { blake3: string; mime: string }[] } }).data.ingested[0]!;
+    expect(id.blake3).toBe(TWIN_ID);
+    expect(id.mime).toBe("application/pdf");
+    const open = await ath(["--json", "pass", "open", id.blake3, "--by", "gen-author", "--verify", "gen-verifier"], { cwd: f, env });
+    expect((open.json() as { data: { id: string } }).data.id).toBe("p1");
+    const app = await ath(["--json", "claims", "append", id.blake3, "--pass", "p1", "--from", TWIN_PASS], { cwd: f, env });
+    expect(app.code, app.stderr).toBe(0);
+    expect((app.json() as { data: { staged: number } }).data.staged).toBe(436); // every rev recomputes
+    const sign = await ath(["--json", "pass", "sign", id.blake3, "p1", "--walked"], { cwd: f, env });
+    const sd = (sign.json() as { data: { signed: boolean; findings: { code: string; severity: string; msg: string }[] } }).data;
+    expect(sd.findings.filter((x) => x.severity === "block")).toEqual([]);
+    expect(sd.signed).toBe(true);
+    const chain = loadChain(f);
+    const a = await loadArtifact(chain, loadOntology(chain), id.blake3);
+    expect(a.root).toBe("methodological-tool");
+    expect(a.tree).toBe("asserted");
+    expect(a.pdf!.pages.length).toBe(8);
+    expect(a.pdf!.chrome.length).toBe(16); // a running header and a footer on every page
+    expect(a.table.unreachable().every((s) => /^page=\d+$/.test(s.at))).toBe(true); // pages past the toc stay physical
+    // a container that crosses a page break (a definition list, a parameter table) is one scope at a union address
+    expect([...a.table.scopes.keys()].filter((k) => k.includes(";")).length).toBe(2);
+    // L7: every reading agrees with pdf.words@1 — the four equations through the tex comparator, the greek by name
+    const insp = await ath(["--json", "inspect", id.blake3, "--all"], { cwd: f, env });
+    expect((insp.json() as { data: { counts: Record<string, number> } }).data.counts).toEqual({ ok: 131 });
+    const lint = await ath(["--json", "lint", id.blake3], { cwd: f, env });
+    expect(lint.code).toBe(0);
+    expect((lint.json() as { data: { findings: { code: string }[] } }).data.findings.map((x) => x.code).sort()).toEqual([
+      "T-expects",
+      "T-lint",
+    ]);
+    // designated addresses: a later key narrows inside the earlier one's subtree; a capture answers for its field
+    expect((await ath(["tree", "at", id.blake3, "sec=3&para=8"], { cwd: f, env })).stdout).toContain("(paragraph)");
+    expect((await ath(["tree", "at", id.blake3, "sec=5.2&eq=2"], { cwd: f, env })).stdout).toContain("(equation)");
+    expect((await ath(["tree", "at", id.blake3, "sec=6.2&table=3"], { cwd: f, env })).stdout).toContain("(parameter-table)");
+    expect((await ath(["tree", "at", id.blake3, "sec=6.2&table=1"], { cwd: f, env })).code).toBe(66);
+    // harvest: a parameter per definition (keyed by the symbol cell), a monitored parameter per key-value table
+    // (keyed by its "Data / parameter:" row), the tool itself from the metadata block; every entry binds
+    const h = await ath(["--json", "harvest", id.blake3], { cwd: f, env });
+    expect(h.code, h.stderr).toBe(0);
+    const hd = (h.json() as { data: { concepts: number; claims: number; entries: number; written: string[] } }).data;
+    expect(hd).toMatchObject({ concepts: 18, claims: 65, entries: 73 });
+    expect(hd.written.filter((w) => w.startsWith("monitored-parameter-")).length).toBe(5);
+    expect(hd.written.filter((w) => w.startsWith("parameter-")).length).toBe(12);
+    const v = await ath(["--json", "verify", "--all"], { cwd: f, env });
+    const vd = (v.json() as { data: { counts: { bound: number; entries: number; flagged: number; byStatus: Record<string, number> } } })
+      .data;
+    expect(vd.counts).toMatchObject({ entries: 73, bound: 73, flagged: 0, byStatus: { confirmed: 56, provisional: 9 } });
+    expect((await ath(["lint", "--all"], { cwd: f, env })).code).toBe(0);
+    const md = await ath(["export", "markdown", id.blake3], { cwd: f, env });
+    expect(md.stdout).toContain("remainder  0 of 2671 words");
+    expect(md.stdout).toContain("## 5. Calculation procedure");
+    expect(md.stdout).toContain("\\tag*{Equation (2)}");
+    expect(md.stdout).toContain("| Data / parameter: | $T_{a,y}$ |");
+  });
 });
 
 describe("regression: a Discord export (zip, container)", () => {

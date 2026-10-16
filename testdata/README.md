@@ -8,7 +8,7 @@ had no suitably-small real artifact and are generated instead (see "The syntheti
 
 Tracked here: this README, `exemplars.yaml` (the manifest — file, blake3, mime, root term, shape
 and a neutral technical note, no personal content), `seed.ts` (the seeder), `ontology/` (the
-regression ontology a foundation starts from), `passes/` (the TOOL03 pass lines) and `synthetic/`.
+regression ontology a foundation starts from), `passes/` (the TOOL03 pass lines and the generated twin's) and `synthetic/`.
 **`regression/` and `instance/` are never tracked** — they hold private bytes and are gitignored
 at the repo root (`/testdata/regression/`, `/testdata/instance/`).
 
@@ -35,6 +35,18 @@ run of a generator, are what the manifest's blake3 pins: an encoder's output dri
 versions even for identical input (see spec/CHANGELOG.md's v32 entry, born from exactly this
 problem for real media), so pinning a freshly-generated hash would make the manifest
 non-reproducible from one machine or ffmpeg/libheif version to the next.
+
+### Generated twins (`synthetic/gen/`)
+
+Where a regression artifact is private, a *twin* with the same shape and fictional content is generated and
+committed beside it, and the script that generates it is kept under `synthetic/gen/`: the twin is what the
+test suite always runs; the private bytes, when placed, run the same leg over the real thing. The first is
+`gen/procedure.ts`, the twin of the TOOL03 PDF: one content model drives both the typst source
+(`procedure.typ`, rendered to `procedure.pdf` with typst 0.15.1 and its bundled fonts; `set document(date:
+none)` makes the render byte-identical across runs) and the pass lines (`passes/<blake3>.p1.jsonl`), whose
+boxes are read back off the rendered PDF through `pdf.words@1`. Re-rendering is re-running the script; the
+committed PDF is what the manifest pins, and a changed render is a new blake3, a new pass file and a new pin
+in the test, on purpose.
 
 ### The regression ontology
 

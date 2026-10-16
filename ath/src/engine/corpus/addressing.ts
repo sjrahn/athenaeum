@@ -20,16 +20,25 @@ export function positional(table: ScopeTable, path: string): string {
 }
 
 /** The address-key → designator-field map the ontology declares (`sec` → heading.num, `post` → post.position …). */
-export function designatorKeys(o: Ontology, table: ScopeTable): Map<string, { term: string; field: string }[]> {
-  const out = new Map<string, { term: string; field: string }[]>();
+export function designatorKeys(o: Ontology, table: ScopeTable): Map<string, { term: string; field: string; pattern?: string }[]> {
+  const out = new Map<string, { term: string; field: string; pattern?: string }[]>();
   const terms = new Set<string>();
   for (const s of table.scopes.values()) for (const t of s.terms) terms.add(t);
   for (const t of terms) {
     for (const f of effectiveRules(o, [t]).fields) {
-      if (f.address) out.set(f.address, [...(out.get(f.address) ?? []), { term: t, field: f.name }]);
+      if (f.address) out.set(f.address, [...(out.get(f.address) ?? []), { term: t, field: f.name, pattern: f.pattern }]);
     }
   }
   return out;
+}
+
+/** What a designator field answers to in an address: the whole value, and the pattern's first capture when the
+ * declaration has one (`Equation (2)` under `^Equation \((\d+)\)$` answers to `eq=2`). */
+function answersTo(value: unknown, pattern: string | undefined): string[] {
+  const whole = norm(value);
+  if (!pattern) return [whole];
+  const m = new RegExp(pattern).exec(String(value));
+  return m?.[1] !== undefined ? [whole, norm(m[1])] : [whole];
 }
 
 const norm = (v: unknown): string => String(v).trim().replace(/^#/, "").replace(/\.$/, "").toLowerCase();
@@ -49,9 +58,15 @@ export function designated(o: Ontology, table: ScopeTable, query: string): strin
         "USAGE",
         `designated address: no term declares a designator for '${key}=' (known: ${[...keys.keys()].join(", ") || "none"})`,
       );
-    const pool: Scope[] = candidates ? candidates.flatMap((c) => table.within(c.at)) : [...table.scopes.values()];
+    // a later key narrows to what the earlier key's scopes hold: their descendants in the tree (a paragraph placed in a
+    // heading) and whatever their boxes contain (a cell in a row)
+    const pool: Scope[] = candidates
+      ? [...new Set(candidates.flatMap((c) => [...table.walk(c.at).filter((s) => s.at !== c.at), ...table.within(c.at)]))]
+      : [...table.scopes.values()];
     const hits: Scope[] = pool.filter((s: Scope) =>
-      decls.some((d) => s.terms.includes(d.term) && s.fields[d.field] !== undefined && norm(s.fields[d.field]) === want),
+      decls.some(
+        (d) => s.terms.includes(d.term) && s.fields[d.field] !== undefined && answersTo(s.fields[d.field], d.pattern).includes(want),
+      ),
     );
     if (!hits.length)
       throw new AthError(

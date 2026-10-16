@@ -1,5 +1,5 @@
 {"subject":"equation","predicate":"refines","value":"unit"}
 {"subject":"equation","predicate":"reads","value":"tex"}
 {"subject":"equation","predicate":"field","value":{"name":"label","kind":"designator","where":"right-margin","pattern":"^Equation \\((\\d+)\\)$","address":"eq"}}
-{"subject":"equation","predicate":"renders","value":{"md":"$$ {body} \\tag*{label} $$"}}
+{"subject":"equation","predicate":"renders","value":{"md":"$$ {body} \\tag*{{label}} $$"}}
 {"subject":"equation","predicate":"aligns","value":"doco:FormulaBox"}

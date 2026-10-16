@@ -162,6 +162,37 @@ function resolveRef(a: Artifact, s: Scope, ref: string | number, minted: Minted[
       };
     }
   }
+  // a key of a key-value table (the term's `keys` line): the row under s whose first cell is the key; its second cell
+  const chain = [...new Set(s.terms.flatMap((t) => refinesChain(o, t)))];
+  const keys = chain.flatMap((t) => linesOf(o, t, "keys").flatMap((l) => (Array.isArray(l.value) ? l.value.map(String) : [])));
+  const same = (x: unknown, y: string) => String(x).trim().toLowerCase() === y.trim().toLowerCase();
+  if (keys.some((k) => same(k, ref))) {
+    for (const row of rowsUnder(a, s)) {
+      const r = row.readings.find((x) => x.aspect === "cells")!;
+      const cells = r.body as unknown[];
+      if (!same(cells[0], ref)) continue;
+      const v = cells[1];
+      if (v === undefined || v === null || v === "" || v === "-") return null;
+      return { value: String(v), entries: [{ anchor: `corpus://${blake}?${row.at}&cells`, quote: String(v), reading: r.rev }] };
+    }
+    return null;
+  }
+  // a named cell (the term's `cells` line names the columns): the cell at that index
+  const names = chain.flatMap((t) => linesOf(o, t, "cells").flatMap((l) => (Array.isArray(l.value) ? l.value.map(String) : [])));
+  const idx = names.indexOf(ref);
+  if (idx !== -1) {
+    const holder = rowsUnder(a, s)[0];
+    return holder ? resolveRef(a, holder, idx, minted) : null;
+  }
+  // a key in a text scope written as `Key: value` lines
+  const text = s.readings.find((x) => x.aspect === "text" && typeof x.body === "string");
+  if (text && /:$/.test(ref) === false) {
+    const line = (text.body as string).split("\n").find((l) => same(l.split(":")[0], ref));
+    if (line) {
+      const v = line.slice(line.indexOf(":") + 1).trim();
+      if (v) return { value: v, entries: [{ anchor: `corpus://${blake}?${s.at}&text`, quote: v, reading: text.rev }] };
+    }
+  }
   // a term: the scope (self or nearest descendant) manifesting it; its text surface
   if (o.terms.has(ref)) {
     const holder = s.terms.includes(ref) ? s : a.table.find(ref, s.at);
@@ -173,6 +204,18 @@ function resolveRef(a: Artifact, s: Scope, ref: string | number, minted: Minted[
     return { value: text, entries: [{ anchor: `corpus://${blake}?${holder.at}&${r.aspect}`, quote: text, reading: r.rev }] };
   }
   return null;
+}
+
+/** The scopes with a cells reading at or under `s`: itself, then its tree descendants, then what its box contains. */
+function rowsUnder(a: Artifact, s: Scope): Scope[] {
+  const seen = new Set<string>();
+  const out: Scope[] = [];
+  for (const c of [s, ...a.table.walk(s.at), ...a.table.within(s.at)]) {
+    if (seen.has(c.at) || !c.readings.some((r) => r.aspect === "cells" && Array.isArray(r.body))) continue;
+    seen.add(c.at);
+    out.push(c);
+  }
+  return out;
 }
 
 /** The scopes a key is read from under an owner scope. */

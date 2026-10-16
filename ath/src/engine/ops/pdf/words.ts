@@ -72,8 +72,9 @@ export function pageWords(d: PdfDoc, index0: number): PageWords {
       const right = m.pdfium.getValue(buf + 8, "double");
       const bottom = m.pdfium.getValue(buf + 16, "double");
       const top = m.pdfium.getValue(buf + 24, "double");
-      // lines (baseline banding)
-      const base = 1 - bottom / height;
+      // lines: banded on the glyph's baseline origin (a descender's box bottom would open a new band under a font
+      // that reports tight glyph boxes); the box bottom stands in when pdfium has no origin for the char
+      const base = m.FPDFText_GetCharOrigin(tp, i, buf, buf + 8) ? 1 - m.pdfium.getValue(buf + 8, "double") / height : 1 - bottom / height;
       if (cur && Math.abs(base - cur.base) > LINE_TOLERANCE) cur = null;
       if (!cur) {
         cur = { base, top: 1 - top / height, h: (top - bottom) / height, x0: left / width, x1: right / width, text: "" };

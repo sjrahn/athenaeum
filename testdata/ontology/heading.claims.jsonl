@@ -2,5 +2,5 @@
 {"subject":"heading","predicate":"reads","value":"text"}
 {"subject":"heading","predicate":"field","value":{"name":"num","kind":"designator","where":"leading","pattern":"^\\d+(\\.\\d+)*\\.$","address":"sec"}}
 {"subject":"heading","predicate":"field","value":{"name":"level","kind":"int","required":true}}
-{"subject":"heading","predicate":"renders","value":{"md":"#{level+1} {num} {body}"}}
+{"subject":"heading","predicate":"renders","value":{"md":"{level+1} {num} {body}"}}
 {"subject":"heading","predicate":"aligns","value":"doco:SectionTitle"}

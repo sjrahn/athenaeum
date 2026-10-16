@@ -17,8 +17,9 @@ function render(a: Artifact, s: Scope, reading: { aspect: string; body: unknown 
         if (k === "body") return body;
         if (k === "at") return s.at;
         const v = s.fields[k];
+        // `{level+1}`: that many hashes plus one; a scope with no level (a selected title) is level 0
+        if (plus) return "#".repeat((typeof v === "number" ? v : 0) + 1);
         if (v === undefined) return "";
-        if (plus && typeof v === "number") return "#".repeat(v + 1);
         return String(v);
       }),
     );

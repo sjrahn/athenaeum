@@ -25,6 +25,14 @@
   note: single-page PDF, print-to-PDF; the asserted tree (pdf.words@1)
   source: regression
 
+- file: procedure.pdf
+  blake3: 5e6e497d934498fc49229ba8c594684114a1213426bc1ad0113718ae72794269
+  mime: application/pdf
+  root: pdf
+  shape: pdf-asserted-tree
+  note: the generated twin of TOOL03 (gen/procedure.ts, typst 0.15.1; whole manifests methodological-tool once its pass is signed) — 8 pages, cover, toc, 17 headings, 4 labelled equations with definition lists, parameter tables, a figure, a footnote, a revision history, chrome; its pass is passes/5e6e497d….p1.jsonl, generated from the same model
+  source: synthetic
+
 - file: g8board-idle-stall-292301.html
   blake3: dd0a78441fe3ae117f520809a759dac6cba0fbf52737bb2baf1cd19e1d695299
   mime: text/html
