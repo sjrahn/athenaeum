@@ -229,6 +229,92 @@ describe("regression: the forum thread (html, derived tree — the generated twi
   });
 });
 
+describe("regression: the quay messages (html, derived tree — the generated twin of an iMessage conversation page)", () => {
+  test("a sidecar folds the export's provenance; 40 messages derive with sender, instant, bubble, attachments, a reply, reactions", async () => {
+    const f = foundation();
+    const chain = loadChain(f);
+    const o = loadOntology(chain);
+    const ing = await ath(["--json", "ingest", join(SYN, "quay-messages.html"), "--received", "2026-10-16"], { cwd: f, env });
+    expect(ing.code, ing.stderr).toBe(0);
+    const row = (ing.json() as { data: { ingested: { blake3: string; capturedFrom: { value: Record<string, unknown> } }[] } }).data
+      .ingested[0]!;
+    expect(row.blake3).toBe("2af1ebd5e916e7c54994c775685203a1b537d98e40484abd4ef5ab9389a88153");
+    const a = await loadArtifact(chain, o, row.blake3);
+    expect(a.capturedFrom!.value).toMatchObject({
+      origin: "imessage-export",
+      via: "export",
+      snapshot: "2026-04-01T06:00:00Z",
+      engine: "imessage-exporter 3.0.0",
+      fields: { schema: "imessage-export", period: "2026-03" },
+    });
+    expect(a.root).toBe("imessage-conversation");
+    expect(a.table.size).toBe(168);
+    expect(a.table.unreachable()).toEqual([]);
+    const count = (t: string) => a.table.findAll(t).length;
+    expect([
+      count("message"),
+      count("author"),
+      count("sent-at"),
+      count("bubble"),
+      count("attachment"),
+      count("reaction"),
+      count("quote"),
+      count("link-card"),
+      count("edit-history"),
+    ]).toEqual([40, 40, 40, 38, 2, 4, 1, 1, 1]);
+    const first = a.table.children(a.table.find("message")!.at);
+    expect(first.map((s) => s.terms[0])).toEqual(["sent-at", "author", "bubble"]);
+    expect(first[0]!.fields).toEqual({ instant: "Mar 02, 2026  9:45:38 AM" });
+    expect(first[0]!.readings[0]).toMatchObject({ body: "Mar 02, 2026 9:45:38 AM", rev: "derived:html.text@1" });
+    expect(a.table.find("attachment")!.fields).toEqual({ alt: "attachment" });
+    expect((await ath(["lint", "--all"], { cwd: f, env })).code).toBe(0);
+    expect((await ath(["export", "markdown", row.blake3], { cwd: f, env })).stdout).toContain("remainder  340 of 5099");
+  });
+});
+
+describe("regression: the pump service manual (html, derived tree — the generated twin of a service-manual page capture)", () => {
+  test("the banner is provenance; topics, headings, notices, steps, specification rows, figures and captions derive; nothing is left over", async () => {
+    const f = foundation();
+    const chain = loadChain(f);
+    const o = loadOntology(chain);
+    const ing = await ingestFile(chain, join(SYN, "pump-service-manual.html"), { date: "2026-10-16" });
+    expect(ing.blake3).toBe("7d848c4f9fb5e9cb7cc1cab1d765ba9dd88f28f5f191e810ddcde657c3c4dc9b");
+    expect(ing.capturedFrom?.value).toMatchObject({
+      origin: "manuals.example.invalid",
+      via: "capture",
+      snapshot: "2026-05-20T15:02:11Z",
+      fidelity: "lean",
+    });
+    const a = await loadArtifact(chain, o, ing.blake3);
+    expect(a.root).toBe("service-manual-page");
+    expect(a.table.size).toBe(75);
+    expect(a.table.unreachable()).toEqual([]);
+    const count = (t: string) => a.table.findAll(t).length;
+    expect([
+      count("topic"),
+      count("heading"),
+      count("notice"),
+      count("paragraph"),
+      count("procedure-step"),
+      count("list-item"),
+      count("spec-table"),
+      count("spec-row"),
+      count("figure"),
+      count("caption"),
+    ]).toEqual([5, 6, 4, 5, 19, 14, 3, 12, 3, 3]);
+    const title = a.table.find("heading")!;
+    expect(title.fields).toEqual({ level: 0 });
+    expect(title.readings[0]!.body).toBe("Impeller replacement");
+    expect(a.table.find("figure")!.fields.original).toBe("https://manuals.example.invalid/assets/figures/hl200-1.png");
+    expect(a.table.children(a.table.find("spec-table")!.at).every((s) => s.terms[0] === "spec-row")).toBe(true);
+    expect((await ath(["lint", "--all"], { cwd: f, env })).code).toBe(0);
+    const md = await ath(["export", "markdown", ing.blake3], { cwd: f, env });
+    expect(md.stdout).toContain("remainder  0 of 4467");
+    expect(md.stdout).toContain("# Impeller replacement");
+    expect(md.stdout).toContain("## Impeller removal");
+  });
+});
+
 describe("regression: the regatta mailing (rfc822, derived tree — the generated twin of the festival mailing)", () => {
   test("header + body + blocks; the HTML alternative and three attachments are subjects; the message harvests", async () => {
     const f = foundation();

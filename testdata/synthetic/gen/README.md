@@ -11,6 +11,8 @@ tier"). Run from the repo root.
 | `plain.ts` | `countdown.mp4` | ffmpeg (libx264 + aac) | no (encoder, muxer timestamps) |
 | `plain.ts` | `till-receipt.typ`, `till-receipt.pdf` | typst 0.15.1 | yes |
 | `thread.ts` | `harbourboard-thread.html` | the script itself | yes |
+| `conversation-page.ts` | `quay-messages.html` + `.capture.yaml` | the script itself (`lib/png.ts` for the inlined images) | yes |
+| `manual-page.ts` | `pump-service-manual.html` | the script itself | yes |
 | `mailing.ts` | `regatta-mailing.eml` | the script itself (its xlsx attachment through `lib/zip.ts`; the jpeg and pdf are the committed `garden.jpg` and `till-receipt.pdf`) | yes, given those two files |
 | `novel.ts` | `lantern-novel.epub` | the script itself (`lib/zip.ts`, `lib/png.ts` for the images) | yes |
 | `chat-archive.ts` | `quay-chat.mbox` | the script itself | yes |

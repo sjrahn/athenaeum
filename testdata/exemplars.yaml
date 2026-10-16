@@ -57,6 +57,22 @@
   note: the twin of the thread capture — the v52 banner, html#XF[data-template=thread_view], ten posts with XenForo's attribution, time and quote markup, declared chrome, a script and style blob (gen/thread.ts); 72 scopes by select
   source: synthetic
 
+- file: quay-messages.html
+  blake3: 2af1ebd5e916e7c54994c775685203a1b537d98e40484abd4ef5ab9389a88153
+  mime: text/html
+  root: imessage-conversation
+  shape: conversation-page
+  note: the twin of an iMessage conversation page (imessage-exporter layout) — 40 message blocks with sender, timestamp link, bubble text, two inlined attachments, a reply, tapbacks, an edit table, a link card; provenance in quay-messages.html.capture.yaml (gen/conversation-page.ts)
+  source: synthetic
+
+- file: pump-service-manual.html
+  blake3: 7d848c4f9fb5e9cb7cc1cab1d765ba9dd88f28f5f191e810ddcde657c3c4dc9b
+  mime: text/html
+  root: service-manual-page
+  shape: manual-page-capture
+  note: the twin of a service-manual page capture (single-page application) — banner, breadcrumb chrome, five topics with notices, numbered steps, bullet lists, specification tables, inlined thumbnails with their original src (gen/manual-page.ts)
+  source: synthetic
+
 - file: gocf-2026-wpg.eml
   blake3: 36c1188d271552f814612c517fbec5da425a42883d63a87fd4116675530adbfe
   mime: message/rfc822

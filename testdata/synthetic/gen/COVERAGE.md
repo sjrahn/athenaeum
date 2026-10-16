@@ -13,8 +13,8 @@ test once the derivation lands.
 | shape (bytes) | corpus origins | mime | ≈count | level | twin | generator | status |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | forum thread capture (XenForo) | web | text/html | 800 | c | harbourboard-thread.html | thread.ts | done |
-| iMessage conversation page (imessage-exporter, attachments inlined) | imessage-export | text/html | 5,900 | c | — | — | planned |
-| service-manual page (procedures, data tables, figures) | web | text/html | 7,000 | c | — | — | planned |
+| iMessage conversation page (imessage-exporter, attachments inlined) | imessage-export | text/html | 5,900 | c | quay-messages.html (+ .capture.yaml) | conversation-page.ts | done |
+| service-manual page (procedures, data tables, figures) | web | text/html | 7,000 | c | pump-service-manual.html | manual-page.ts | done |
 | product / order / listing / article page captures | web | text/html | 600 | c | — | — | planned (one generator, a page kind per call) |
 | Meta conversation (`message_N.json`, photos/ gifs/ videos/ audio/) | facebook-, instagram-, threads-conversation | application/json | 2,900 | a (+b via bundle) | — | — | planned |
 | Google Chat conversation (`messages.json` + `group_info.json`) | google-chat-conversation | application/json | 1,200 | a | — | — | planned |

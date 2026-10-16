@@ -1,0 +1,13 @@
+{"subject":"imessage-conversation","predicate":"refines","value":"web-page"}
+{"subject":"imessage-conversation","predicate":"definition","value":"a conversation page as imessage-exporter writes it: one message block per message, sender, timestamp, bubble text, inlined attachments, replies, tapbacks, edit history"}
+{"subject":"imessage-conversation","predicate":"matches","value":{"mime":"text/html","selector":"meta[name=\"corpus-origin-schema\"][content=\"imessage-export\"]"}}
+{"subject":"imessage-conversation","predicate":"select","value":{"selector":"body > div.message","term":"message","ord":"document order"}}
+{"subject":"imessage-conversation","predicate":"select","value":{"selector":"body > div.message > div > p > span.sender","term":"author","in":"message"}}
+{"subject":"imessage-conversation","predicate":"select","value":{"selector":"body > div.message > div > p > span.timestamp > a","term":"sent-at","in":"message","field":"instant","attr":"title"}}
+{"subject":"imessage-conversation","predicate":"select","value":{"selector":"body > div.message > div > div.message_part > span.bubble","term":"bubble","in":"message"}}
+{"subject":"imessage-conversation","predicate":"select","value":{"selector":"body > div.message > div > div.message_part img","term":"attachment","in":"message","field":"alt","attr":"alt"}}
+{"subject":"imessage-conversation","predicate":"select","value":{"selector":"body > div.message > div > div.message_part div.app","term":"link-card","in":"message"}}
+{"subject":"imessage-conversation","predicate":"select","value":{"selector":"body > div.message > div > div.message_part div.edited","term":"edit-history","in":"message"}}
+{"subject":"imessage-conversation","predicate":"select","value":{"selector":"body > div.message div.reply span.bubble","term":"quote","in":"message"}}
+{"subject":"imessage-conversation","predicate":"select","value":{"selector":"body > div.message span.tapback","term":"reaction","in":"message"}}
+{"subject":"imessage-conversation","predicate":"chrome","value":["hr","style","link"]}
