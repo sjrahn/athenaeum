@@ -1,11 +1,11 @@
 // nquads.ts — the RDF projection (spec §4.1, §11): every line is one quad — subject IRI, predicate IRI, the line's
 // payload as a JSON literal, and the attestation as the graph. The round trip (lines → quads → lines, byte-identical)
-// is the format's conformance test.
+// is the format's conformance test. The predicate and datatype namespace is a URN: a name, claiming no domain.
 import type { JsonObject } from "../../lib/jsonl.ts";
 import { canonicalLine, orderKeys } from "../../lib/jsonl.ts";
 
 export const NS = {
-  ath: "https://athenaeum.rahn.tech/ns#",
+  ath: "urn:athenaeum:ns:",
   corpus: "corpus://",
   ledger: "ledger://",
   ontology: "ontology://",
