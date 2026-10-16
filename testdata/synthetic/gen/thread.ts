@@ -49,7 +49,7 @@ const post = (p: (typeof posts)[number]) => `<article class="message message--po
 const script = `<script>(function(){var XF=window.XF={};XF.config={url:"${URL}",userId:0,enablePush:false};${Array.from({ length: 120 }, (_, i) => `XF.fn${i}=function(a,b){return a+b*${i};};`).join("")}})();</script>`;
 const style = `<style>${Array.from({ length: 80 }, (_, i) => `.u-${i}{margin:${i}px;padding:${i % 7}px;color:#${(i * 37 % 4096).toString(16).padStart(3, "0")}}`).join("")}</style>`;
 
-const html = `<head><meta name="corpus-capture-url" content="${URL}"><meta name="corpus-fetched-at" content="2026-08-15T23:40:36Z"><meta name="corpus-fidelity" content="lean"></head><!DOCTYPE html>
+const html = `<head><meta name="corpus-capture-url" content="${URL}"><meta name="corpus-fetched-at" content="2026-06-07T14:03:19Z"><meta name="corpus-fidelity" content="lean"></head><!DOCTYPE html>
 <html id="XF" lang="en-GB" dir="LTR" data-app="public" data-template="thread_view" data-container-key="node-12" data-content-key="thread-48213" data-logged-in="false" data-cookie-prefix="xf_" data-site="${SITE}" data-version="2026050200">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(TITLE)} | Harbour Board</title>${style}</head>
 <body data-template="thread_view">

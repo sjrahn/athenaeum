@@ -101,19 +101,19 @@ function xlsx(): Uint8Array {
   ]);
 }
 
-const B1 = "000000000000a1b2c30650043266";
-const B2 = "000000000000a1b2c20650043264";
+const B1 = "000000000000twin0001aaaa";
+const B2 = "000000000000twin0002bbbb";
 const jpg = new Uint8Array(readFileSync(join(SYN, "garden.jpg")));
 const pdf = new Uint8Array(readFileSync(join(SYN, "till-receipt.pdf")));
 const parts = [
-  "X-GM-THRID: 1863140059282400001",
+  "X-GM-THRID: 1000000000000000001",
   "X-Gm-Message-State: AOJu0YzSyntheticTwinOfTheFestivalMailingNoRealStateHere0001",
-  "X-Received: by 2002:a05:690e:1188:b0:651:c9a8:0001 with SMTP id 0001-0001mr1d50.64.1776828822136;",
-  "        Tue, 21 Apr 2026 20:33:42 -0700 (PDT)",
+  "X-Received: by 2001:db8::1 with SMTP id twin0001;",
+  "        Sat, 18 Apr 2026 18:12:19 -0700 (PDT)",
   "MIME-Version: 1.0",
   "From: Ada Abbott <ada.abbott@example.invalid>",
-  "Date: Tue, 21 Apr 2026 21:33:28 -0600",
-  "Message-ID: <CAA3XGkX-regatta-2026-volunteers-0001@mail.example.invalid>",
+  "Date: Sat, 18 Apr 2026 19:12:05 -0600",
+  "Message-ID: <regatta-2026-volunteers-0001@mail.example.invalid>",
   "Subject: Port Ellen Regatta 2026 =?UTF-8?Q?=E2=80=94?= volunteer schedule, poster and roles",
   "To: Regatta volunteers <regatta-volunteers@example.invalid>",
   `Content-Type: multipart/mixed; boundary="${B1}"`,

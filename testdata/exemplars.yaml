@@ -50,7 +50,7 @@
   source: regression
 
 - file: harbourboard-thread.html
-  blake3: b83e99eefb2230f36622c9654bf857ed8555dbef352de20cc67d6f8e9009128c
+  blake3: 430c0b0f1239932484a48c43bd1b0c3b069958c6ca73d273f97645d32b8b1d2e
   mime: text/html
   root: xenforo-thread
   shape: html-capture
@@ -82,7 +82,7 @@
   source: regression
 
 - file: regatta-mailing.eml
-  blake3: 6cdfa47f2509ead14a3818eac7b16c6e20800f6fe5b1e6c93c188e0b72562dfc
+  blake3: 2c694381523f325f5347167ce5e2a07bc3cb51ebfae3df46dc3d209145e9e9be
   mime: message/rfc822
   root: rfc822
   shape: message-with-attachments
@@ -262,7 +262,7 @@
   source: regression
 
 - file: quay-chat-export.zip
-  blake3: 0cc4bf7d6def2f15484b2d14ddafdeb9e13a1a4b2b1a7d2e9b5398a962feda03
+  blake3: 43ccf072e23a9cf6b5d322262fd1649644795ffdcf51099b49941e0623dd6112
   mime: application/zip
   root: zip
   shape: zip-zstd-members
@@ -446,7 +446,7 @@
   source: regression
 
 - file: quay-chat.mbox
-  blake3: 489636cafe2eeb8e2e639189383e291c8f8404e097799af6824467485265c4a3
+  blake3: 7ccea7956323b20d2874a1ec5a035263db53682c6d945ddd46307ecbf12a1587
   mime: application/mbox
   root: mbox
   shape: mbox

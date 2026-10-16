@@ -14,9 +14,9 @@ import { zip, type ZipEntry } from "./lib/zip.ts";
 
 const OUT = join(dirname(Bun.fileURLToPath(import.meta.url)), "..", "quay-chat-export.zip");
 const r = lcg(403);
-const GUILD = { id: "403664848971628000", name: "The Lantern Room" };
-const CHANNEL = { id: "403664848971628546", name: "general", category: "Text Channels" };
-const users = Array.from({ length: 4 }, (_, i) => ({ id: `3377957890384199${i}0`, name: `${pick(r, FIRST)}${pick(r, LAST)}`.toLowerCase(), nickname: pick(r, FIRST) }));
+const GUILD = { id: "100000000000000001", name: "The Lantern Room" };
+const CHANNEL = { id: "100000000000000002", name: "general", category: "Text Channels" };
+const users = Array.from({ length: 4 }, (_, i) => ({ id: `10000000000000${i}010`, name: `${pick(r, FIRST)}${pick(r, LAST)}`.toLowerCase(), nickname: pick(r, FIRST) }));
 const assets: { name: string; bytes: Uint8Array; method: 0 | 93 }[] = [];
 for (let i = 0; i < 7; i++) {
   const w = 24 + i * 4;
@@ -53,9 +53,9 @@ for (let i = 0; i < 120; i++) {
 }
 const doc = {
   guild: { ...GUILD, iconUrl: `https://cdn.example.invalid/icons/${GUILD.id}.png` },
-  channel: { ...CHANNEL, type: "GuildTextChat", categoryId: "403664848971628001", topic: null },
+  channel: { ...CHANNEL, type: "GuildTextChat", categoryId: "100000000000000003", topic: null },
   dateRange: { after: null, before: null },
-  exportedAt: "2026-07-13T06:35:13.661057-06:00",
+  exportedAt: "2026-07-04T09:15:30.000000-06:00",
   messages,
   messageCount: messages.length,
 };

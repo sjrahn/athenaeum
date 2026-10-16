@@ -26,7 +26,7 @@ for (let i = 0; i < 358; i++) {
   t += int(r, 60, 7200) * 1000;
   const d = new Date(t);
   const who = pick(r, people);
-  const thread = 1441149683901270000 + Math.floor(i / 12);
+  const thread = 1000000000000000000 + Math.floor(i / 12);
   const line = sentence(r);
   const plain = i === 100 || i === 250;
   const b = `----=_Part_${String(i).padStart(4, "0")}_0000000000.${Math.floor(t / 1000)}`;

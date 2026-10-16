@@ -62,14 +62,14 @@ test once the derivation lands.
 | photograph with Exif | owner-share, osxphotos | image/jpeg | 9,200 | a | garden.jpg | plain.ts | done |
 | screenshot | owner-share | image/png | 4,500 | a | window.png | plain.ts | done |
 | animated gif, webp, svg, heic | web, osxphotos | image/* | 1,200 | a | synthetic-image.* | by hand / message-audio-heic.py | done |
-| tiff, avif, heif, dng, arw | osxphotos, camera-sd-dump | image/* | 70 (+ members) | a | scan.tiff, still.avif; ARW and HIF inside card-dump.zip | media.ts, bundles2.ts | done (dng: sniffed by extension over the TIFF magic; no twin, the ARW stands for the raw shape) |
+| tiff, avif, heif, dng, arw | osxphotos, camera-sd-dump | image/* | 70 (+ members) | a | scan.tiff, still.avif; ARW and HIF inside card-dump.zip | media.ts, bundles2.ts | done; two mimes have a root but no twin reaches it: `image/heif` (every HEIF brand sniffs as heic) and `image/x-adobe-dng` (by extension over the TIFF magic) |
 | icon, dxf | web, vendor-download | image/x-icon, image/vnd.dxf | members | a | favicon.ico; DXF inside vendor-share.zip | media.ts, bundles2.ts | done |
 | video clip, multi-track | web, osxphotos | video/mp4, video/quicktime, video/3gpp | 500 | a | countdown.mp4, harbour-clip.mov, phone-clip.3gp | plain.ts, media.ts | done |
 | raw elementary streams | web | video/hevc, video/h264, video/av1 | 80 | a | stream.h264, stream.h265, stream.ivf | media.ts | done (told by NAL headers and the IVF signature) |
 | audio | web, members | audio/opus, aac, mpeg, mp4 | 15 (+ members) | a | synthetic-audio.m4a, tone.opus, tone.aac, tone.mp3 | message-audio-heic.py, media.ts | done |
 | reference archives | kiwix, geofabrik | application/x-openzim, application/x-osm+pbf | 48 | a | reference.zim, region.osm.pbf | odds.ts | done as signature stubs |
 | calendar, routes, tracks | google-takeout, apple-health | text/calendar, gpx, tcx | members | a | harbour-events.ics, walk.gpx; inside takeout-slice.zip and health-export.zip | documents.ts, bundles2.ts | done |
-| compressed and binary odds | vendor-download | rar, 7z, exe, FCStd, octet-stream | members | a | inside vendor-share.zip | bundles2.ts | rar, 7z, exe, ELF done as magic-only stubs; bracket.FCStd (odds.ts) |
+| compressed and binary odds | vendor-download | rar, 7z, exe, FCStd, octet-stream | members | a | inside vendor-share.zip | bundles2.ts | rar, 7z, exe, ELF done as magic-only stubs; bracket.FCStd (odds.ts); `application/octet-stream` has a root but no twin (every stub carries a magic) |
 
 Rules: a twin keeps the shape, never the content — fictional names, places, numbers; no hostname, institution or
 person from the owner's corpus appears in a tracked file. Each generator says in its header what it reproduces

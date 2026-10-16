@@ -38,7 +38,7 @@ describe("rfc822 parse", () => {
       mime: "multipart/mixed",
       params: { boundary: "abc", charset: "UTF-8" },
     });
-    expect(isoDate("Tue, 21 Apr 2026 21:33:28 -0600")).toBe("2026-04-22T03:33:28Z");
+    expect(isoDate("Sat, 18 Apr 2026 19:12:05 -0600")).toBe("2026-04-19T01:12:05Z");
     expect(parseAddresses('"Ada Example" <ada@example>, bo@example')).toEqual([
       { name: "Ada Example", address: "ada@example" },
       { name: null, address: "bo@example" },

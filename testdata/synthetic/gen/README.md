@@ -35,4 +35,7 @@ tier"). Run from the repo root.
 PNG encoder, and a seeded generator with a word well for fabricated prose.
 
 A twin keeps the *shape* of its private counterpart (the manifest's `shape` and `note`), never its content:
-fictional names, places and numbers only, nothing copied from a real export.
+fictional names, places and numbers only, nothing copied from a real export — and that includes timestamps,
+message and thread ids, snowflakes, MIME boundaries, routing headers and capture instants. A value in a
+generator is invented, never read off a real file; plainly fictional forms (`1000000000000000001`,
+`000000000000twin0001aaaa`, `example.invalid`) are preferred so a leak is obvious.

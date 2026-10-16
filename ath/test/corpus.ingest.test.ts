@@ -67,7 +67,7 @@ describe("layer + ingest", () => {
       origin: "fixtures",
       uri: "https://www.example.com/threads/test-thread.123/",
       via: "upload",
-      snapshot: "2026-08-15T23:40:36Z",
+      snapshot: "2026-06-07T14:03:19Z",
       received: "2026-10-13",
     });
     // a member names its container

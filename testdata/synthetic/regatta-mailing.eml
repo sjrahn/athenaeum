@@ -1,19 +1,19 @@
-X-GM-THRID: 1863140059282400001
+X-GM-THRID: 1000000000000000001
 X-Gm-Message-State: AOJu0YzSyntheticTwinOfTheFestivalMailingNoRealStateHere0001
-X-Received: by 2002:a05:690e:1188:b0:651:c9a8:0001 with SMTP id 0001-0001mr1d50.64.1776828822136;
-        Tue, 21 Apr 2026 20:33:42 -0700 (PDT)
+X-Received: by 2001:db8::1 with SMTP id twin0001;
+        Sat, 18 Apr 2026 18:12:19 -0700 (PDT)
 MIME-Version: 1.0
 From: Ada Abbott <ada.abbott@example.invalid>
-Date: Tue, 21 Apr 2026 21:33:28 -0600
-Message-ID: <CAA3XGkX-regatta-2026-volunteers-0001@mail.example.invalid>
+Date: Sat, 18 Apr 2026 19:12:05 -0600
+Message-ID: <regatta-2026-volunteers-0001@mail.example.invalid>
 Subject: Port Ellen Regatta 2026 =?UTF-8?Q?=E2=80=94?= volunteer schedule, poster and roles
 To: Regatta volunteers <regatta-volunteers@example.invalid>
-Content-Type: multipart/mixed; boundary="000000000000a1b2c30650043266"
+Content-Type: multipart/mixed; boundary="000000000000twin0001aaaa"
 
---000000000000a1b2c30650043266
-Content-Type: multipart/alternative; boundary="000000000000a1b2c20650043264"
+--000000000000twin0001aaaa
+Content-Type: multipart/alternative; boundary="000000000000twin0002bbbb"
 
---000000000000a1b2c20650043264
+--000000000000twin0002bbbb
 Content-Type: text/plain; charset="UTF-8"
 Content-Transfer-Encoding: quoted-printable
 
@@ -39,7 +39,7 @@ See you on the quay,
 Ada Abbott
 Volunteer coordinator, Port Ellen Regatta
 +44 7700 900123
---000000000000a1b2c20650043264
+--000000000000twin0002bbbb
 Content-Type: text/html; charset="UTF-8"
 Content-Transfer-Encoding: quoted-printable
 
@@ -55,8 +55,8 @@ it, reply to this message by Wednesday so the roster can be redone. Replies=
  go to the organisers, not to everyone.</p><p>See you on the quay,</p><div>=
 -- <br>Ada Abbott<br>Volunteer coordinator, Port Ellen Regatta<br>+44 7700 =
 900123</div></div>
---000000000000a1b2c20650043264--
---000000000000a1b2c30650043266
+--000000000000twin0002bbbb--
+--000000000000twin0001aaaa
 Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet; 
 	name="2026 Regatta Schedule.xlsx"
 Content-Disposition: attachment; filename="2026 Regatta Schedule.xlsx"
@@ -95,7 +95,7 @@ AAAPAAAAAAAAAAAAAACkgQ4CAAB4bC93b3JrYm9vay54bWxQSwECHgMUAAAICADgUWxcmm88fLkA
 AAApAQAAGgAAAAAAAAAAAAAApIH7AgAAeGwvX3JlbHMvd29ya2Jvb2sueG1sLnJlbHNQSwECHgMU
 AAAICADgUWxcZi+StE0BAACTBAAAGAAAAAAAAAAAAAAApIHsAwAAeGwvd29ya3NoZWV0cy9zaGVl
 dDEueG1sUEsFBgAAAAAFAAUARQEAAG8FAAAAAA==
---000000000000a1b2c30650043266
+--000000000000twin0001aaaa
 Content-Type: image/jpeg; name="Regatta-Volunteer-Poster.jpg"
 Content-Disposition: attachment; filename="Regatta-Volunteer-Poster.jpg"
 Content-Transfer-Encoding: base64
@@ -456,7 +456,7 @@ TS4q6uG6/wCfHM/1T8V8Y+lnzZ8H7pT+GS6quP8A7TpH6u/9lfd/A4mmOlgyR7R+TAZdRb01sqb6
 AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 AAAAAAAAAAAAahCVklCEXKUniSWtsAMgfpvhH01+a/jDTo+D301t47Op/wAEl+v3Y2v3Jn7b4P8A
 QK59s/jPxeEFvNXSQ7m1/Plmf6rMOcV9GwwTl0j/2Q==
---000000000000a1b2c30650043266
+--000000000000twin0001aaaa
 Content-Type: application/pdf; name="Regatta Roles 2026.pdf"
 Content-Disposition: attachment; filename="Regatta Roles 2026.pdf"
 Content-Transfer-Encoding: base64
@@ -900,4 +900,4 @@ MDAwMDIxMTE5IDAwMDAwIG4NCjAwMDAwMjIxNjkgMDAwMDAgbg0KMDAwMDAyMjUxMSAwMDAwMCBu
 DQowMDAwMDIyNTc1IDAwMDAwIG4NCjAwMDAwMjM2MjIgMDAwMDAgbg0KdHJhaWxlcgo8PC9TaXpl
 IDQ5L1Jvb3QgNDggMCBSL0luZm8gNDYgMCBSL0lEWyhWRlhUUk5FRDFCSzNDWkU0OW9xWEZBPT0p
 KFZGWFRSTkVEMUJLM0NaRTQ5b3FYRkE9PSldPj4Kc3RhcnR4cmVmCjIzNzkwCiUlRU9G
---000000000000a1b2c30650043266--
+--000000000000twin0001aaaa--

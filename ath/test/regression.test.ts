@@ -190,12 +190,12 @@ describe("regression: the forum thread (html, derived tree — the generated twi
     const chain = loadChain(f);
     const o = loadOntology(chain);
     const ing = await ingestFile(chain, join(SYN, "harbourboard-thread.html"), { date: "2026-10-16" });
-    expect(ing.blake3).toBe("b83e99eefb2230f36622c9654bf857ed8555dbef352de20cc67d6f8e9009128c");
+    expect(ing.blake3).toBe("430c0b0f1239932484a48c43bd1b0c3b069958c6ca73d273f97645d32b8b1d2e");
     expect(ing.capturedFrom?.value).toMatchObject({
       origin: "harbourboard.example",
       uri: "https://www.harbourboard.example/threads/mooring-line-chafe.48213/",
       via: "capture",
-      snapshot: "2026-08-15T23:40:36Z",
+      snapshot: "2026-06-07T14:03:19Z",
       fidelity: "lean",
     });
     const a = await loadArtifact(chain, o, ing.blake3);
@@ -646,11 +646,11 @@ describe("regression: the regatta mailing (rfc822, derived tree — the generate
       date: "2026-10-16",
       provenance: { origin: "gmail", via: "export" },
     });
-    expect(ing.blake3).toBe("6cdfa47f2509ead14a3818eac7b16c6e20800f6fe5b1e6c93c188e0b72562dfc");
+    expect(ing.blake3).toBe("2c694381523f325f5347167ce5e2a07bc3cb51ebfae3df46dc3d209145e9e9be");
     expect(ing.mime).toBe("message/rfc822");
     expect(ing.attests.value).toMatchObject({
       content_type: "multipart/mixed",
-      date_iso: "2026-04-22T03:33:28Z",
+      date_iso: "2026-04-19T01:12:05Z",
       subject: "Port Ellen Regatta 2026 — volunteer schedule, poster and roles",
     });
     expect((ing.attests.value as { parts: unknown[] }).parts.length).toBe(6);
@@ -739,7 +739,7 @@ describe("regression: the quay chat archive (mbox, container of messages — the
       date: "2026-10-16",
       provenance: { origin: "google-takeout", via: "export" },
     });
-    expect(ing.blake3).toBe("489636cafe2eeb8e2e639189383e291c8f8404e097799af6824467485265c4a3");
+    expect(ing.blake3).toBe("7ccea7956323b20d2874a1ec5a035263db53682c6d945ddd46307ecbf12a1587");
     expect(ing.mime).toBe("application/mbox");
     expect(ing.members.length).toBe(358);
     expect(ing.members.every((m) => m.mime === "message/rfc822")).toBe(true);
@@ -779,7 +779,7 @@ describe("regression: the quay chat export (zip, container — the generated twi
       date: "2026-10-16",
       provenance: { origin: "discord", via: "export" },
     });
-    expect(ing.blake3).toBe("0cc4bf7d6def2f15484b2d14ddafdeb9e13a1a4b2b1a7d2e9b5398a962feda03");
+    expect(ing.blake3).toBe("43ccf072e23a9cf6b5d322262fd1649644795ffdcf51099b49941e0623dd6112");
     expect(ing.mime).toBe("application/zip");
     expect(ing.members.length).toBe(9);
     expect(ing.members.map((m) => m.mime).sort()).toEqual(["application/json", ...Array(7).fill("image/png"), "image/svg+xml"].sort());

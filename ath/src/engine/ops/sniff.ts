@@ -129,7 +129,10 @@ export function sniffMime(bytes: Uint8Array, name = ""): string {
     // bits; HEVC types in bits 1–6 with the forbidden bit clear)
     const off = starts([0x00, 0x00, 0x00, 0x01]) ? 4 : 3;
     const h = b[off]!;
-    if ((h & 0x80) === 0) {
+    // a stream, not any zero-led binary: a second start code follows within the first 4 KB
+    let second = false;
+    for (let i = off + 1; i < Math.min(b.length - 3, 4096) && !second; i++) second = b[i] === 0 && b[i + 1] === 0 && b[i + 2] === 1;
+    if ((h & 0x80) === 0 && second) {
       const hevcType = (h >> 1) & 0x3f;
       const hevcTid = (b[off + 1] ?? 0) & 0x07;
       if ([32, 33, 34, 39, 40].includes(hevcType) && hevcTid >= 1 && (h & 0x01) === 0) return "video/hevc";

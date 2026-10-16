@@ -99,7 +99,7 @@ describe("html", () => {
       origin: "example.com",
       uri: "https://www.example.com/threads/test-thread.123/",
       via: "capture",
-      snapshot: "2026-08-15T23:40:36Z",
+      snapshot: "2026-06-07T14:03:19Z",
     });
   });
 });
