@@ -8,7 +8,7 @@ had no suitably-small real artifact and are generated instead (see "The syntheti
 
 Tracked here: this README, `exemplars.yaml` (the manifest — file, blake3, mime, root term, shape
 and a neutral technical note, no personal content), `seed.ts` (the seeder), `ontology/` (the
-regression ontology a foundation starts from), `passes/` (the TOOL03 pass lines and the generated twin's) and `synthetic/`.
+regression ontology a foundation starts from), `passes/` (the generated pass of the asserted-tree PDF) and `synthetic/`.
 **`regression/` and `instance/` are never tracked** — they hold private bytes and are gitignored
 at the repo root (`/testdata/regression/`, `/testdata/instance/`).
 
@@ -17,10 +17,10 @@ at the repo root (`/testdata/regression/`, `/testdata/instance/`).
 `testdata/regression/<file>` for every `source: regression` entry in `exemplars.yaml`, named as the
 manifest names it; the blake3 pins the exact bytes. Sources: the source instance's
 `corpus/artifacts/<ab>/<blake3>.*` (the manifest's blake3 names the file), its `corpus/export/`
-folder (the XenForo thread, the Amazon order history, the Discord zip, the festival mailing), and the
-public TOOL03 PDF (https://cdm.unfccc.int/methodologies/PAmethodologies/tools/am-tool-03-v3.pdf,
-blake3 `404d090f…`, behind an interstitial — fetch it by hand). `ath/test/regression.test.ts`
-self-skips per missing file and names it; `ATH_REGRESSION=<dir>` points it elsewhere.
+folder (the XenForo thread, the Amazon order history, the Discord zip, the festival mailing). Every
+private artifact has a generated twin under `synthetic/`, so nothing in the suite waits on a placement.
+`ath/test/regression.test.ts` self-skips per missing file and names it; `ATH_REGRESSION=<dir>` points
+it elsewhere.
 
 ### The synthetic tier
 
@@ -41,7 +41,7 @@ makes the twins whose test is classify + attest + lint (the readme, the script, 
 the exchange file, the media manifest, the screenshot, the photograph with its Exif orientation, the clip,
 the receipt). `gen/thread.ts`, `gen/mailing.ts`, `gen/novel.ts`, `gen/chat-archive.ts` and `gen/chat-export.ts`
 make the full-shape twins of the thread capture, the mailing, the novel, the mailbox slice and the chat export,
-each with a regression leg of its own and frozen counts. `gen/procedure.ts` is the twin of the TOOL03 PDF: one content model drives both the typst source
+each with a regression leg of its own and frozen counts. `gen/procedure.ts` makes the asserted-tree PDF, a fictional calculation procedure in the shape of a methodological tool: one content model drives both the typst source
 (`procedure.typ`, rendered to `procedure.pdf` with typst 0.15.1 and its bundled fonts; `set document(date:
 none)` makes the render byte-identical across runs) and the pass lines (`passes/<blake3>.p1.jsonl`), whose
 boxes are read back off the rendered PDF through `pdf.words@1`. Re-rendering is re-running the script; the
@@ -50,8 +50,8 @@ in the test, on purpose.
 
 ### The regression ontology
 
-`ontology/` is the ontology every test foundation copies in (`ath/test/layers.ts`): the TOOL03
-terms, the XenForo and Amazon expression roots, and a root term per mime (spec/successor.md
+`ontology/` is the ontology every test foundation copies in (`ath/test/layers.ts`): the
+methodological-tool terms, the XenForo and Amazon expression roots, and a root term per mime (spec/successor.md
 Appendix D, D-roots). Edit it here; `ath ontology lint` over a fresh foundation is the gate.
 
 ## Seeding a scratch instance

@@ -33,7 +33,8 @@ migration story, together (Part I §8). Normative spec changes are owner-gated.
 - `testdata/` — the regression library: `ontology/` (the regression ontology a
   foundation starts from, a root term per mime), `exemplars.yaml` (one artifact
   per mime: file, blake3, mime, root) + `seed.ts` (a gitignored scratch layer),
-  `synthetic/` (committed fixtures), `passes/` (the TOOL03 pass lines), and
+  `synthetic/` (committed fixtures and their generators), `passes/` (the generated
+  pass of the asserted-tree PDF), and
   `regression/` (gitignored: the private regression bytes, placed by hand under
   the names the manifest gives). See `testdata/README.md`.
 

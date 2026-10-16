@@ -75,7 +75,7 @@ export const ingest = defineCommand({
     tier: "write",
     mutating: true,
     locks: ["corpus"],
-    examples: ["ath ingest ./am-tool-03-v3.pdf --origin cdm.unfccc.int --via upload", "ath ingest page.html --sidecar page.capture.json"],
+    examples: ["ath ingest ./procedure.pdf --origin synthetic --via upload", "ath ingest page.html --sidecar page.capture.json"],
     help: `The sidecar is a JSON or YAML object with any of: origin, uri, aliases, via (capture · upload · export),
 received, snapshot, note, fidelity — or a producer's capture sidecar (source_url, fetched_at, snapshot_engine,
 capture_issues, origin_fields, capture_context), which folds into the same fields. A \`<file>.capture.yaml\` beside a

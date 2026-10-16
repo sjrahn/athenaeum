@@ -18,7 +18,7 @@ export const resolveCmd = defineCommand({
     examples: [
       "ath resolve 'corpus://dd0a…?bytes=518950,518985'",
       "ath resolve 'corpus://1409…?row=3&col=10'",
-      "ath resolve corpus://404d… --bytes --out tool03.pdf",
+      "ath resolve corpus://5e6e… --bytes --out procedure.pdf",
     ],
   },
   contract: defineContract({

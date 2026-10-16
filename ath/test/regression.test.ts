@@ -14,12 +14,10 @@ import { foundation, TESTDATA } from "./layers.ts";
 const R = process.env.ATH_REGRESSION ?? join(TESTDATA, "regression");
 const HTML = join(R, "g8board-idle-stall-292301.html");
 const CSV = join(R, "amazon-order-history.csv");
-const PDF = join(R, "am-tool-03-v3.pdf");
 const ZIP = join(R, "discord-export.zip");
 const EML = join(R, "gocf-2026-wpg.eml");
 const EPUB = join(R, "novel.epub");
 const MBOX = join(R, "gmail-slice.mbox");
-const PASS = join(TESTDATA, "passes", "404d090fea45729f3e5933835fbd833ec7859595ccc5b6cf47f77ac0850f5232.p1.jsonl");
 const TWIN_PDF = join(TESTDATA, "synthetic", "procedure.pdf");
 const TWIN_ID = "5e6e497d934498fc49229ba8c594684114a1213426bc1ad0113718ae72794269";
 const TWIN_PASS = join(TESTDATA, "passes", `${TWIN_ID}.p1.jsonl`);
@@ -123,57 +121,7 @@ describe("regression: the Amazon order history (csv, derived tree)", () => {
   });
 });
 
-describe("regression: CDM TOOL03 (pdf, asserted tree)", () => {
-  test.skipIf(!existsSync(PDF))(
-    "ingest → pass open → append the fixture (121 revs recompute) → sign → inspect → lint → export",
-    async () => {
-      const f = foundation();
-      const ing = await ath(
-        [
-          "--json",
-          "ingest",
-          PDF,
-          "--origin",
-          "cdm.unfccc.int",
-          "--via",
-          "upload",
-          "--uri",
-          "https://cdm.unfccc.int/methodologies/PAmethodologies/tools/am-tool-03-v3.pdf",
-          "--received",
-          "2026-10-13",
-        ],
-        { cwd: f, env },
-      );
-      const id = (ing.json() as { data: { ingested: { blake3: string; mime: string }[] } }).data.ingested[0]!;
-      expect(id.blake3).toBe("404d090fea45729f3e5933835fbd833ec7859595ccc5b6cf47f77ac0850f5232");
-      expect(id.mime).toBe("application/pdf");
-      const open = await ath(["--json", "pass", "open", id.blake3, "--by", "claude-opus-4-8", "--verify", "claude-sonnet-5_3"], {
-        cwd: f,
-        env,
-      });
-      expect((open.json() as { data: { id: string } }).data.id).toBe("p1");
-      const app = await ath(["--json", "claims", "append", id.blake3, "--pass", "p1", "--from", PASS], { cwd: f, env });
-      expect(app.code, app.stderr).toBe(0);
-      expect((app.json() as { data: { staged: number } }).data.staged).toBe(410);
-      const sign = await ath(["--json", "pass", "sign", id.blake3, "p1", "--walked"], { cwd: f, env });
-      const sd = (sign.json() as { data: { signed: boolean; findings: { code: string; severity: string; msg: string }[] } }).data;
-      expect(sd.findings.filter((x) => x.severity === "block").map((x) => `${x.code} ${x.msg}`)).toEqual([]);
-      expect(sd.signed).toBe(true);
-      const insp = await ath(["--json", "inspect", id.blake3], { cwd: f, env });
-      const rows = (insp.json() as { data: { rows: { terms: string[]; state: string }[]; counts: Record<string, number> } }).data;
-      expect(rows.counts.ok).toBeGreaterThan(100);
-      expect(rows.rows.filter((r) => r.state === "diverges").every((r) => r.terms.includes("equation"))).toBe(true);
-      expect((await ath(["lint", id.blake3], { cwd: f, env })).code).toBe(0);
-      const at = await ath(["tree", "at", id.blake3, "sec=5&para=6"], { cwd: f, env });
-      expect(at.stdout).toContain("(paragraph)");
-      const md = await ath(["export", "markdown", id.blake3], { cwd: f, env });
-      expect(md.stdout).toContain("## 5. Baseline methodology procedure");
-      expect(md.stdout).toContain("\\tag*{Equation (1)}");
-    },
-  );
-});
-
-describe("regression: the calculation procedure (pdf, asserted tree — the generated twin of TOOL03)", () => {
+describe("regression: the calculation procedure (pdf, asserted tree — generated, with its generated pass)", () => {
   test("ingest → pass open → append the generated pass → sign --walked → inspect → lint → tree at → harvest → verify → export", async () => {
     const f = foundation();
     const ing = await ath(["--json", "ingest", TWIN_PDF, "--origin", "synthetic", "--via", "upload", "--received", "2026-10-15"], {

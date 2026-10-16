@@ -25,7 +25,7 @@ export const inspect = defineCommand({
     summary: "L7: every stored reading against the derivation at its address, per aspect; divergences listed, accepted ones marked",
     tier: "read",
     mutating: false,
-    examples: ["ath inspect 404d090f…", "ath inspect 404d090f… --at 'page=3&bbox=0.1853,0.7778,0.7174,0.0356'"],
+    examples: ["ath inspect 5e6e497d…", "ath inspect 5e6e497d… --at 'page=4&bbox=0.3154,0.7134,0.5408,0.0178'"],
   },
   contract: defineContract({
     key: "inspect",
@@ -72,7 +72,7 @@ export const inspectAccept = defineCommand({
     tier: "admin",
     mutating: true,
     locks: ["corpus"],
-    examples: ["ath inspect accept 404d090f… --at 'page=3&bbox=…' --rev b3:0b20639b45335eed --why '2-D math; the TeX is the bytes'"],
+    examples: ["ath inspect accept 5e6e497d… --at 'page=3&bbox=…' --rev b3:… --why '2-D math; the TeX is the bytes'"],
   },
   contract: defineContract({
     key: "inspect-accept",

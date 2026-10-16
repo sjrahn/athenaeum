@@ -52,6 +52,7 @@ const SYMBOLS: Record<string, string> = {
 
 export function stripTex(s: string): string {
   return s
+    .replace(/[\u2010-\u2015\u2212]/g, "-") // dashes and the minus sign fold to the hyphen, as the text normaliser does
     .replace(/\\(?:left|right|,|;|!|quad|qquad|text|mathrm|mathit|mathbf|frac|tag\*?|operatorname)\b\{?/g, " ")
     .replace(/\\([A-Za-z]+)/g, (_m, w: string) => SYMBOLS[w] ?? w)
     .replace(/[${}^_]/g, "")

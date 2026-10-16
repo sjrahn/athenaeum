@@ -21,7 +21,7 @@ export const passOpen = defineCommand({
     summary: "open a pass on an artifact: a staging file pinned to the current ontology; lines accumulate until signed",
     tier: "write",
     mutating: true,
-    examples: ["ath pass open 404d090f… --by claude-opus-4-8 --verify claude-sonnet-5_3"],
+    examples: ["ath pass open 5e6e497d… --by claude-opus-4-8 --verify claude-sonnet-5_3"],
   },
   contract: defineContract({
     key: "pass-open",
@@ -99,7 +99,7 @@ export const passSign = defineCommand({
     tier: "write",
     mutating: true,
     locks: ["corpus"],
-    examples: ["ath pass sign 404d090f… p1 --walked"],
+    examples: ["ath pass sign 5e6e497d… p1 --walked"],
   },
   contract: defineContract({
     key: "pass-sign",
@@ -194,8 +194,8 @@ export const claimsAppend = defineCommand({
     tier: "write",
     mutating: true,
     examples: [
-      "ath claims append 404d090f… --pass p1 --from testdata/passes/404d090f….p1.jsonl",
-      "cat lines.jsonl | ath claims append 404d090f… --pass p1 --from -",
+      "ath claims append 5e6e497d… --pass p1 --from testdata/passes/5e6e497d….p1.jsonl",
+      "cat lines.jsonl | ath claims append 5e6e497d… --pass p1 --from -",
     ],
   },
   contract: defineContract({

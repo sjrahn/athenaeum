@@ -96,7 +96,7 @@ function multiset(s: string): Map<string, number> {
 
 export function compareTex(body: string, derivation: string): string | null {
   const a = multiset(stripTex(body));
-  const b = multiset(derivation.replace(/Equation\s*\(\d+\)/g, ""));
+  const b = multiset(derivation.replace(/Equation\s*\(\d+\)/g, "").replace(/[\u2010-\u2015\u2212]/g, "-"));
   const keys = new Set([...a.keys(), ...b.keys()]);
   const diffs: string[] = [];
   for (const k of keys) {

@@ -38,7 +38,7 @@
   mime: application/pdf
   root: pdf
   shape: pdf-asserted-tree
-  note: the generated twin of TOOL03 (gen/procedure.ts, typst 0.15.1; whole manifests methodological-tool once its pass is signed) — 8 pages, cover, toc, 17 headings, 4 labelled equations with definition lists, parameter tables, a figure, a footnote, a revision history, chrome; its pass is passes/5e6e497d….p1.jsonl, generated from the same model
+  note: the asserted-tree exemplar — a fictional calculation procedure in the shape of a methodological tool (gen/procedure.ts, typst 0.15.1; whole manifests methodological-tool once its pass is signed) — 8 pages, cover, toc, 17 headings, 4 labelled equations with definition lists, parameter tables, a figure, a footnote, a revision history, chrome; its pass is passes/5e6e497d….p1.jsonl, generated from the same model
   source: synthetic
 
 - file: g8board-idle-stall-292301.html
