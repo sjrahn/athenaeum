@@ -1,0 +1,330 @@
+BEGIN:VCARD
+VERSION:3.0
+PRODID:-//Example//Address Book 2.1//EN
+N:Frost;Eli;;;
+FN:Eli Frost
+EMAIL;type=INTERNET;type=HOME;type=pref:eli.frost@example.invalid
+TEL;type=CELL;type=VOICE;type=pref:+44 7700 416191
+ADR;type=HOME;type=pref:;;10 Beacon Hill;Marlow Cross;;PE3 7AB;United Kingdom
+REV:2026-01-01T00:00:00Z
+UID:00000001-0000-4000-8000-00000000c0de
+END:VCARD
+BEGIN:VCARD
+VERSION:3.0
+PRODID:-//Example//Address Book 2.1//EN
+N:Ennis;Cyd;;;
+FN:Cyd Ennis
+EMAIL;type=INTERNET;type=HOME;type=pref:cyd.ennis@example.invalid
+TEL;type=CELL;type=VOICE;type=pref:+44 7700 808936
+ADR;type=HOME;type=pref:;;33 Mill Lane;Stanlow;;PE16 6AB;United Kingdom
+REV:2026-02-02T01:00:00Z
+UID:00000002-0000-4000-8000-00000000c0de
+END:VCARD
+BEGIN:VCARD
+VERSION:3.0
+PRODID:-//Example//Address Book 2.1//EN
+N:Judd;Hal;;;
+FN:Hal Judd
+EMAIL;type=INTERNET;type=HOME;type=pref:hal.judd@example.invalid
+TEL;type=CELL;type=VOICE;type=pref:+44 7700 701599
+ADR;type=HOME;type=pref:;;48 Quay Street;Kirkhaven;;PE24 1AB;United Kingdom
+REV:2026-03-03T02:00:00Z
+UID:00000003-0000-4000-8000-00000000c0de
+END:VCARD
+BEGIN:VCARD
+VERSION:3.0
+PRODID:-//Example//Address Book 2.1//EN
+N:Calder;Gus;;;
+FN:Gus Calder
+EMAIL;type=INTERNET;type=HOME;type=pref:gus.calder@example.invalid
+TEL;type=CELL;type=VOICE;type=pref:+44 7700 618540
+ADR;type=HOME;type=pref:;;7 Mill Lane;Marlow Cross;;PE25 7AB;United Kingdom
+REV:2026-04-04T03:00:00Z
+UID:00000004-0000-4000-8000-00000000c0de
+END:VCARD
+BEGIN:VCARD
+VERSION:3.0
+PRODID:-//Example//Address Book 2.1//EN
+N:Abbott;Tam;;;
+FN:Tam Abbott
+EMAIL;type=INTERNET;type=HOME;type=pref:tam.abbott@example.invalid
+TEL;type=CELL;type=VOICE;type=pref:+44 7700 426091
+ADR;type=HOME;type=pref:;;94 Harbour Row;Wexcombe;;PE26 2AB;United Kingdom
+REV:2026-05-05T04:00:00Z
+UID:00000005-0000-4000-8000-00000000c0de
+END:VCARD
+BEGIN:VCARD
+VERSION:3.0
+PRODID:-//Example//Address Book 2.1//EN
+N:Rowe;Fay;;;
+FN:Fay Rowe
+EMAIL;type=INTERNET;type=HOME;type=pref:fay.rowe@example.invalid
+TEL;type=CELL;type=VOICE;type=pref:+44 7700 775722
+ADR;type=HOME;type=pref:;;113 Beacon Hill;Port Ellen;;PE14 6AB;United Kingdom
+REV:2026-06-06T05:00:00Z
+UID:00000006-0000-4000-8000-00000000c0de
+END:VCARD
+BEGIN:VCARD
+VERSION:3.0
+PRODID:-//Example//Address Book 2.1//EN
+N:Irwin;Lou;;;
+FN:Lou Irwin
+EMAIL;type=INTERNET;type=HOME;type=pref:lou.irwin@example.invalid
+TEL;type=CELL;type=VOICE;type=pref:+44 7700 328457
+ADR;type=HOME;type=pref:;;75 Orchard Close;Port Ellen;;PE23 2AB;United Kingdom
+REV:2026-07-07T06:00:00Z
+UID:00000007-0000-4000-8000-00000000c0de
+END:VCARD
+BEGIN:VCARD
+VERSION:3.0
+PRODID:-//Example//Address Book 2.1//EN
+N:Nash;Ada;;;
+FN:Ada Nash
+EMAIL;type=INTERNET;type=HOME;type=pref:ada.nash@example.invalid
+TEL;type=CELL;type=VOICE;type=pref:+44 7700 460531
+ADR;type=HOME;type=pref:;;70 Mill Lane;Marlow Cross;;PE5 2AB;United Kingdom
+REV:2026-08-08T07:00:00Z
+UID:00000008-0000-4000-8000-00000000c0de
+END:VCARD
+BEGIN:VCARD
+VERSION:3.0
+PRODID:-//Example//Address Book 2.1//EN
+N:Kerr;Ada;;;
+FN:Ada Kerr
+EMAIL;type=INTERNET;type=HOME;type=pref:ada.kerr@example.invalid
+TEL;type=CELL;type=VOICE;type=pref:+44 7700 350316
+ADR;type=HOME;type=pref:;;39 Beacon Hill;Ashby Fen;;PE7 5AB;United Kingdom
+REV:2026-09-09T08:00:00Z
+UID:00000009-0000-4000-8000-00000000c0de
+END:VCARD
+BEGIN:VCARD
+VERSION:3.0
+PRODID:-//Example//Address Book 2.1//EN
+N:Moss;Dee;;;
+FN:Dee Moss
+EMAIL;type=INTERNET;type=HOME;type=pref:dee.moss@example.invalid
+TEL;type=CELL;type=VOICE;type=pref:+44 7700 446473
+ADR;type=HOME;type=pref:;;18 Harbour Row;Kirkhaven;;PE30 1AB;United Kingdom
+REV:2026-01-10T09:00:00Z
+UID:00000010-0000-4000-8000-00000000c0de
+END:VCARD
+BEGIN:VCARD
+VERSION:3.0
+PRODID:-//Example//Address Book 2.1//EN
+N:Hale;Fay;;;
+FN:Fay Hale
+EMAIL;type=INTERNET;type=HOME;type=pref:fay.hale@example.invalid
+TEL;type=CELL;type=VOICE;type=pref:+44 7700 817373
+ADR;type=HOME;type=pref:;;42 Mill Lane;Marlow Cross;;PE17 7AB;United Kingdom
+REV:2026-02-11T00:00:00Z
+UID:00000011-0000-4000-8000-00000000c0de
+END:VCARD
+BEGIN:VCARD
+VERSION:3.0
+PRODID:-//Example//Address Book 2.1//EN
+N:Abbott;Quin;;;
+FN:Quin Abbott
+EMAIL;type=INTERNET;type=HOME;type=pref:quin.abbott@example.invalid
+TEL;type=CELL;type=VOICE;type=pref:+44 7700 681761
+ADR;type=HOME;type=pref:;;46 Quay Street;Stanlow;;PE27 5AB;United Kingdom
+REV:2026-03-12T01:00:00Z
+UID:00000012-0000-4000-8000-00000000c0de
+END:VCARD
+BEGIN:VCARD
+VERSION:3.0
+PRODID:-//Example//Address Book 2.1//EN
+N:Moss;Tam;;;
+FN:Tam Moss
+EMAIL;type=INTERNET;type=HOME;type=pref:tam.moss@example.invalid
+TEL;type=CELL;type=VOICE;type=pref:+44 7700 920664
+ADR;type=HOME;type=pref:;;28 Station Road;Stanlow;;PE4 7AB;United Kingdom
+REV:2026-04-13T02:00:00Z
+UID:00000013-0000-4000-8000-00000000c0de
+END:VCARD
+BEGIN:VCARD
+VERSION:3.0
+PRODID:-//Example//Address Book 2.1//EN
+N:Ennis;Gus;;;
+FN:Gus Ennis
+EMAIL;type=INTERNET;type=HOME;type=pref:gus.ennis@example.invalid
+TEL;type=CELL;type=VOICE;type=pref:+44 7700 570565
+ADR;type=HOME;type=pref:;;80 Orchard Close;Ashby Fen;;PE28 6AB;United Kingdom
+REV:2026-05-14T03:00:00Z
+UID:00000014-0000-4000-8000-00000000c0de
+END:VCARD
+BEGIN:VCARD
+VERSION:3.0
+PRODID:-//Example//Address Book 2.1//EN
+N:Birch;Lou;;;
+FN:Lou Birch
+EMAIL;type=INTERNET;type=HOME;type=pref:lou.birch@example.invalid
+TEL;type=CELL;type=VOICE;type=pref:+44 7700 797806
+ADR;type=HOME;type=pref:;;86 Beacon Hill;Wexcombe;;PE14 4AB;United Kingdom
+REV:2026-06-15T04:00:00Z
+UID:00000015-0000-4000-8000-00000000c0de
+END:VCARD
+BEGIN:VCARD
+VERSION:3.0
+PRODID:-//Example//Address Book 2.1//EN
+N:Abbott;Bo;;;
+FN:Bo Abbott
+EMAIL;type=INTERNET;type=HOME;type=pref:bo.abbott@example.invalid
+TEL;type=CELL;type=VOICE;type=pref:+44 7700 154263
+ADR;type=HOME;type=pref:;;12 Station Road;Marlow Cross;;PE13 4AB;United Kingdom
+REV:2026-07-16T05:00:00Z
+UID:00000016-0000-4000-8000-00000000c0de
+END:VCARD
+BEGIN:VCARD
+VERSION:3.0
+PRODID:-//Example//Address Book 2.1//EN
+N:Irwin;Sol;;;
+FN:Sol Irwin
+EMAIL;type=INTERNET;type=HOME;type=pref:sol.irwin@example.invalid
+TEL;type=CELL;type=VOICE;type=pref:+44 7700 914248
+ADR;type=HOME;type=pref:;;92 Orchard Close;Port Ellen;;PE20 5AB;United Kingdom
+REV:2026-08-17T06:00:00Z
+UID:00000017-0000-4000-8000-00000000c0de
+END:VCARD
+BEGIN:VCARD
+VERSION:3.0
+PRODID:-//Example//Address Book 2.1//EN
+N:Calder;Hal;;;
+FN:Hal Calder
+EMAIL;type=INTERNET;type=HOME;type=pref:hal.calder@example.invalid
+TEL;type=CELL;type=VOICE;type=pref:+44 7700 392688
+ADR;type=HOME;type=pref:;;62 Station Road;Stanlow;;PE19 6AB;United Kingdom
+REV:2026-09-18T07:00:00Z
+UID:00000018-0000-4000-8000-00000000c0de
+END:VCARD
+BEGIN:VCARD
+VERSION:3.0
+PRODID:-//Example//Address Book 2.1//EN
+N:Judd;Fay;;;
+FN:Fay Judd
+EMAIL;type=INTERNET;type=HOME;type=pref:fay.judd@example.invalid
+TEL;type=CELL;type=VOICE;type=pref:+44 7700 544523
+ADR;type=HOME;type=pref:;;77 Beacon Hill;Kirkhaven;;PE24 7AB;United Kingdom
+REV:2026-01-19T08:00:00Z
+UID:00000019-0000-4000-8000-00000000c0de
+END:VCARD
+BEGIN:VCARD
+VERSION:3.0
+PRODID:-//Example//Address Book 2.1//EN
+N:Birch;Fay;;;
+FN:Fay Birch
+EMAIL;type=INTERNET;type=HOME;type=pref:fay.birch@example.invalid
+TEL;type=CELL;type=VOICE;type=pref:+44 7700 745383
+ADR;type=HOME;type=pref:;;75 Station Road;Wexcombe;;PE21 1AB;United Kingdom
+REV:2026-02-20T09:00:00Z
+UID:00000020-0000-4000-8000-00000000c0de
+END:VCARD
+BEGIN:VCARD
+VERSION:3.0
+PRODID:-//Example//Address Book 2.1//EN
+N:Calder;Quin;;;
+FN:Quin Calder
+EMAIL;type=INTERNET;type=HOME;type=pref:quin.calder@example.invalid
+TEL;type=CELL;type=VOICE;type=pref:+44 7700 753493
+ADR;type=HOME;type=pref:;;116 Ferry Way;Port Ellen;;PE30 8AB;United Kingdom
+REV:2026-03-21T00:00:00Z
+UID:00000021-0000-4000-8000-00000000c0de
+END:VCARD
+BEGIN:VCARD
+VERSION:3.0
+PRODID:-//Example//Address Book 2.1//EN
+N:Irwin;Eli;;;
+FN:Eli Irwin
+EMAIL;type=INTERNET;type=HOME;type=pref:eli.irwin@example.invalid
+TEL;type=CELL;type=VOICE;type=pref:+44 7700 352845
+ADR;type=HOME;type=pref:;;120 Quay Street;Ashby Fen;;PE5 6AB;United Kingdom
+REV:2026-04-22T01:00:00Z
+UID:00000022-0000-4000-8000-00000000c0de
+END:VCARD
+BEGIN:VCARD
+VERSION:3.0
+PRODID:-//Example//Address Book 2.1//EN
+N:Lowe;Rae;;;
+FN:Rae Lowe
+EMAIL;type=INTERNET;type=HOME;type=pref:rae.lowe@example.invalid
+TEL;type=CELL;type=VOICE;type=pref:+44 7700 177605
+ADR;type=HOME;type=pref:;;95 Harbour Row;Port Ellen;;PE30 5AB;United Kingdom
+REV:2026-05-23T02:00:00Z
+UID:00000023-0000-4000-8000-00000000c0de
+END:VCARD
+BEGIN:VCARD
+VERSION:3.0
+PRODID:-//Example//Address Book 2.1//EN
+N:Irwin;Cyd;;;
+FN:Cyd Irwin
+EMAIL;type=INTERNET;type=HOME;type=pref:cyd.irwin@example.invalid
+TEL;type=CELL;type=VOICE;type=pref:+44 7700 117781
+ADR;type=HOME;type=pref:;;19 Station Road;Port Ellen;;PE7 3AB;United Kingdom
+REV:2026-06-24T03:00:00Z
+UID:00000024-0000-4000-8000-00000000c0de
+END:VCARD
+BEGIN:VCARD
+VERSION:3.0
+PRODID:-//Example//Address Book 2.1//EN
+N:Calder;Gus;;;
+FN:Gus Calder
+EMAIL;type=INTERNET;type=HOME;type=pref:gus.calder@example.invalid
+TEL;type=CELL;type=VOICE;type=pref:+44 7700 706135
+ADR;type=HOME;type=pref:;;77 Orchard Close;Wexcombe;;PE10 7AB;United Kingdom
+REV:2026-07-25T04:00:00Z
+UID:00000025-0000-4000-8000-00000000c0de
+END:VCARD
+BEGIN:VCARD
+VERSION:3.0
+PRODID:-//Example//Address Book 2.1//EN
+N:Orme;Tam;;;
+FN:Tam Orme
+EMAIL;type=INTERNET;type=HOME;type=pref:tam.orme@example.invalid
+TEL;type=CELL;type=VOICE;type=pref:+44 7700 286351
+ADR;type=HOME;type=pref:;;79 Ferry Way;Wexcombe;;PE1 1AB;United Kingdom
+REV:2026-08-26T05:00:00Z
+UID:00000026-0000-4000-8000-00000000c0de
+END:VCARD
+BEGIN:VCARD
+VERSION:3.0
+PRODID:-//Example//Address Book 2.1//EN
+N:Lowe;Nia;;;
+FN:Nia Lowe
+EMAIL;type=INTERNET;type=HOME;type=pref:nia.lowe@example.invalid
+TEL;type=CELL;type=VOICE;type=pref:+44 7700 562444
+ADR;type=HOME;type=pref:;;73 Ferry Way;Marlow Cross;;PE19 4AB;United Kingdom
+REV:2026-09-27T06:00:00Z
+UID:00000027-0000-4000-8000-00000000c0de
+END:VCARD
+BEGIN:VCARD
+VERSION:3.0
+PRODID:-//Example//Address Book 2.1//EN
+N:Penn;Nia;;;
+FN:Nia Penn
+EMAIL;type=INTERNET;type=HOME;type=pref:nia.penn@example.invalid
+TEL;type=CELL;type=VOICE;type=pref:+44 7700 729426
+ADR;type=HOME;type=pref:;;15 Station Road;Marlow Cross;;PE2 3AB;United Kingdom
+REV:2026-01-01T07:00:00Z
+UID:00000028-0000-4000-8000-00000000c0de
+END:VCARD
+BEGIN:VCARD
+VERSION:3.0
+PRODID:-//Example//Address Book 2.1//EN
+N:Rowe;Nia;;;
+FN:Nia Rowe
+EMAIL;type=INTERNET;type=HOME;type=pref:nia.rowe@example.invalid
+TEL;type=CELL;type=VOICE;type=pref:+44 7700 885222
+ADR;type=HOME;type=pref:;;44 Harbour Row;Kirkhaven;;PE30 9AB;United Kingdom
+REV:2026-02-02T08:00:00Z
+UID:00000029-0000-4000-8000-00000000c0de
+END:VCARD
+BEGIN:VCARD
+VERSION:3.0
+PRODID:-//Example//Address Book 2.1//EN
+N:Irwin;Sol;;;
+FN:Sol Irwin
+EMAIL;type=INTERNET;type=HOME;type=pref:sol.irwin@example.invalid
+TEL;type=CELL;type=VOICE;type=pref:+44 7700 323833
+ADR;type=HOME;type=pref:;;39 Orchard Close;Ashby Fen;;PE12 5AB;United Kingdom
+REV:2026-03-03T09:00:00Z
+UID:00000030-0000-4000-8000-00000000c0de
+END:VCARD

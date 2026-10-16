@@ -24,7 +24,7 @@ Three fixtures:
                             Provenance: libheif 1.23.1 heif-enc.
 
 Usage:
-    uv run --no-sync python testdata/synthetic/gen.py [--skip-audio] [--skip-heic]
+    uv run --no-sync python testdata/synthetic/gen/message-audio-heic.py [--skip-audio] [--skip-heic]
 
 (The .eml generation has no external dependency and always runs.)
 """

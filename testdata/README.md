@@ -24,24 +24,22 @@ self-skips per missing file and names it; `ATH_REGRESSION=<dir>` points it elsew
 
 ### The synthetic tier
 
-A few shapes (single-track audio/mp4, a message with a nested message and an attachment,
-image/heic, gif, webp, svg, ndjson, a sign with printed text, the Amazon header over fabricated
-rows) have no suitably-small real artifact to pull an exemplar from. For those,
-`testdata/synthetic/` holds *generated* fixtures with no private content — `gen.py` produces the
-audio (ffmpeg), the message (stdlib `email`) and the heic (`heif-enc`); the gif and webp are one
-ImageMagick call each; the rest are hand-written — whose bytes are committed directly to this public
-repo, manifest entries pointing at them with `source: synthetic`. The committed bytes, not a fresh
-run of a generator, are what the manifest's blake3 pins: an encoder's output drifts across tool
-versions even for identical input (see spec/CHANGELOG.md's v32 entry, born from exactly this
-problem for real media), so pinning a freshly-generated hash would make the manifest
-non-reproducible from one machine or ffmpeg/libheif version to the next.
+Fixtures with no private content, committed under `testdata/synthetic/` with manifest entries pointing at
+them (`source: synthetic`), and the script that generates each one kept under `testdata/synthetic/gen/`
+(see `gen/README.md` for the tool and version behind every file). The committed bytes, not a fresh run of
+a generator, are what the manifest's blake3 pins: an encoder's output drifts across tool versions even for
+identical input (see spec/CHANGELOG.md's v32 entry, born from exactly this problem for real media), so
+pinning a freshly-generated hash would make the manifest non-reproducible from one machine or ffmpeg/libheif
+version to the next. The text formats the scripts write themselves do reproduce byte-for-byte.
 
 ### Generated twins (`synthetic/gen/`)
 
 Where a regression artifact is private, a *twin* with the same shape and fictional content is generated and
 committed beside it, and the script that generates it is kept under `synthetic/gen/`: the twin is what the
-test suite always runs; the private bytes, when placed, run the same leg over the real thing. The first is
-`gen/procedure.ts`, the twin of the TOOL03 PDF: one content model drives both the typst source
+test suite always runs; the private bytes, when placed, run the same leg over the real thing. `gen/plain.ts`
+makes the twins whose test is classify + attest + lint (the readme, the script, the address book and cards,
+the exchange file, the media manifest, the screenshot, the photograph with its Exif orientation, the clip,
+the receipt). `gen/procedure.ts` is the twin of the TOOL03 PDF: one content model drives both the typst source
 (`procedure.typ`, rendered to `procedure.pdf` with typst 0.15.1 and its bundled fonts; `set document(date:
 none)` makes the render byte-identical across runs) and the pass lines (`passes/<blake3>.p1.jsonl`), whose
 boxes are read back off the rendered PDF through `pdf.words@1`. Re-rendering is re-running the script; the

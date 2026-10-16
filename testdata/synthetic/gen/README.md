@@ -1,0 +1,17 @@
+# Generators for `testdata/synthetic/`
+
+One script per family; the committed bytes are what the manifest pins (see `../../README.md`, "The synthetic
+tier"). Run from the repo root.
+
+| script | makes | tool, version | reproduces byte-for-byte |
+| --- | --- | --- | --- |
+| `procedure.ts` | `procedure.typ`, `procedure.pdf`, `../passes/<blake3>.p1.jsonl` | typst 0.15.1, bundled fonts; `pdf.words@1` for the pass | yes (typst, `set document(date: none)`) |
+| `plain.ts` | `tidewatch-readme.md`, `tidewatch.js`, `address-book.json`, `address-cards.vcf`, `bracket.p21`, `media-manifest.tsv` | the script itself (a seeded LCG for the fabricated rows) | yes |
+| `plain.ts` | `window.png`, `garden.jpg` | ImageMagick 7 (`magick`), `-strip`; the Exif APP1 of the JPEG is written by the script | no (encoder) |
+| `plain.ts` | `countdown.mp4` | ffmpeg (libx264 + aac) | no (encoder, muxer timestamps) |
+| `plain.ts` | `till-receipt.typ`, `till-receipt.pdf` | typst 0.15.1 | yes |
+| `message-audio-heic.py` | `synthetic-message.eml`, `synthetic-audio.m4a`, `synthetic-image.heic` | stdlib; ffmpeg n9.0.1; libheif 1.23.1 `heif-enc` | eml yes; m4a, heic no |
+| by hand | `amazon-twin.csv`, `sign.jpg`, `synthetic-image.{gif,webp,svg}`, `synthetic-lines.ndjson` | ImageMagick for gif/webp | — |
+
+A twin keeps the *shape* of its private counterpart (the manifest's `shape` and `note`), never its content:
+fictional names, places and numbers only, nothing copied from a real export.

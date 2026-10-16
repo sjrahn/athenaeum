@@ -10,7 +10,7 @@
 #   copied from the source instance's corpus (`ath-steven/corpus/artifacts/<ab>/<blake3>.*`) or its
 #   export folder; the blake3 pins the exact bytes.
 # `source: synthetic` — generated fixtures with no private content, committed under testdata/synthetic/
-#   (see "The synthetic tier" in the README): the committed bytes, not a fresh run of gen.py, are what
+#   (see "The synthetic tier" in the README): the committed bytes, not a fresh run of a generator under synthetic/gen/, are what
 #   the blake3 pins.
 #
 # `root` is the term `whole` manifests by the ontology's `matches` lines; `shape` is the exercise.
@@ -24,6 +24,14 @@
   shape: pdf
   note: single-page PDF, print-to-PDF; the asserted tree (pdf.words@1)
   source: regression
+
+- file: till-receipt.pdf
+  blake3: 53d8d34b5b3f83c9c9f6d54a2f97ec9ba3e0ddbd135ec0898b3172323b4928aa
+  mime: application/pdf
+  root: pdf
+  shape: pdf
+  note: the twin of the receipt — a single-page till receipt rendered with typst (gen/plain.ts); one page, 64 words, no pass
+  source: synthetic
 
 - file: procedure.pdf
   blake3: 5e6e497d934498fc49229ba8c594684114a1213426bc1ad0113718ae72794269
@@ -65,6 +73,14 @@
   note: 71 lines, 5 headings; the text aspect is the bytes (no block derivation yet)
   source: regression
 
+- file: tidewatch-readme.md
+  blake3: 44125fc18c8632c7a877015ebea0796aa67fcc03c50eddf9abc837986bc0a355
+  mime: text/markdown
+  root: markdown
+  shape: markdown
+  note: the twin of the readme — a project readme with headings, lists, fenced blocks and a table (gen/plain.ts)
+  source: synthetic
+
 - file: single-file.js
   blake3: 49d2223068ad8c86afecf297ed5b37fb965ccc244ec87e8fc100baffc8e81b7b
   mime: text/javascript
@@ -72,6 +88,14 @@
   shape: source-text
   note: the capture engine every v52 HTML capture pins by hash; 15k lines
   source: regression
+
+- file: tidewatch.js
+  blake3: a5ff43759b271ec169edfc591e193ccb404b8f48cd10990aa6364baf8327dfb5
+  mime: text/javascript
+  root: javascript
+  shape: source-text
+  note: the twin of the capture engine — one self-contained script, a few hundred lines (gen/plain.ts)
+  source: synthetic
 
 # ── tabular and structured data ───────────────────────────────────────────────────────────────────
 
@@ -99,6 +123,14 @@
   note: a 9-column gap manifest; csv.parse@1 with the tab as the delimiter
   source: regression
 
+- file: media-manifest.tsv
+  blake3: 14db65be2c3fa55c75b7442cd3df07d536ca718aca2c88e5b886fb80e1a30afb
+  mime: text/tab-separated-values
+  root: tsv
+  shape: tsv
+  note: the twin of the gap manifest — nine columns, 60 fabricated rows, a sparse note column (gen/plain.ts)
+  source: synthetic
+
 - file: addresses.json
   blake3: ff5cc5f8ed2b52ff40f70a9fa124b6a4e61ecbd5c4a9dad80abc619c9be8aad7
   mime: application/json
@@ -106,6 +138,14 @@
   shape: json
   note: JSON object, single top-level array field
   source: regression
+
+- file: address-book.json
+  blake3: 02f3976c34f2dc44fa850273c830b1fa765546a059f035889564cbb01a4065a9
+  mime: application/json
+  root: json
+  shape: json
+  note: the twin of the address export — an object with one top-level array of 24 fabricated records (gen/plain.ts)
+  source: synthetic
 
 - file: synthetic-lines.ndjson
   blake3: 23f9810ef7b0af559ed6ed6bf0a788950a6ae0374c2e0364054b7fc504f4f6db
@@ -123,6 +163,14 @@
   note: vCard collection, iCloud contacts export, 150 cards
   source: regression
 
+- file: address-cards.vcf
+  blake3: 188b4645aa2fffe0f7c8714a9e2cc904f6ccf403618ef6dc6e0471aabfd367ea
+  mime: text/vcard
+  root: vcard
+  shape: vcard-collection
+  note: the twin of the contacts export — 30 fabricated vCard 3.0 cards with N, FN, EMAIL, TEL, ADR, REV, UID (gen/plain.ts)
+  source: synthetic
+
 - file: model.p21
   blake3: 53ac2b0de5d1aaa00caf842a72a862ef506b2fed6b43d4954b0ccb03b878fd5e
   mime: application/p21
@@ -130,6 +178,14 @@
   shape: step
   note: ISO 10303-21 (IFC4) exchange file
   source: regression
+
+- file: bracket.p21
+  blake3: 331e8f6ffd8290d96eba1aa7f71f4a957d816ca731c87c92cf92be4c1e3df8f2
+  mime: application/p21
+  root: step
+  shape: step
+  note: the twin of the exchange file — ISO 10303-21 with an IFC4 schema, a project, site, building, storey and one plate (gen/plain.ts)
+  source: synthetic
 
 # ── containers ────────────────────────────────────────────────────────────────────────────────────
 
@@ -167,6 +223,14 @@
   note: a photograph; header dims and EXIF orientation attested
   source: regression
 
+- file: garden.jpg
+  blake3: c2bfdcbf54fd1b3269190e688b9b6aebeb4093f4b77b1559600451780a6cf59a
+  mime: image/jpeg
+  root: jpeg
+  shape: image-jpeg
+  note: the twin of the photograph — a synthesised raster (ImageMagick) with an Exif APP1 segment carrying Orientation 6, written by gen/plain.ts
+  source: synthetic
+
 - file: sign.jpg
   blake3: 6aa934e58bc0dff94e8cb1281ccb0066ff98c9346baca2c72d8764cce6244471
   mime: image/jpeg
@@ -182,6 +246,14 @@
   shape: image-png
   note: a screenshot; IHDR dims attested
   source: regression
+
+- file: window.png
+  blake3: c36c98aafe5fbc3ed57df8c967c13ec6c146b17484059b7e028a60bf9aa89dc0
+  mime: image/png
+  root: png
+  shape: image-png
+  note: the twin of the screenshot — a window-like raster with text (ImageMagick, gen/plain.ts); IHDR dims attested
+  source: synthetic
 
 - file: synthetic-image.gif
   blake3: d6846ee4361867a32b491f0c73b106af30bc755592ee202d72b97fc5abab50b2
@@ -222,6 +294,14 @@
   shape: multi-track-media
   note: multi-track ISOBMFF, h264+aac; sniffed by brand
   source: regression
+
+- file: countdown.mp4
+  blake3: f5b33fcb4ed482e62d5ea822c2c33cfb7febee77336411ba7ca992282da69115
+  mime: video/mp4
+  root: mp4
+  shape: multi-track-media
+  note: the twin of the clip — two seconds of h264 test pattern and an aac sine (ffmpeg, gen/plain.ts); sniffed by brand
+  source: synthetic
 
 - file: synthetic-audio.m4a
   blake3: c6e3984ff59bef5dcb77f70723ef25a42d8df3fb3ddd88c0b9310f4de4b23a6d
