@@ -36,7 +36,7 @@ const sortKeys = (v: unknown): unknown =>
         )
       : v;
 const canon = (line: J): string => {
-  const head = ["id", "at", "pred", "form", "in", "ord"].filter((k) => k in line);
+  const head = ["id", "pred"].filter((k) => k in line);
   const tail = ["ev", ...AUTH].filter((k) => k in line);
   const mid = Object.keys(line)
     .filter((k) => !head.includes(k) && !tail.includes(k))

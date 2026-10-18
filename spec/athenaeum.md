@@ -359,18 +359,18 @@ A reading's identity is its address; a scope's is its address, which is unique a
 
 ```yaml
 # corpus/records/c1/c1d0e9f2.yaml — a photograph of a sign, read in full: transcribed, not formed
-intrinsics: {op: jpeg.intrinsics@1, mime: image/jpeg, bytes: 20152, width: 900, height: 400}
+intrinsics: {op: jpeg.intrinsics@1, mime: image/jpeg, bytes: 47268, width: 900, height: 420}
 passes:
   p1: {by: reader-a, verify: reader-b, vocab: b3:5c1e0a9d77f3b210, date: 2026-01-12}
 complete: {readings: p1}
 readings:
-  bbox=0.0667,0.18,0.6044,0.1675:
+  bbox=0.0667,0.1786,0.6022,0.1548:
     text: RETURNS ONLY
     pass: p1
-  bbox=0.0667,0.4825,0.4522,0.09:
+  bbox=0.0667,0.4643,0.4556,0.1024:
     text: Bay 12 - Depot 7
     pass: p1
-  bbox=0.0667,0.7275,0.6467,0.09:
+  bbox=0.0667,0.6976,0.6467,0.1071:
     text: No parking 7am to 6pm
     pass: p1
 # that this is a loading-bay sign, and that bay 12 belongs to depot 7, are claims of entities (§14), cited here
