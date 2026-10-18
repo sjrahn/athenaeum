@@ -62,7 +62,7 @@ const rev = async (body: unknown) => `b3:${(await blake3Hex(typeof body === "str
 // ── records (§8.2): one document, keys in a fixed order, written in one style ────────────────────────────────────
 type Reading = { text?: string; cells?: string[][]; tex?: string };
 type Scope = Reading & { form: string | string[]; at: string; scopes?: Scope[]; [field: string]: unknown };
-type Rec = { intrinsics: J; provenance: J[]; shape?: string; chrome?: J[]; passes?: Record<string, J>; readings?: Record<string, Reading>; scopes?: Scope[] };
+type Rec = { intrinsics: J; receipt?: J; origins?: J[]; shape?: string; chrome?: J[]; passes?: Record<string, J>; readings?: Record<string, Reading>; scopes?: Scope[] };
 const ASPECTS = ["cells", "tex", "text"];
 const WORDS = /^(true|false|yes|no|null|on|off|y|n|~)$/i;
 const plainOk = (v: string, flow: boolean) => /^[A-Za-z][^\n]*$/.test(v) && !/: | #/.test(v) && !/[\s:]$/.test(v) && !WORDS.test(v) && !(flow && /[,[\]{}]/.test(v));
@@ -94,7 +94,8 @@ const byAddr = (a: string, b: string) => {
 };
 function recordYaml(r: Rec): string {
   let out = `intrinsics: ${flow(r.intrinsics)}\n`;
-  if (r.provenance.length) out += `provenance:\n${r.provenance.map((e) => `  - ${flow(e)}\n`).join("")}`; // an asset's is its container's (§9.6)
+  if (r.receipt) out += `receipt: ${flow(r.receipt)}\n`; // absent on an asset: its provenance is its container's (§9.6)
+  if (r.origins?.length) out += `origins:\n${r.origins.map((e) => `  - ${flow(e)}\n`).join("")}`;
   if (r.shape) out += `shape: ${scalar(r.shape)}\n`;
   if (r.chrome) out += `chrome:\n${r.chrome.map((c) => `  - ${flow(c)}\n`).join("")}`;
   if (r.passes) out += `passes:\n${Object.entries(r.passes).map(([id, pass]) => `  ${id}: ${flow(pass)}\n`).join("")}`;
@@ -156,7 +157,7 @@ class Instance {
     return `b3:${(await blake3Hex(text)).slice(0, 16)}`;
   }
   /** A pass's judgments laid over the projection ingest wrote (§8.1). */
-  judge(full: string, doc: Omit<Rec, "intrinsics" | "provenance">) {
+  judge(full: string, doc: Omit<Rec, "intrinsics" | "receipt" | "origins">) {
     const have = this.records.get(full);
     if (!have) throw new Error(`no record for ${full.slice(0, 8)}: not ingested here`);
     this.records.set(full, { ...have, ...doc });
@@ -287,12 +288,12 @@ async function ingest(inst: Instance, bytes: Uint8Array, name: string, testimony
   const full = await blake3Hex(bytes);
   keep("artifacts", full, bytes);
   const delivered: { hash: string; name: string }[] = [];
-  const provenance: J[] = [];
+  const origins: J[] = [];
   if (testimony) {
     const t = await blake3Hex(testimony);
     keep("testimony", t, testimony);
     delivered.push({ hash: t, name: `${name}.testimony.yaml` });
-    provenance.push({ testimony: t, content: admit(inst, testimony, base) }); // the testimony's own content, verbatim
+    origins.push(admit(inst, testimony, base)); // the producer's object, verbatim
     idOf(t);
   }
   const received = new Date(Date.parse(`${DATE}T09:00:00Z`) + 60_000 * clock++).toISOString().replace(".000", "");
@@ -302,7 +303,7 @@ async function ingest(inst: Instance, bytes: Uint8Array, name: string, testimony
   idOf(full);
   const { val, parts } = await intrinsics(bytes, name);
   for (const p of parts) idOf(p.blake3);
-  inst.records.set(full, { intrinsics: val, provenance: [{ receipt: r, actor, received, name }, ...provenance] });
+  inst.records.set(full, { intrinsics: val, receipt: { actor, received, name }, ...(origins.length ? { origins } : {}) });
   return { full, parts, testimony: delivered[0]?.hash };
 }
 
@@ -624,7 +625,7 @@ const [W, H] = [Number(pg[1]), Number(pg[2])];
 const [x0, y0, x1, y1] = [1, 2, 3, 4].map((i) => Number(ln[i]));
 const r4 = (n: number) => Math.round(n * 1e4) / 1e4;
 const headAt = `page=1&bbox=${r4(x0! / W)},${r4(y0! / H)},${r4((x1! - x0!) / W)},${r4((y1! - y0!) / H)}`;
-home.records.set(plan.blake3, { intrinsics: (await intrinsics(plan.bytes, "Mooring plan 2026.pdf")).val, provenance: [] }); // an asset's projection: derived from its container's until something is said
+home.records.set(plan.blake3, { intrinsics: (await intrinsics(plan.bytes, "Mooring plan 2026.pdf")).val }); // an asset's projection: derived from its container's until something is said
 home.judge(plan.blake3, { passes: { p1: { ...recordPass, over: [headAt] } }, readings: { [headAt]: { text: "Mooring plan 2026" } } });
 
 // a photograph of a sign, read in full: transcribed, never formed — three readings and the attestation

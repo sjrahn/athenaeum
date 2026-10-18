@@ -48,8 +48,9 @@ This document is normative. The key words MUST, MUST NOT, SHOULD and MAY are use
 | **constituent** | a file a container holds whole: an **asset**, its own artifact and subject, or a **part** of the container's own plan, never a subject (§7.2.2) |
 | **testimony** | an artifact a producer emitted about other artifacts — where, when, by what, why they were found (§9) |
 | **receipt** | the testimony the tooling writes for every ingest (§9.3) |
-| **record** | the document every ingested artifact has: its projection — `intrinsics` and `provenance`, the tooling's caches — and the judgments passes add: its readings and, once formed, its tree (§8) |
-| **provenance** | what the testimony naming an artifact says of it, as the instance's testimony shapes read it, projected onto its record; with its containers' (§9.6) |
+| **record** | the document every ingested artifact has: its projection — `intrinsics`, `receipt` and `origins`, the tooling's caches — and the judgments passes add: its readings and, once formed, its tree (§8) |
+| **origins** | the testimony delivered with an artifact, projected verbatim onto its record (§8.2) |
+| **provenance** | an artifact's receipt and origins together with its containers', as a chain (§9.6) |
 | **intrinsics** | the key of a record that holds what the artifact's format defines about its bytes (§8.1) |
 | **scope** | a region of an artifact named by an intrinsic address `at` |
 | **term** | an entry of a vocabulary: a **form** or a **shape** (the corpus's), a **kind** or a **property** (the graph's) (§11) |
@@ -273,7 +274,7 @@ A page the document has, a row the parse holds and a cell within such a row are 
 
 ### 8.1 What a record is
 
-8.1.1 A record is the document about one artifact, `corpus/records/<shard>/<id>.yaml`: its **projection** — what the format defines about its bytes (`intrinsics`) and what its testimony says of it (`provenance`), both caches the tooling writes — and the judgments passes make about it. Every ingested artifact has a record from the moment it is ingested, holding the projection; the first pass adds the first judgment. An asset's record is derived from its container's until something is said about it or it is ingested on its own.
+8.1.1 A record is the document about one artifact, `corpus/records/<shard>/<id>.yaml`: its **projection** — what the format defines about its bytes (`intrinsics`), the receipt of its ingest (`receipt`) and the testimony delivered with it (`origins`), all caches the tooling writes — and the judgments passes make about it. Every ingested artifact has a record from the moment it is ingested, holding the projection; the first pass adds the first judgment. An asset's record is derived from its container's until something is said about it or it is ingested on its own.
 
 8.1.2 What a record holds depends on the class of the artifact's format (§10.4):
 
@@ -289,7 +290,8 @@ A page the document has, a row the parse holds and a cell within such a row are 
 | key | holds |
 |---|---|
 | `intrinsics` | what the artifact's format defines about its bytes: mime, size, encoding, page count, dimensions, duration, the metadata the format specifies, and a container's constituents with their kind (§10.2, §10.3). Nothing a producer asserts. A cache: `op` names the intrinsics op and its version; a value by an older version than the tool's is **stale** (§12) and the sweep rewrites it |
-| `provenance` | the testimony naming the artifact, projected: per receipt `{receipt, actor, received, name}`; per delivered testimony `{testimony: <hash>, content: <its parsed content, verbatim>}`. Nothing of the instance's is in it: what a testimony is admitted as is derived from its content (§9.5, §12) and never written. A cache written at every ingest of the artifact. Absent on an asset never ingested on its own, whose provenance is its containers' (§9.6) |
+| `receipt` | the ingest that first brought the artifact into this instance: `{actor, received, name}` (§9.3) |
+| `origins` | every testimony delivered with the artifact, each its parsed content verbatim — the producer's object, nothing of the instance's in it. What a testimony is admitted as is derived from its content (§9.5, §12) and never written. Extended at every later delivery. Both keys are absent on an asset never ingested on its own, whose provenance is its containers' (§9.6) |
 | `shape` | a stored choice of the artifact's shape, overriding the one `matches` derives (§11.4.3) |
 | `chrome` | rules for what is chrome in this artifact, each in the grammar of a shape's `chrome` line (§11.2.3); applied together with the shape's (§8.4.6) |
 | `passes` | the passes over the artifact, by id: `{by, verify, vocab, date, over?, attests?, note?, with?}` (§8.5, §13.1) |
@@ -342,7 +344,7 @@ A record holds `readings` or `scopes`, never both.
 
 ### 8.5 Passes and stages
 
-8.5.1 The projection is no pass's: `intrinsics` and `provenance` are the tooling's. Nothing else in a record names the pass that wrote it. A pass names what it covers: `over` lists the addresses a partial pass read or re-read — and `whole` where it wrote the shape or chrome — and a pass with no `over` covers the whole record. A region's pass is the highest-numbered pass whose extent includes it; a `distrust` of a pass, a stale pin and a correction all resolve through this. A forming pass covers the whole record and answers for every reading in it, adopted or re-read; the reading passes it supersedes are dropped from `passes`, and the repository's history keeps them.
+8.5.1 The projection is no pass's: `intrinsics`, `receipt` and `origins` are the tooling's. Nothing else in a record names the pass that wrote it. A pass names what it covers: `over` lists the addresses a partial pass read or re-read — and `whole` where it wrote the shape or chrome — and a pass with no `over` covers the whole record. A region's pass is the highest-numbered pass whose extent includes it; a `distrust` of a pass, a stale pin and a correction all resolve through this. A forming pass covers the whole record and answers for every reading in it, adopted or re-read; the reading passes it supersedes are dropped from `passes`, and the repository's history keeps them.
 
 8.5.2 A pass attests completeness with `attests`: `readings` — every region of the rendering that carries transcribable content has a reading; `structure` — every reading lies in a scope and every scope that reads has its reading. Structure is checked and blocks (§17.1); readings can only be attested, and where a hint exists the hint's words outside every reading and chrome are listed beside it. Either means complete, never correct. An attestation stands while its pass is the latest; a later pass re-attests or it lapses. A tree is never signed without `structure`.
 
@@ -350,7 +352,7 @@ A record holds `readings` or `scopes`, never both.
 
 | stage | the record holds | citable | what it gives beyond the bytes |
 |---|---|---|---|
-| **unread** | the projection only: `intrinsics`, `provenance` | nothing. A rendered artifact has no text until someone reads it | what it is and where it came from |
+| **unread** | the projection only: `intrinsics`, `receipt`, `origins` | nothing. A rendered artifact has no text until someone reads it | what it is and where it came from |
 | **read** | `readings` at some addresses | every read region, by address and revision | what was looked at is transcribed once and pinned |
 | **transcribed** | `readings` that cover the artifact; a pass attests `readings` | every region of the artifact | the whole of what the rendering shows, in one place: search, a transcript in address order, "is this mentioned anywhere" |
 | **formed** | `scopes`; a pass attests `structure` | all of that, and every scope by its designated and positional address | fields, conventions, chrome and the remainder, section closure, the markdown proxy, the per-form checks |
@@ -366,8 +368,7 @@ A reading's identity is its address, in `readings` or in the scope that adopted 
 ```yaml
 # corpus/records/6a/6aa934e5.yaml — a photograph of a sign, read in full: transcribed, not formed
 intrinsics: {op: jpeg.intrinsics@1, mime: image/jpeg, bytes: 47268, width: 900, height: 420}
-provenance:
-  - {receipt: 502ea72f…, actor: reader-a, received: "2026-01-12T09:14:03Z", name: sign.jpg}
+receipt: {actor: reader-a, received: "2026-01-12T09:14:03Z", name: sign.jpg}
 passes:
   p1: {by: reader-a, verify: reader-b, vocab: b3:5c1e0a9d77f3b210, date: 2026-01-12, attests: [readings]}
 readings:
@@ -416,10 +417,9 @@ scopes:
 ```yaml
 # corpus/records/41/41aa07d2.yaml — an archive as ingest left it: the projection, nothing said
 intrinsics: {op: zip.intrinsics@1, mime: application/zip, bytes: 184211, constituents: [{path: Harbour plans/Mooring plan 2026.pdf, blake3: 0c4efa13…, kind: asset}, {path: Harbour plans/Berth list.csv, blake3: 7a3e0c11…, kind: asset}]}
-provenance:
-  - {receipt: d391e53a…, actor: reader-a, received: "2026-01-12T09:14:03Z", name: drive-folder.zip}
-  - testimony: 277a7574…
-    content: {origin: google-drive-export, via: export, origin_fields: {account: ada.abbott@example.invalid, folder: Harbour plans, exported_at: "2026-03-18T16:00:00Z"}}
+receipt: {actor: reader-a, received: "2026-01-12T09:14:03Z", name: drive-folder.zip}
+origins:
+  - {origin: google-drive-export, via: export, origin_fields: {account: ada.abbott@example.invalid, folder: Harbour plans, exported_at: "2026-03-18T16:00:00Z"}}
 ```
 
 ## 9. Testimony
@@ -454,7 +454,7 @@ provenance:
 
 9.3.2 The receipt is the only testimony the tooling prescribes, and it knows the receipt's shape itself; no vocabulary declares it.
 
-9.3.3 A record's `provenance` is the projection of the receipts and testimony naming its artifact (§8.2); the originals in the stores are what it is rebuilt from if the repository loses it.
+9.3.3 A record's `receipt` and `origins` are the projection of the receipt and the testimony delivered for its artifact (§8.2); the originals in the stores, which carry the hashes, are what it is rebuilt from if the repository loses it, and how a testimony is found as an artifact to cite.
 
 ### 9.4 Testimony shapes
 
@@ -466,11 +466,11 @@ provenance:
 
 9.5.1 Ingest MUST refuse, before anything is placed in a store, a delivered testimony that matches no testimony shape, or that lacks a field its shape requires.
 
-9.5.2 The same check runs over the records (§17), over the content each record's provenance holds, so a testimony shape that tightens lists the testimony it no longer admits. Which shape admits a testimony is derived from its content and never written (§12). A testimony admitted once is never removed for failing a later check; it is listed.
+9.5.2 The same check runs over the records (§17), over each record's `origins`, so a testimony shape that tightens lists the testimony it no longer admits. Which shape admits a testimony is derived from its content and never written (§12). A testimony admitted once is never removed for failing a later check; it is listed.
 
 ### 9.6 Provenance
 
-9.6.1 An artifact's **provenance** is its record's `provenance` together with the provenance of every container that holds it, at that path, transitively; the chain is derived (§12).
+9.6.1 An artifact's **provenance** is its record's `receipt` and `origins` together with the provenance of every container that holds it, at that path, transitively; the chain is derived (§12).
 
 9.6.2 Provenance is shown as a chain — the receipt, the container's testimony, the path, the constituent — so a container's uri is never presented as a constituent's. Nothing is copied to a constituent: an artifact first met alone and later inside an export has both origins the moment the export is ingested.
 
@@ -782,8 +782,8 @@ The following are computed at read time. Writing any of them to a file is a chec
 | containers of an artifact | the constituents of the containers the instance holds |
 | what an instance holds | its records (§5.7) |
 | a table's grid | its rows' readings in order (§8.4.7) |
-| what a testimony is admitted as | `matches` over the content its record's provenance holds (§9.5) |
-| the provenance chain | the record's `provenance` and its containers' (§9.6) |
+| what a testimony is admitted as | `matches` over its content in `origins` (§9.5) |
+| the provenance chain | the record's `receipt` and `origins` and its containers' (§9.6) |
 | testimony admitted | whether a testimony matches a testimony shape and carries the fields it requires |
 | stale intrinsics | an `intrinsics` value by an older op version than the tool's for its mime |
 | a reading's revision | the BLAKE3 of its body (§6.5) |
@@ -995,7 +995,7 @@ A failing record check blocks a pass from signing; an advisory is listed and nev
 | **standing** | no evidence entry carries a standing; an authority claim names an artifact the instance holds |
 | **per form** | `reads` is satisfied; required fields are present; designators are found where `where` and `pattern` say, in the reading or beside it; `expects` is met (soft); the form's `check` lines hold; the reading check per aspect (advisory); a stored `shape` is one that matches |
 | **per testimony** | it matches a testimony shape; it carries every field the shape requires |
-| **per file** | no undeclared field; no derivable value stored; no stored revision; keys in the record's order, lines sorted; every reading and scope covered by a pass; every pin known; `intrinsics` and `provenance` only by the tool; no stale `intrinsics` (soft); every id and name resolves to one subject |
+| **per file** | no undeclared field; no derivable value stored; no stored revision; keys in the record's order, lines sorted; every reading and scope covered by a pass; every pin known; `intrinsics`, `receipt` and `origins` only by the tool; no stale `intrinsics` (soft); every id and name resolves to one subject |
 
 ### 17.3 Form checks
 
@@ -1089,7 +1089,7 @@ confine: { all: ["country:ca"] }
 verify: 90d
 ```
 
-18.6.2 **Selection** matches labels the instance computes for each artifact and testimony it holds: its shape and that shape's `refines` chain (`shape`), the testimony shapes its record's provenance matches (`origin`), the kinds of the entities that cite it (`kind`), the instance's tier (`tier`), its mime and its size; `testimony: true` selects testimony. Every policy whose selection matches applies; an extension's policies apply together with its base's.
+18.6.2 **Selection** matches labels the instance computes for each artifact and testimony it holds: its shape and that shape's `refines` chain (`shape`), the testimony shapes its record's `origins` match (`origin`), the kinds of the entities that cite it (`kind`), the instance's tier (`tier`), its mime and its size; `testimony: true` selects testimony. Every policy whose selection matches applies; an extension's policies apply together with its base's.
 
 18.6.3 **Requirements.** A requirement holds when at least `copies` copies sit on stores whose tags satisfy `where` (`all`, `any`, `not`), spread across that many distinct values of the `distinct` key. A copy counts once per physical copy — routes through containers count (a constituent is held wherever its container is), linked copies sharing storage count once, observed trees and missing copies never count. `confine` restricts every copy to stores whose tags satisfy it; a copy outside is a finding and reconcile never places one there. `verify` is how recent a verification a copy needs to count; an older one is a finding and is re-verified.
 
@@ -1164,8 +1164,8 @@ Each host MAY run one custody daemon, `athd`, serving every instance on the host
 | `instance init [--extends <path>]` · `instance show` · `instance check` | write · read · read | init writes `athenaeum.yaml` and the empty directories — for a standalone instance with the terms §11.9 names, for an extension pinned to its base's current commit; show prints the instance and what it builds on; check verifies the chain, its pins and its configuration |
 | `instance repin` | admin | moves the base pin to the base's current commit, rewrites ids that now collide (§7.1.3), and reports what the move makes stale (§4.3) |
 | `instance reshard` | admin | moves files to the shard widths `athenaeum.yaml` declares (§5.2); no line changes |
-| `ingest <file…> [--testimony <file>…]` | write | sniffs; admits or refuses delivered testimony before anything is placed; places the artifact and its testimony in the local store; writes the receipt; writes or refreshes the artifact's record with its projection (§8.1). Writes nothing judged |
-| `holdings` | read | what the instance holds: its records, each with its stage and provenance (§5.7) |
+| `ingest <file…> [--testimony <file>…]` | write | sniffs; admits or refuses delivered testimony before anything is placed; places the artifact and its testimony in the local store; writes the receipt; writes the artifact's record with its projection, or adds to its `origins` (§8.1). Writes nothing judged |
+| `holdings` | read | what the instance holds: its records, each with its stage, receipt and origins (§5.7) |
 | `sweep [--stale]` | write | rewrites `intrinsics` where the op is newer than the projection's |
 | `resolve <anchor> [--trace]` | read | the artifact, the surface or the reading at an address; `--trace` reports the route (§18.8.2) |
 | `tree <subject>` | read | the tree, derived or stored; a designated or positional address to its intrinsic `at` |
