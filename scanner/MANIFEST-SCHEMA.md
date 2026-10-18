@@ -125,7 +125,7 @@ dedicated section below.
 ### Catalog metadata (v3)
 
 `ctime_ns`, `btime_ns`, `mode`, `mime_claim` are the light-catalog columns added in v3
-(spec/corpus.md §12.1.1 *(25)*): free — the walk already `lstat`s every file — universal stat
+(spec/athenaeum.md §18.5): free — the walk already `lstat`s every file — universal stat
 facts, plus one advisory claim, so format-and-placement questions are answerable without
 touching bytes over the wire. All four are **nullable**: NULL on a row a v3-aware scanner
 hasn't caught up to yet (a pre-v3 row surviving the v2→v3 migration below, or a row adopted
@@ -275,7 +275,7 @@ tree is a normal complete generation, not a special case.
   "unRAID direct byte path"), the number of files hashed via a resolved backing disk path vs.
   falling back to the ordinary share path. Additive, `summary_json` only — no `SCHEMA_VERSION`
   change, no table changes; both fields are simply `0` on any scan that didn't use the flag.
-- **v3** (2026-08-18) — catalog metadata (spec/corpus.md §12.1.1 *(25)*): four **additive,
+- **v3** (2026-08-18) — catalog metadata (spec/athenaeum.md §18.5): four **additive,
   nullable** columns on `identities` — `ctime_ns`, `btime_ns`, `mode`, `mime_claim` — plus a
   `sniffed` field on `ScanSummary`. See "Catalog metadata (v3)" above for the full semantics.
   An existing v2 `state.sqlite` migrates in place on open (`ALTER TABLE` + `PRAGMA

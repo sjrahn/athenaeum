@@ -1,6 +1,6 @@
-# ath — the successor contract's reference implementation
+# ath — the specification's reference implementation
 
-Bun/TypeScript. Implements `spec/successor.md` (unratified draft; v52 stays the law for the current instance) on a
+Bun/TypeScript. Implements `spec/athenaeum.md` (conformance and the gaps still owed: `CONFORMANCE.md`) on a
 layer of sorted JSONL claim files: `ontology/`, `corpus/`, `ledger/`. One grammar, intrinsic addresses, derived
 everything. No network: `ath` ingests bytes already on disk and may shell out to local binaries (tesseract,
 pdftotext); producers live outside it.

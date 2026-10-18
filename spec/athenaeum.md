@@ -1,275 +1,920 @@
 ---
 spec_id: ATH
-part: I
-title: "Athenaeum Specification — Part I: Architecture"
-version: 52
-status: current
+title: "The Athenaeum Specification"
+status: draft
 license: "CC BY-SA 4.0"
-date_created: 2026-02-08
-date_modified: 2026-10-02
 ---
 
-# Athenaeum Specification — Part I: Architecture
+# The Athenaeum Specification
 
-**The Athenaeum specification is one document in four parts, under one version.** This part is the architecture; [Part II](corpus.md) is the corpus contract; [Part III](ledger.md) is the ledger contract; [Part IV](custody.md) is the custody contract — artifact byte residence and resolution. A normative change to any part bumps the shared version (§8). Amendment history lives in [`CHANGELOG.md`](CHANGELOG.md) and in git history under tags — the spec text carries current law only.
+The Athenaeum keeps bytes, says what they manifest, and asserts what they express — each as a line that names its subject, its author and the evidence it rests on. Three things are kept because nothing else can recover them: the bytes, the testimony of where and how they were found, and the owner's acts. Everything else is derived from them or rediscovered over them. The facts so found are the product.
 
-## 1. Overview
+This document is normative. The key words MUST, MUST NOT, SHOULD and MAY are used as in RFC 2119. Examples are illustrative; where an example and the text disagree, the text governs.
 
-### 1.1 What this is
+## 1. Scope
 
-The Athenaeum is a knowledge normalization and curation system. It captures artifacts from any source, normalizes each into a faithful, content-addressed record, and interprets those records into an evidence-backed fact substrate. The thesis: knowledge cited precisely enough that the expert agents drawing on it cannot hallucinate their grounding.
+1.1 This specification defines:
 
-The system's **end product** is the interpreted archive — the corpus + ledger join: every claim evidence-backed at span level, graded on an honest epistemic ladder, its sensitivity derived; every captured record represented. What sits above that product — compendium sites, expert agents, deliverables of any shape — consumes it from outside the system (§5). The system has two data layers, one custody plane, and one external driver:
+- what an **instance** stores: bytes, testimony, the owner's acts, and the lines that describe, structure, read and cite the bytes;
+- what the **tooling** derives from them, and the rules every stored and derived thing obeys;
+- what the tooling knows about **formats**, and the primitives an **ontology** composes to say what the data means;
+- how bytes are kept and found (**custody**), and the tool surface through which all of it is read and written.
 
-- **The corpus layer is the foundation — the bytes.** The corpus is a content-addressed archive of captured artifacts, each identified by the blake3 hash of its bytes and represented by a faithful markdown record. Tenancy is a **derived, per-record property** — origin-overlay `tenancy:` declarations over the instance's tier set, fail closed to the private floor — never a directory or repo boundary (§1.2 principle 2). The corpus contract is **Part II** (`spec/corpus.md`).
+1.2 A conforming tool implements every MUST of this document for the formats it registers (§10). A conforming instance holds only what this document allows to be stored.
 
-- **The ledger layer is the knowledge — the claims.** The ledger is the single fact substrate: **concepts** (materialized real-world things) and edges carrying typed claims in which every claim carries `corpus://`/`ref://` evidence, with an epistemic status ladder, plus the pre-assertion workspace (interpretations) beside them. Knowledge is authored once, here; privacy is derived sensitivity, not a partition. The ledger contract is **Part III** (`spec/ledger.md`).
+1.3 The tooling performs no network access. Bytes and testimony are acquired by producers outside the tooling and handed to it from disk.
 
-- **The custody plane is where the bytes live.** Records and facts are tracked text; artifact bytes are untracked and reside across declared **locations** — the co-located store, bulk store roots, operator-managed attached trees, remote stores — with resolution by content address across all of them. The custody contract is **Part IV** (`spec/custody.md`).
+## 2. Principles
 
-- **The tooling is the definition and the driver — and it lives outside the instance.** One repository — the **distribution** (`athenaeum/athenaeum`) — holds the specification and the shared tooling (the `athenaeum` Python distribution: the `ath` and `corpus` CLIs; the residence scanner). It is deployment-agnostic and publicly hostable: it tracks no instance state and points at an instance to do work inside it (§2). Everything the deployment owns lives in the **instance** — one private repository holding the corpus, the ledger, and the instance config.
+1. **Three things are kept; everything else is recovered.** The bytes, the testimony (§9) and the owner's acts (§13.5) are irreplaceable: each is a snapshot nothing else reproduces. Every other stored line is an op's output — deterministic, re-derivable, kept as a cache with a pin — or a judgment a pass wrote, checkable against the bytes and rediscoverable by another pass. The ontology is scaffolding of the second kind: two instances fed the same bytes may build different ontologies and should arrive, given time, at the same facts.
+2. **The tooling knows formats, never conventions.** An op sniffs a mime, records the properties the format's own specification defines, addresses the bytes on the axes the format has, decodes a surface, and exposes the format's own nodes — an element, a MIME part, a JSON value, an archive entry, a `data:` URI. It never names a term and never decides what a node means: that a row is a header, that a `>` line is a quote, that a repeated line is a running header, that an element is a post. A scope below `whole` exists only where an ontology line or a pass puts it. A new kind of thing is an ontology edit; a new format is one op module.
+3. **Everything is a claim line.** Properties, structure, readings, world facts, ontology terms, passes, testimony links and owner acts are lines of one grammar: a subject, a predicate, a value, an authorship. One sort, one merge, one lineage.
+4. **Ops author byte facts; passes author judgments.** Anything that can be wrong is written by a pass and verified by a second author. Anything an op writes has no status, because it carries no judgment.
+5. **Addresses are intrinsic.** A scope is named by coordinates in the bytes — page and box, byte range, row and column, time, constituent path — never by a transform, a parser's tree or an identifier.
+6. **The ontology is the recipe.** A scope manifests terms; what a term expects — fields, reading aspect, children, owed world facts, render form, the op that yields its surface — rides on the term. A pass pins the ontology it read against by hash; nobody chooses a recipe.
+7. **Derived, never stored.** Class, status, demand, binding state, chrome, staleness, provenance, every non-intrinsic address and the export are computed from stored lines at read time (§12). A stored copy of a derivable thing is a defect.
+8. **Nothing lossy enters the record.** A reading is a transcription checkable against the bytes — never a summary, a description, a paraphrase or a characterisation. Where a scope has no lossless transcription, the record marks its address and stops. What a scope shows, means or contains is a world claim in the ledger, cited to the scope. Where the bytes came from is testimony, an artifact of its own. The record contains nothing unfalsifiable against its own bytes.
 
-Ownership stays disjoint by layer — the boundary each part's contract enforces — and the product boundary bounds the system itself:
+## 3. Terms
 
-| Layer | Owns | Never owns |
-|---|---|---|
-| Corpus | Artifact identity, byte provenance, faithful structure, addressable renderings, faithfulness annotations | World-level meaning or claims |
-| Ledger | Concepts, edges, claims, interpretations, evidence bindings, derived sensitivity | Artifact renderings or publication prose |
-| Custody | Byte residence, location routes, replication, residence indexes | Record content or identity semantics |
-| Distribution | Specification, shared tooling, agent templates | Instance content |
-| *Consumers (external, §5)* | *Presentation: scope, voice, rendering, deployment* | *Facts, claims, or any independent knowledge* |
-
-### 1.2 Design principles
-
-1. **Layered foundation.** The corpus depends on nothing; the ledger depends on the corpus. Consumers sit above the product boundary and depend on both. Each layer knows nothing of what is above it. References point downward only.
-2. **Tenancy is declared knowledge, walled at publication.** The instance is one private repository, and a record's tenancy is *derived*: origin overlays declare `tenancy:` — a tier from the instance's declared set, `public | private` reserved, further tiers instance-owned (Part III §6.4) — at the source grain, decided once per origin, never once per capture; promoted members inherit through their container lineage, and a record whose origins declare nothing falls closed to the floor (Part III §6.4). Sensitivity computes upward from there (claims are visible where all their evidence is), and privacy becomes a hard boundary exactly where content leaves the owner: the consumption contract obliges any consumer publishing beyond the owner to filter on derived sensitivity for the reader's grant set, fail closed (Part III §12). No tooling, schema, or convention may lower a record's derived tenancy or pass content past the wall its grants stop at.
-3. **Content addressing.** An artifact's identity is the blake3 hash of its bytes — permanent, and independent of where the bytes reside (Part IV).
-4. **Faithfulness below, interpretation above.** Corpus records are faithful renderings that add no information; interpretation lives in the ledger, where every interpretive move carries evidence and an epistemic status. Editorial voice lives with consumers, beyond the product boundary — and every published sentence owes a traceable reference into the ledger (Part III §12).
-5. **Evidence is the contract between the layers.** A ledger claim cites `corpus://` URIs — resolved by blake3, optionally span-precise (`?el=`, `?page=`, `?time_range=`, `?bbox=`) — or `ref://` citations into mirrored reference datasets, and the system's validation verifies those citations mechanically: anchors resolve, quotes match verbatim, re-normalized records and updated mirrors flag their citers. Traceability is not a style; it is a checked invariant.
-6. **The instance is config-driven; the tooling is instance-agnostic.** The instance config (§2.3) is the only place instance identity is declared. Shared tooling never hardcodes an instance path or id; a third party points the same distribution at their own instance.
-7. **Deterministic before LLM.** Every pipeline stage whose output is a function of its input is a script; every stage requiring judgment is an agent pass. The boundary is sharp so each stage's outputs are auditable and independently re-runnable.
-8. **Durable vs regenerable, everywhere.** Tracked content is durable and reviewed (records, facts, schemas, specs, the instance config); derived content (caches, resolved views, residence indexes, build outputs) is regenerable and disposable. The same inversion appears at every layer.
-9. **Offline-first.** Only capture requires network access. Everything else — normalization, authoring, validation, resolution — operates on local data.
-10. **No transitionary states.** Every landed change leaves the system whole. Scaffolding deletes itself when it graduates; history files away under tags and the changelog, never in the working tree.
-
-### 1.3 Terminology
-
-| Term | Definition |
+| term | meaning |
 |---|---|
-| **Distribution** | `athenaeum/athenaeum` — the system's definition (the specification) and tooling (`tools/`, `scanner/`), deployment-agnostic and publicly hostable. Cloned or installed anywhere; it holds no instance state. |
-| **Instance** | One private git repository holding the system instantiated: the corpus (`corpus/`), the ledger (`ledger/`), and the instance config (`athenaeum.yaml`, tracked). The working directory the tooling discovers and operates in (§2.2). |
-| **Instance config** | `athenaeum.yaml` at the instance root — tracked instance state: the tenancy floor, the tier and audience declarations, the tracker, the reference-dataset registry (§2.3). |
-| **Corpus** | The content-addressed archive of artifacts with faithful markdown records, at `corpus/` in the instance; record tenancy is derived from origin declarations (§1.2). Contract: Part II. |
-| **Ledger** | The single fact substrate: concepts + edges holding asserted claims with evidence, plus interpretations (the pre-assertion workspace), at `ledger/` in the instance. Privacy is derived sensitivity, walled at publication (Part III §12). Contract: Part III. |
-| **Concept** | A materialized real-world thing in the ledger — typed, optionally schema-shaped; records are its evidence and artifact roster, never its identity (Part III §4). |
-| **Product** | The corpus + ledger join, read through the system's contracts: the interpreted archive consumers build on (§5). |
-| **Consumer** | Anything outside the system reading the product — a compilation (the codex estate), an expert agent, a deliverable pipeline. Consumers own presentation, never knowledge, and are bound by the consumption contract (Part III §12). |
-| **Artifact record** | One captured file's faithful markdown proxy in the corpus, named by the blake3 of its bytes. |
-| **Fact / Claim / Evidence** | The ledger's knowledge atoms: a fact file (concept or edge) holds typed claims; each claim carries evidence entries whose `corpus://` / `ref://` URIs ground it in captured bytes or mirrored reference datasets. |
-| **Reference dataset** | A locally-mirrored external database (Wikipedia, MusicBrainz, OpenStreetMap, …) citable as evidence by native id via `ref://` — resolved at the dataset's `latest` snapshot tag, or pinned `@{tag}`; each registered snapshot's mirror is a corpus artifact, a terminal-contract record addressed by blake3 (Part III §6.5). Registered in the instance config (§2.3). |
-| **Location** | A declared residence for artifact bytes — a content-addressed store root or an operator-managed attached tree, local or remote (Part IV). |
-| **`corpus://` URI** | The evidence-citation primitive: `corpus://{hash}` with optional span parameters, resolved by blake3 in the corpus. Grammar: Part II §6. |
-| **`ledger://` URI** | The knowledge-reference primitive: `ledger://{id}` (or `…/{id}:{claim}`) referencing a fact, claim, or interpretation — consumers read knowledge here, never from any rendered prose (Part III §12). |
-| **Normalizer** | The interpretive half of the corpus's one authoring pass: renders a record under its form contract where no mechanical shaper can — shaping only: faithful renderings, structural marks, and typed fidelity issues (Part II §8.1, §4.1). |
-| **Resident persona** | The system-resident principal-developer persona, stationed in the instance, with whole-system scope — the system's one persona. |
-| **Form** | A named, mechanically checkable rendering contract binding a record span — what a faithful markdown shape looks like for a decomposable population (Part II §7.8). |
-| **Owner** | The human authority for system direction. External captures, deletions, and normative spec changes are owner-gated — the resident persona proposes, the owner decides. |
+| **instance** | a chain of layers (§4) with its custody configuration (§18) |
+| **layer** | one repository of trees: a **foundation** (public) or an **extension** (carrying a tier) |
+| **artifact** | bytes, identified by their BLAKE3; the subject `corpus://<blake3>` |
+| **container** | an artifact whose format holds whole files of its own |
+| **constituent** | an artifact held whole inside a container; its own subject |
+| **properties** | what the format defines about an artifact's bytes, recorded by an op (§8.1) |
+| **testimony** | an artifact a producer emitted about other artifacts — where, when, by what, why they were found (§9) |
+| **receipt** | the testimony the tooling writes for every ingest (§9.3) |
+| **origin term** | a term that admits a shape of testimony (§9.4) |
+| **scope** | a region of an artifact named by an intrinsic address `at` |
+| **term** | a subject of the ontology: a kind of thing, and what it expects |
+| **manifests** | the relation of a scope to a term it is an instance of |
+| **unit** | a scope whose term `reads` an aspect: the grain of a reading |
+| **reading** | a transcription of a unit under one aspect, stored with its revision |
+| **surface** | the text an op decodes at a scope; what a quote is checked against |
+| **op** | a versioned, deterministic function of bytes, registered in the tooling by name `<name>@<version>` |
+| **family** | the format an op parses (html, csv, pdf, rfc822, json, …); one parse per family per artifact |
+| **pass** | one author and one verifier over one artifact or one concept file; the named graph of every judgment it signs |
+| **authorship** | what a line carries to say who wrote it: `by` (an op, or `owner`) or `pass` |
+| **concept** | a real-world thing with a slug, the subject of world claims |
+| **claim** | a ledger line asserting a value of a predicate of a concept, carrying evidence |
+| **evidence entry** | an anchor and quote into an artifact supporting a claim, bound by verify |
+| **owner act** | a line the owner writes: an acceptance or a disowning (§13.5) |
+| **plane** | a served view of the instance: public, audience, owner (§16) |
+| **demand** | work the stored lines imply is owed, derived (§14.7) |
 
-## 2. Topology
+## 4. Layers
 
-### 2.1 Two repositories
+4.1 An instance is a **chain of layers**. Each layer extends at most one other. The bottom layer is a foundation. A foundation MAY extend another foundation; an extension extends a foundation or another extension. Only the top layer of a chain is written; every layer below it is read-only from above.
 
-The system is two git repositories with disjoint ownership:
-
-- **The distribution** (`athenaeum/athenaeum`) — specification + tooling, publicly hostable. It tracks no instance state: no config, no runbooks, no backlog snapshots. Anyone can consume it; the reference deployment installs its CLIs once (`uv tool install --editable tools/`) and never works "inside" it except to develop the tooling itself.
-- **The instance** — the deployment's own private repository: `corpus/` + `ledger/` + `athenaeum.yaml`, one history. Repo visibility on the deployment's forge is the outermost access-control surface; everything inside is the owner's. A deployment's forge org, member roster, and hosting are its own business — nothing in the distribution names them.
-
-The corpus and the ledger are directories of one repository, not repositories of their own. The layer boundary they used to enforce by repo membership is enforced where it always actually lived: in each part's contract (what each layer may own — §1.1), in the tooling's write discipline, and in validation. One repository buys what two could not: atomic cross-layer commits (a supersession that re-points ledger citations and retires corpus bytes is one diff), one history for what happened and why, and no synchronization machinery between the layers.
-
-### 2.2 On-disk layout and discovery
-
-```
-<instance>/                       ← the instance repo — the working directory
-├── athenaeum.yaml                ← the instance config (§2.3), TRACKED
-├── CLAUDE.md                     ← the resident persona's boot brief (thin: pointers + gates)
-├── corpus/                       ← the corpus layer (Part II §12.1: records/, schema/,
-│                                    runbooks/, untracked artifacts/ cache/ capture/ queue/)
-└── ledger/                       ← the ledger layer (Part III §3: facts/, interpretations/,
-                                     schemas/, harvest/, invariants/, docs/)
-```
-
-**Discovery is upward.** The tooling locates the instance by walking up from the current directory to the nearest `athenaeum.yaml` (the `ATHENAEUM_ROOT` environment variable or a `--root` flag overrides). The corpus tooling independently discovers its corpus root the same way (Part II §12.1); `corpus/corpus.toml` — untracked, machine-specific — carries the machine's custody declarations (Part IV). Nothing requires the instance to live at any particular path, and the distribution's own checkout location is irrelevant to operation.
-
-**Scaffolding.** `ath init` creates a new instance: the config from its template, the corpus and ledger skeletons, the persona boot brief, and the agent definitions (`.claude/agents/`) from templates shipped with the distribution — so a fresh instance is self-contained for working sessions from its first commit.
-
-Operational knowledge lives in the instance, beside what it operates: the corpus's `runbooks/`, the ledger's `docs/`. The distribution carries none of it.
-
-### 2.3 The instance config — `athenaeum.yaml`
-
-`athenaeum.yaml` at the instance root is **tracked** instance state — the durable declarations the tooling reads. It registers no members (the layers are fixed directories) and no consumers (§5).
+4.2 A layer's root holds `athenaeum.yaml`:
 
 ```yaml
-name: …                    # optional display name for the instance
-
-visibility: private        # the tenancy floor: the tier records fall to when their origins
-                           # declare no `tenancy:` (Part III §6.4). Default private.
-
-tenancy:                   # optional — the instance-declared disclosure set (Part III §6.4);
-  tiers: [family, accountant]   # named tiers beside the reserved `public` and `private`.
-  audiences:               # named grant sets the read surface serves (§5.1): audience →
-    family: [family]       #   tiers granted. `public` is implicit in every audience;
-    finances: [accountant] #   `private` is the owner's alone, never grantable.
-                           # Absent block: the public|private binary — pre-tier behavior.
-
-tracker:                   # the issue tracker — the system's backlog
-  kind: forgejo            # forge dialect: forgejo (default) | github
-  repo: {owner}/{name}     # the forge repo carrying instance issues
-  host: https://…          # the forge instance (API host derives from it; optional
-                           # for kind github, defaulting to https://github.com)
-  snapshot: corpus/runbooks/tickets.md   # where `ath issue sync` writes the committed
-                           # offline read (relative to the instance root)
-
-references:                # reference datasets (Part III §6.5) — mirrored databases;
-  {dataset}:               #   a snapshot's mirror bytes are a corpus ARTIFACT, never a loose file
-    description: …
-    adapter: …             # optional — the format adapter resolving native ids (zim,
-                           #   osm-pbf, …); when omitted, derived from the mirror record's
-                           #   mime overlay `ref_adapter` (Part II §7.1); explicit wins
-    spine: true            # optional — admits this dataset as an extension-chain
-                           #   root for the ledger's ontology layer (Part III §15.2)
-    latest: …              # the default snapshot tag — names a key below, declared, never inferred
-    snapshots:
-      {tag}:
-        artifact: …        # blake3 of the mirror's bytes — the pin verification stamps
-
-assets:                    # instance-registered tool assets (Part II §12.3.6):
-  {name}:                  #   engine payloads the tooling injects or executes,
-    description: …         #   pinned exactly as reference snapshots are
-    latest: {tag}          # declared, never inferred
-    snapshots:
-      {tag}:
-        artifact: …        # blake3 of the registered build's bytes
-
-consumer_ingest:           # optional (v49) — the consumer ingest lane (Part II §12.3.15):
-  origins: [owner-statement, owner-share]   # the producer-declared, owner-sourced origin
-                           #   ids `corpus ingest-owned` may mint under (v51: may include
-                           #   `claude-code-session` — the consumer's own session, whole).
-                           #   Absent: no lane.
+name: owner-instance          # the layer's name
+layer: extension              # foundation | extension
+extends: ../foundation        # the layer below, by path, pinned by commit
+pin: 3f1c0e9a…                # the commit of the layer below this one was written against
+tier: private                 # an extension's tier; a foundation has none
+audiences:                    # named audiences and the tiers each is granted (§16)
+  family: [private]
 ```
 
-**The consumer ingest lane is declared here, never by its caller** *(v49)*. A consumer that captures the owner's own words needs one mutating verb it can be allowed to run un-gated. That verb's reach must not be a caller argument: a permission list matches a command by prefix, so an allowed `ingest --allow-origin X` also admits the same call with a second `--allow-origin` appended. The instance config — tracked and resident-owned, never consumer-writable — names the origins, and `corpus ingest-owned` takes none.
+A foundation MUST NOT declare `tier`. An extension MUST declare `tier`. A chain with a cycle, a missing layer or an unparseable file is a configuration error.
 
-The registry earns tracking: a snapshot registration (tag → mirror blake3) is a durable fact about the system — it now lands as a visible diff with history, like every other durable declaration (§1.2 principle 8). Machine-specific custody (where mirror bytes physically reside) stays out of the config — that is `corpus.toml`'s job (Part IV). An `assets:` entry registers a **tool asset** — a payload the tooling injects or executes (the web capturer's SingleFile bundle, Part II §12.3.6) whose exact bytes shape captured content and therefore belong to the instance, not the tooling: captured with provenance, pinned by artifact blake3, resolved through custody, updated by registration diff. Same snapshot grammar as `references:`, none of the citation semantics — asset content is never a `ref://` surface.
+4.3 **Tenancy is layer.** Everything in a foundation is public. Everything in an extension carries that extension's tier. No line declares its own visibility.
 
-**The tracker is the system's external issues surface** *(v42)*. Beyond the backlog and its rulings, the tracker carries **per-record findings** — defects of the authored layer a reviewer found after the fact, coverage work, schema work — which the record itself deliberately does not (Part II §4.3.3.2: in the record an issue is a fidelity attestation, never a ticket; lifecycle lives here). Conventions, so `ath issue list` filters into work packages: labels `layer:corpus|ledger|spec|tooling|scanner` and `kind:fidelity|coverage|schema|ops` (tooling treats unknown labels gracefully); machine-readable **trailers** at the end of the issue body, git-trailer style — `Record: corpus://<blake3>` (repeatable), `Address: <segment-address>` (repeatable), `Detector: <touch-id>`, `Ledger: <item-id>` when an epistemic twin exists (Part II §4.3.3.2). Priority, assignment, and comments ride the forge's own fields. Two invariants: the corpus queue (`corpus enqueue`) stays the sole demand channel — the tracker manages work, it never becomes a second queue — and tracker state is management, never truth: a finding is *resolved* by the fix landing in the record or ledger, where the touch chain or item history proves it; closing the ticket records that. The persona files issues from worker reports (workers touch neither git nor the forge); reads go through `ath issue`, writes through the forge's own CLI (§7).
+4.4 **Resolution** is content-addressed and unscoped: a hash or slug resolves in the top layer first, then down the chain. The view of a subject is the line-set union of its files across the chain.
 
-A deployment bootstraps by installing the distribution's CLIs, running `ath init` (or cloning an existing instance), and working inside the instance.
+4.5 **Shadowing.** In the corpus, an extension MUST NOT write at an identity (§6.3) a lower layer holds with different content; a disagreement with a lower layer's line is demand upward (§14.7). The same line already present below is not written again. In the ledger, an extension's line wins over a lower layer's at the same identity.
 
-### 2.4 Reference directions
+4.6 **The ontology belongs to the foundation.** An extension MAY add terms and add lines to existing terms; it MUST NOT write at a lower layer's existing ontology identity. A term an extension mints is a proposal, listed as demand upward.
+
+4.7 **Publication is the foundation.** Serving an extension serves the chain on the owner plane and the foundation on the public plane (§16).
+
+## 5. Trees and files
+
+5.1 A layer holds three trees and its private working state:
 
 ```
-ledger ──corpus://──▶ corpus           (downward: claim evidence, blake3-resolved, span-precise)
-ledger ──ref://──▶ reference mirrors   (downward: registered datasets; a mirror resolves through
-                                        the corpus store by snapshot-artifact blake3)
-corpus ──▶ custody (Part IV)           (downward: id → bytes, wherever they reside)
-consumers ──ledger://──▶ ledger        (the product's knowledge-read surface — Part III §12)
-consumers ──corpus://──▶ corpus        (read-time resolution only: materializing citations the
-                                        ledger already asserts — never independent evidence)
-corpus ──▶ (nothing above it)          (the foundation references nothing above it)
-tooling ──config──▶ instance           (operational, not a data reference)
+<layer>/
+├── athenaeum.yaml
+├── ontology/<term>.claims.jsonl        terms — what a kind of thing expects
+├── corpus/<blake3>.claims.jsonl        artifacts — what the bytes are and manifest; testimony links
+│          <blake3>.owner.jsonl         the owner's acts on that artifact
+│          bytes/<b2>/<blake3>          the co-located store (§18)
+│          lineage.jsonl                corrections, re-keys, supersessions
+├── ledger/<slug>.claims.jsonl          concepts — what the world is, cited into the corpus
+│          lineage.jsonl
+├── strings/<b2>/<rev>                  reading bodies stored out of line
+└── .ath/                               working state: staged passes, locks, caches, history — untracked
 ```
 
-The corpus never references the ledger; nothing in the system references a consumer. The ledger cites the corpus freely — privacy is derived claim sensitivity computed from record tenancy (Part III §6.4), and it becomes a wall at publication under the consumption contract, never before. A consumer's own `corpus://`/`ref://` reads happen only when materializing what the ledger already asserted into presentable form — never a second, independent evidence path. Generated views — the ledger's and any consumer's alike — are never citation targets. These directions are validated, not just conventional. The read surface (§5.1) changes none of them: it transports the same consumer reads over HTTP — the public and audience planes with the grant-set projection pre-applied, the owner plane for the owner's own frontends.
+`<b2>` is the first two hex digits of the name it shards.
 
-## 3. The corpus layer
+5.2 **One-way reference.** An artifact's file never names a concept, and never names its testimony or its containers: those are indexes (§12). The ledger cites `corpus://` freely. The ontology is read by both and names neither.
 
-At architecture altitude: the **corpus** is a content-addressed archive of artifacts, each carried by a faithful markdown record (`records/{ab}/{blake3}.md`, one-level sharding) whose body decomposes the artifact into addressable segments, and whose state is **derived, never stored** (Part II §4.1) — deterministic ingest and attestation, then an LLM **faithful-form** pass driven through an external request/claim queue. Schemas (five namespaces: `mime`, `origin`, `atom`, `form`, `context`) drive capture, attestation, and faithful rendering per media type, per source, and per form. A record classifies its artifact mechanically only (`mime/*`, `origin/*`); what its content *means* is asserted in the ledger, never in the record — a record contains nothing unfalsifiable against its own bytes. Artifact bytes live in the custody plane (Part IV); records, schemas, and corpus-local extensions are tracked.
+5.3 **One file, one writer.** Passes and ops write `.claims.jsonl`; the owner writes `.owner.jsonl`. Ops write only `properties` and `testimony` lines, at ingest and in a properties sweep (§8.1).
 
-Everything in that paragraph — the record grammar, schema system, lifecycle, functional-URI grammar, derived views, queue contract — is specified normatively by **Part II** (`spec/corpus.md`). This part adds only the system-level constraints:
+5.4 Everything under `.ath/` is regenerable or transient; nothing normative depends on it, and it is never tracked.
 
-- **One corpus, tenancy per origin.** All captured artifacts land in the one corpus, and a record's tenancy derives from its origins — each origin overlay declares `tenancy:` once, at the source grain, a tier from the instance's declared set (a web host's overlay declares public; an export producer's declares private; a shared album's might declare `family`), members inherit through container lineage, and silence falls closed to the instance's `visibility:` floor (Part III §6.4). The tenancy question is answered when a source is onboarded, never per capture. A second corpus is deliberately unsupported: the plural machinery the pre-v26 topology carried served no deployment, and structure is grown when a real need arrives, never ahead of one (Part III §8's organic-growth rule, applied to the architecture itself).
-- **Corpus-local extension, universal core.** Format knowledge that is domain- or source-specific (a private shaper, a vendor schema) lives in the corpus tree, loaded through the tooling's corpus-local extension seam (Part II §12.4.3). The distribution carries no tenant- or vendor-specific knowledge.
-- **The corpus carries no resident persona of its own.** The instance's one persona (§6.2) drives content work through the corpus's own gates; host- and source-specific operational knowledge lives in `corpus/runbooks/`.
+## 6. The claim line
 
-## 4. The ledger layer
+### 6.1 Shape
 
-At architecture altitude: the **ledger** is the single fact substrate interpreting the corpus. There is deliberately no ledger-side tenant partition: the ledger is the system's intermediate representation, never itself published; privacy is **derived sensitivity** on claims (evidence whose records derive private tenancy, or an asserted upward override — Part III §6.4) and becomes a wall at publication (Part III §12). A **fact** is a typed **concept** — a materialized real-world thing, for which records are evidence and artifact roster, never identity — or an **edge**, holding **claims**; every claim carries **evidence** (`corpus://` URIs resolved by blake3, span-precise where verified; `ref://` citations into mirrored reference datasets) and a position on the epistemic status ladder, promoted in place as evidence accrues. Beside the facts sits the **pre-assertion workspace** — interpretations: identity guesses, working assessments, corrections/tombstones, and ingestion needs. The boundary is physical: everything in `facts/` is asserted; consumers never filter speculation out of knowledge.
+6.1.1 A line is one JSON object on one line. Artifact lines are keyed by `at` (an intrinsic address in the file's artifact, §7.3); ledger and ontology lines by `subject`. Every line carries a `predicate`, the predicate's fields, and exactly one authorship.
 
-Knowledge is authored **once**, in the ledger — never re-authored per presentation. The ledger carries the coverage obligation for the corpus (every in-scope record represented — cited as evidence or rostered on a concept), which is how the system proves nothing captured goes unrepresented silently. Everything in this paragraph is specified normatively by **Part III** (`spec/ledger.md`), including the evidence-verification gate — anchors resolve, quotes match verbatim, snapshot binding flags rot — that makes the system's traceability a checked invariant.
+6.1.2 A line is a triple with provenance — `(subject, predicate, object)` plus its authorship — and maps to one N-Quads statement in the graph of its authorship (§15.3).
 
-## 5. The product boundary
+```
+{"at":"page=3&bbox=0.1192,0.6933,0.4851,0.019","predicate":"in","value":{"at":"whole","ord":11},"pass":"p1"}
+{"at":"page=3&bbox=0.1192,0.6933,0.4851,0.019","predicate":"manifests","term":"heading","num":"5.","level":1,"pass":"p1"}
+{"at":"page=3&bbox=0.1192,0.6933,0.4851,0.019","predicate":"reads_as","aspect":"text","rev":"b3:9f86d081884c7d65","body":"Baseline emissions","pass":"p1"}
+{"subject":"heading","predicate":"reads","value":"text"}
+{"subject":"tide-table-02","predicate":"version","value":"02.1","evidence":[{"anchor":"corpus://5e6e497d…?page=1&bbox=0.1429,0.6906,0.0901,0.0087&text","quote":"Version 02.1","kind":"authoritative","mode":"stated","reading":"b3:aae7b6bb9c216abb"}],"pass":"p1"}
+```
 
-The system ends at its product: the corpus + ledger join, read through the contracts above. It is a **generalized substrate** — nothing in it is shaped for any particular audience, domain, or deliverable — and it is **well-defined**: every claim evidence-backed and mechanically verified, every status honest, every record's tenancy and every claim's sensitivity derived and readable, coverage proven. That definition is what makes the product consumable without coordination: a consumer needs the contracts, not a relationship with the system's internals.
+### 6.2 Authorship
 
-**Consumers sit outside.** Compendium compilations (the codex estate — domain-specific sites compiled from scoped facts), expert agents reading facts directly, deliverable pipelines of any shape: none is part of the instance, and this specification does not govern their internals. What binds them is the **consumption contract** (Part III §12): read knowledge via `ledger://` — never re-author it, never cite generated views; filter publication on derived sensitivity, fail closed; pin the reproducibility tuple when freezing a build. The obligation rides the product, whatever tool renders it.
+6.2.1 `by` names an op as `<name>@<version>`, a harvest as `harvest:<term>@<pin>` (§14.6), or `owner`. `pass` names a pass line in the same file by its id (§13.1).
 
-*(Non-normative.)* The reference consumer is the **codex kit** — the compilation tooling and its contract (ATH-CODEX), maintained with the codex estate outside this system. The kit consumes the system through its public contracts and the `athenaeum` distribution as a library — the same read surfaces any third-party consumer gets.
+6.2.2 A `pass` line is itself the authorship of the lines that name it and carries none of its own.
 
-### 5.1 The read surface
+6.2.3 A line with no authorship, with both, or with a `pass` that does not resolve in its file MUST be refused at write.
 
-The distribution ships the product's one network doorway: **`ath serve`** — a **read-only HTTP surface** over an instance, serving the corpus + ledger join through the same contracts library consumers get. It is the same read surface over a different transport — the same URIs, semantics, and filters — never a second authority and never an independent evidence path. What is normative is the **contract, not the framework**: the resource model, the scope-selection grammar (Part III §12.1), the plane semantics below, and the versioned OpenAPI document the tooling emits — stamped with the specification version, so a breaking surface change is by definition a normative amendment. The web framework underneath is implementation detail this specification never names.
+### 6.3 Identity
 
-- **The planes are the grant sets.** The **public plane** — the default — serves the **public projection**: every response filtered on derived sensitivity (Part III §6.4), fail closed, computed in-system. Private-backed claim content, the ids of fully-private fact files, and evidence that resolves only privately are never emitted. A publishing consumer that reads only the public plane discharges the consumption contract's publication filter **by construction** (Part III §12): the wall enforced once, in governed and validated code, instead of once per consumer. An **audience plane** — one per audience the instance declares (§2.3), each gated by its own per-deployment token — serves the same projection computed for that audience's grant set: its granted tiers plus `public`, never `private` (Part III §6.4) — the accountant's bundle, the family view, scoped disclosure as a projection, not a copy. The **owner plane** — enabled only explicitly, gated by its own token — serves the full instance, for the owner's own trusted frontends and authoring harnesses. Interpretations — pre-assertion content — are served on the owner plane **only**; no audience, however wide its grants, reads the pre-assertion workspace. Tokens are deployment state, never tracked config: the instance declares the audiences and their grants; the operator mints and hands out the tokens.
-- **Read-only is normative.** No mutating verb exists on any plane. Writes remain the authoring machinery's — agent passes, the capture queue, the `ath ledger` verbs — each behind its own gates. The surface is a doorway into the product, never a path around the system.
-- **The trust boundary is the port — stated honestly.** The wall binds consumers whose *only* access is the surface; filesystem access to the instance bypasses it entirely. The surface moves the publication wall from consumer code into system code; it does not protect against local access. The operational boundary is: who can reach the instance root vs. who can reach the port.
-- **Deployment posture is the operator's.** The surface binds localhost by default. TLS, reverse proxies, internet exposure, and rate limiting are deployment decisions, deliberately outside this specification — it governs what the surface says, never where the operator points it.
+6.3.1 A line's identity is the key a second line collides on. A write at an existing identity with different content is a **correction** (§6.6); a write with the same content is a no-op.
 
-## 6. Pipeline and agents
-
-### 6.1 The deterministic / LLM boundary
-
-| Operation | Type |
+| line | identity |
 |---|---|
-| Capture (fetch, hash, store), ingest, MIME detection | Deterministic |
-| Attest / derive (byte-fact attestation at ingest; mechanical derivation ops resolved on demand) | Deterministic |
-| Custody operations (location attest, move, adopt, replicate — Part IV) | Deterministic |
-| Normalize (faithful-form refinement: shaping) | LLM agent pass |
-| Functional-URI resolution, derived views | Deterministic |
-| Ledger harvest (mechanical concept/claim minting from corpus facts, origin-keyed) | Deterministic |
-| Ledger fact authoring and interpretation | LLM agent pass |
-| Ledger validation (check, evidence verification, promote mechanics) | Deterministic |
-| Demand evaluation (Part III §14) and scope evaluation (Part III §12.1) | Deterministic |
-| The read surface (`ath serve`, §5.1) | Deterministic |
-| Instance status (`ath`) | Deterministic |
-| Ontology export + conformance gate (Part III §15.7) | Deterministic |
+| `properties` | (at, predicate, by) — a newer op writes a second line that supersedes the first |
+| `testimony` | (at, predicate, value) — one line per subject the testimony describes |
+| `manifests` | (at, predicate, term) — several terms on one scope are several lines |
+| `in` | (at, predicate) — one placement per scope |
+| `reads_as` | (at, predicate, aspect) — one reading per scope and aspect; a re-read is a new revision at the same identity |
+| `pass` · `complete` | (at, predicate, id) · (at, predicate, pass) |
+| owner acts | (at, predicate, rev) for `inspected`; (at, predicate) for `disowned` |
+| a ledger claim | (subject, predicate, value or object, qualifiers) — evidence entries accrue on the one line |
+| an ontology line | (subject, predicate) for a single-valued predicate; (subject, predicate, name) for a repeatable one, where the name is the value's `name`, `col`, `selector` or `term`, else the whole value |
 
-If the operation could produce different valid outputs depending on judgment, it is agent-driven; if the output is a function of the input, it is scripted. This enables independent re-processing at every stage.
+6.3.2 Competing transcriptions of one scope under one aspect are not representable.
 
-### 6.2 Personas
+### 6.4 Files and canonical form
 
-- **The resident persona** (stationed in the instance) — principal developer for the system and its one operating persona: cross-layer coherence, instance health, and the content operating loop in every layer (assess → prioritize → propose → execute → report; external captures, deletions, and normative spec changes are owner-gated). Boots **thin**: the instance `CLAUDE.md` (pointers, gates, the deferral principle — deliberately no resident skill or institutional-memory tree; the specification, the tracker, and git history are the system's memory). Deployment specifics (backlog location, known-red baselines) ride the instance's own runbooks. Spec and tooling development happens against the distribution's checkout, under its own brief.
-- **The Normalizer** (corpus agent) — one record (or small batch) per invocation, attested → formed (or terminal), through the decompose/edit/compile substrate — state reported, never stored (Part II §4.1); never hand-edits record markdown; faithful-form work only — it asserts nothing about the world. Driven through the corpus's request/claim queue by an external loop session (Part II §8.5) — the corpus tooling never invokes a normalizer itself; demand flows down from the ledger's citation discipline.
-- **Ledger authors** — the interpretive passes that declare facts and interpretations from corpus evidence, under the ledger's SCHEMA/CLAUDE discipline; harvest, validation, and promotion mechanics are deterministic tooling. Materialization discipline binds them: concepts are real-world things — records are evidence, never subjects (Part III §4).
+6.4.1 One line per claim. A file is sorted by identity key. Nothing depends on line order: reading order is `ord` (§8.1), never position. A layer union and a merge are line-set unions.
 
-Agent passes are one-item-scoped, report to their driver, and share no state beyond the instance itself. Concurrency is the driver's decision. What agents a consumer runs on the product's far side is the consumer's business.
+6.4.2 The canonical serialisation of a line is compact JSON with object keys in the order written by the tool, non-ASCII characters unescaped, LF-terminated. Two lines are the same content when their canonical serialisations are equal.
 
-## 7. Tooling
+6.4.3 The packed `value` is the unit of judgment: `in` packs its parent and `ord` because they are verified together.
 
-One distribution — **`athenaeum`** (Python, `tools/` in the distribution repo) — ships the system's CLIs:
+### 6.5 Strings and revisions
 
-- **`corpus`** — the corpus pipeline and query surface: capture / ingest / attest / normalize-queue verbs, resolve (functional URIs), lint, health, find, decompose/compile, and the custody verbs (Part IV: location, locate, gc).
-- **`ath`** — the instance umbrella: `ath init` (scaffold an instance), `ath status` (instance state), `ath issue` (tracker read + snapshot, forge-dialect-aware per `tracker.kind`; `list --label`/`--record` filter into work packages; writes go through the forge's own CLI — `fj` on Forgejo, `gh` on GitHub), `ath ledger …` (validation, evidence verification, harvest, promote, generators, worklist, demands, and `ath ledger export` — the plane-projected RDF projection, Part III §15.7), `ath serve` (the read surface, §5.1), `ath ref …` (the reference-dataset resolver), `ath corpus …` delegation. Deliberately no bare `ledger` command.
+6.5.1 A reading's `rev` is `b3:` followed by the first 16 hex digits of the BLAKE3 of its body: a string as UTF-8, an array as its canonical JSON.
 
-The distribution ships **spine adapters** — the format knowledge for reading the registered ontology reference datasets (a BFO-2020 table set, a CCO release tree — Part III §15.2); the spine data itself is instance state, captured and registered like any reference dataset, never shipped with the tooling.
+6.5.2 A body MAY be inline (`body`) or stored out of line under `strings/` by its `rev`. A body is retained while any layer references its `rev`. A foundation never compacts its strings on an extension's authority.
 
-Tooling agnosticism is normative: no instance ids or paths in code; instance-local extensions load through declared seams; a third party brings their own instance and agents to the same distribution. Consumers use the distribution **as a library** — the resolver, the ledger read surface, the instance join — through the same public contracts.
+### 6.6 Corrections and lineage
 
-The **residence scanner** (`scanner/` in the distribution repo) is the one non-Python tool: a host-side manifest publisher for attached locations on remote machines (Part IV). Its manifest format is its own versioned cross-language contract, deliberately outside this spec.
+6.6.1 A correction is a delete and an insert, never an edit in place. Every correction, re-key (§7.8) and supersession appends a row to the tree's `lineage.jsonl`: `{"from": <identity + content hash>, "to": <identity + content hash>, "by": <authorship>, "date": <ISO date>}`.
 
-**Presentation layers** (browsers, viewers, compilations) are deliberately unspecified: rebuildable consumers of the contracts above, produced when the system's form calls for them, never load-bearing. The **read surface** (§5.1) is not one of them — it is product, not presentation: the specified doorway those consumers read through.
+6.6.2 `properties` and `testimony` lines are never corrected: a newer attester supersedes a `properties` line with a second line (§8.1); a testimony cannot change, since its bytes cannot.
 
-## 8. Change management
+## 7. Artifacts and addresses
 
-- **The specification is law.** Code conforms to `spec/`; when code needs something the specification doesn't cover, the spec changes first — and a change to Part II's data contract additionally requires a migration story for every existing record.
-- **One version, four parts.** A normative change to any part bumps the shared version and records itself in [`CHANGELOG.md`](CHANGELOG.md). The closed pre-unification lines (ATH-ARCH, ATH-CORPUS, ATH-LEDGER, ATH-CODEX) are citable as history; new law cites the unified version.
-- **Amendments land complete.** An amendment is the normative text, the sweep of every enforcement and guidance site that teaches the retired rule (lint rules, overlay `checks:` and prose, mime-schema guidance, agent briefs — the changelog alone enforces nothing), and the migration story with its measured cost, in the same change (the 3.12 freeze discipline, generalized).
-- **History files away** — under git tags, in the changelog, never in the working tree or the spec text. The spec carries only the system's current form; a rule's origin story is one `git log` away.
-- **Institutional memory is the system itself**: the specification for law, the tracker for the backlog and its rulings, git history for what happened and why, the instance runbooks for operational knowledge. There is deliberately no persona-resident memory tree — a logbook beside the system drifts from it. Auto-memory is never the source of truth.
+### 7.1 Artifact subjects
 
-## 9. Out of scope
+7.1.1 An artifact subject is `corpus://<blake3>`, the full 64-hex BLAKE3 of its bytes. Identity is the hash and nothing else: no URL, name, path or producer key takes part in it.
 
-Deliberately outside this specification's authority — named so a session doesn't invent law for these by analogy to what *is* specified: OCR generation policy (including automatic PDF OCR selection) and PDF page-range syntax (`page=N-M`); SQLite row/query addressing; a portable corpus-wide member-hash query API; general single-record, whole-corpus, or non-markdown export; semantic types beyond the closed corpus vocabulary (Part II §7.5); dependent capture beyond depth one; a second corpus per instance; per-dataset `ref://` anchor grammar (a `ref://` citation is entry-level — Part III §6.5); cross-instance federation and any resolver spanning instances; full-text search on the read surface (`/facts` selection is deterministic matching, never search); write verbs on the read surface; per-consumer or per-request grants (disclosure is granted per declared **audience** — §2.3, §5.1 — never negotiated at the door); instance-shipped value-kind validator code (kinds are data, Part III §4.5; an algorithmic-validity seam is designed but deferred until a declared kind needs one); ISO 21838-1 D.2(2b) defined-class declarations (every chain is single-parent until a real type needs the escape); domain-scoped vocabulary classes beyond types and predicates (roster roles, modalities, and value kinds stay shared-tier); export serializations beyond the RDF 1.2 projection (nanopublication and Web Annotation renderings are mechanical futures of the same projection, not law); ontology-block nesting beyond `imports`; SVG rasterization; and everything on the consumer side of the product boundary (§5) — compilation, presentation, rendering, deployment. An unsupported surface fails explicitly or stays inert — never inferred from a supported operation that merely looks similar.
+7.1.2 New bytes are a new subject. The same bytes met again are the same subject; the encounter adds testimony only (§9) and changes nothing on the subject.
 
----
+### 7.2 Containers and constituents
 
-*Version 39 (2026-08-26, owner ruling) lands the ontology layer (Part III §15): the registered BFO-2020 + CCO spine (instance-held reference datasets, tooling-shipped adapters), extension chains on the shared tier, concept-anchored domains (a domain is a concept; the slug is the namespace), the opt-in `isa` operator, presence claims (§5.5), field-attached invariants, lineage reasons, and the plane-projected RDF 1.2 export with the D.5.1 conformance gate. Prior version notes: the changelog.*
+7.2.1 A **container** is an artifact whose format holds whole files of its own: an archive entry, a package's documents, a message's parts, a mailbox's messages, the payload of a `data:` URI in markup. Which formats are containers, and how their constituents are named, is the format's definition (§10.3).
+
+7.2.2 A container's `properties` carries its **constituents**: per constituent, its `path` in the format's own terms and its BLAKE3, plus the fields the format defines for it (a filename, a mediatype, a Message-ID). Every constituent is its own artifact subject. A constituent's file names no container.
+
+7.2.3 Ingest makes subjects of a container's constituents, one level deep: a constituent's own constituents stay on its list until that constituent is itself ingested as a container.
+
+7.2.4 Which containers hold an artifact is derived from the constituent lists (§12). Cite the constituent, which outlives the package.
+
+### 7.3 The intrinsic address — `at`
+
+7.3.1 `at` is the only address stored and the only address an anchor carries. Its axes are declared by the artifact's root term (§11.4). Every axis is a coordinate in the bytes as stored, with no transform.
+
+| axis | formats | meaning |
+|---|---|---|
+| `whole` | every artifact | the artifact; where `properties`, `testimony`, `pass`, `complete` and the root `manifests` sit |
+| `page=N` · `page=N&bbox=x,y,w,h` | pdf, page images | page N, 1-based; a box normalised 0–1 in the page frame, origin top-left |
+| `bbox=x,y,w,h` | raster images | a box normalised 0–1 on the pixel grid |
+| `bytes=a,b` | every text format: html, xhtml, markdown, plain text, rfc822, json, ndjson, yaml, vcard | the half-open byte range [a, b) of the file |
+| `row=N` · `row=N&col=M` · `col=M` | csv, tsv | physical row N and column M, both 0-based |
+| `t=a,b` | audio, video | seconds [a, b) in the stored stream |
+| `path=p` | containers | the constituent at path p, equivalent to the constituent's own subject |
+
+7.3.2 A **union address** `a;b;c` names one scope made of several regions — a container spanning pages is the union of one box per page. A union is the scope's own address, never a constituent's address borrowed.
+
+7.3.3 A trailing **aspect** `&text`, `&cells` or `&tex` names the reading surface a quote is taken from.
+
+### 7.4 Canonical form
+
+7.4.1 Box coordinates carry at most 4 decimals. Containment of one box in another allows 0.002 slack per edge.
+
+7.4.2 The regions of a union sort by page, then y, then x, then byte start; `path` sorts last. Every address is canonicalised before it is used as identity.
+
+### 7.5 Routes through containers
+
+7.5.1 An address that carries `path=p` routes: the container's constituent list names the constituent at p, and the rest of the address applies in that constituent. The route holds wherever `path` stands in the address. A path the list lacks is flagged.
+
+7.5.2 An anchor through a route canonicalises, at bind time, to the constituent's own subject.
+
+### 7.6 Derived addresses
+
+7.6.1 Two further forms exist and neither is stored.
+
+- **Positional**: the `ord` path from `whole` down the `in` chain, always available.
+- **Designated**: the path of designators the bytes themselves print — `?sec=5&para=6`, `?eq=1`, `?post=4`, `?col=Currency`, `?ch=2&fig=1` — available where a term declares a designator field (§11.2).
+
+7.6.2 The resolver maps either form to an `at` through `manifests`, `in` and `ord`. A later designator key narrows to the earlier key's scopes' descendants by `in`, and to what their boxes contain. A designator field whose pattern has a capture answers to the capture as well as the whole value: `num: "3."` under `^(\d+)\.$` answers `sec=3`.
+
+### 7.7 Physical addressability
+
+A page the document has, a row the parse holds and a cell within such a row are scopes an anchor may name even where nothing manifests there.
+
+### 7.8 Re-capture and re-key
+
+7.8.1 A re-capture is a new subject. A `supersedes` claim in the ledger relates the two (§14.2); an anchor carries across where the surface at the same intrinsic address still holds its quote, and is otherwise held (§14.4).
+
+7.8.2 A structure correction that moves a scope re-keys the readings on it — same body, same `rev`, new identity, one lineage row. Anchors that still lie inside the new box do not move.
+
+## 8. The artifact file
+
+### 8.1 Predicates
+
+| predicate | authorship | meaning |
+|---|---|---|
+| `properties` | op | what the bytes are, as the format defines: mime, size, encoding, page count, dimensions, duration, embedded metadata the format specifies, and a container's constituents. Nothing a producer asserts. A cache with a pin: `by` names the format's properties op and its version; a line written by an older version than the tool's is **stale** (§12) and a properties sweep writes a superseding line. |
+| `testimony` | op | on a testimony artifact only (§9): the subject it describes, `corpus://<blake3>`. One line per subject. |
+| `pass` | — | a pass: `{id, by, verify, ontology, date}`. The named graph every judgment in the file belongs to (§13.1). |
+| `complete` | pass | the pass's attestation that structure over `at` is complete — every word of the surface lies in a scope or in derived chrome. It means complete, never correct. It lapses on any structure change inside its extent. Written only on an asserted tree (§11.4). |
+| `manifests` | pass, or derived | the scope at `at` manifests `term`, with the fields the term declares. An undeclared field is refused at write. A stored line wins over a derived one at the same scope. |
+| `in` | pass, or derived | placement: the parent's bare `at` and `ord`, reading order within it. Physical scopes (pages, columns) carry no `in`: containment there is geometric. The logical tree runs from `whole` down. Every non-physical scope MUST be reachable from `whole` by `in`. |
+| `reads_as` | pass | a transcription of the scope under one aspect (`text` · `cells` · `tex`), with `body` and `rev`. Every aspect is lossless and checkable against the bytes (§13.4). Readings are annotations beside the bytes, never substitutes for them. |
+
+### 8.2 Rules
+
+8.2.1 **Unit rule.** A `reads_as` sits only at a scope that manifests a term, and its aspect MUST be one that term `reads`. Readings are never smaller than a unit; a unit may be a group (a table with its caption, an equation with its label).
+
+8.2.2 **Faithful to the bytes.** A reading transcribes what is printed, typo included. A correction of the source is a ledger claim with `mode: inferred` or a `challenges`, never a silent fix.
+
+8.2.3 **Designators are structure.** A leading "5.", a right-margin "Equation (1)", a "#4" on a post are fields on `manifests`, verbatim as printed; the body is the text without them. Deciding that "2." is a number and not a sentence is a judgment, written by the pass that reads the scope.
+
+8.2.4 **Where the bytes give the structure, nothing is stored.** Under an ontology's `select`, `shape` and `spine` lines (§11.7), `manifests` and `in` derive from the parse. The file then holds its `properties` line alone; a pass writes a line below `whole` only to disagree with the derived structure or to add to it.
+
+8.2.5 **Chrome is derived by a declared rule.** Running headers, page numbers, navigation: a `chrome` line names what makes a run chrome (§11.2). The tooling applies the rule and has none of its own. Chrome is listed in the export header and stored nowhere.
+
+8.2.6 **A scope with no lossless transcription has no reading.** It is addressed, manifested and placed; its bytes resolve at its `at`; the record stops there. Anything said about what it shows, means or contains is a ledger claim anchored at that `at` with no quote and `mode: inferred`. Where such a scope carries transcribable content (glyphs in a raster, speech in a stream), a pass manifests the sub-scopes that carry it and reads those, under a lossless aspect.
+
+8.2.7 **A weak engine is a reading's author, never a derivation.** A proposal op (OCR, layout analysis, transcription) may propose lines a pass accepts or corrects (§13.1); its output never enters a file under its own `by`, and a claim always binds to the accepted reading.
+
+8.2.8 **A field the address determines is derived.** A field a term declares `derived` (a page's number) is never stored.
+
+```
+// a CSV export: the whole file, one line
+{"at":"whole","predicate":"properties","value":{"mime":"text/csv","bytes":151157,"rows":275,"cols":29,"encoding":"utf-8"},"by":"csv.properties@1"}
+// derived, not stored: whole manifests retailer-order-history (by matches); row=0 manifests header (by the term's shape);
+// row=N manifests record, in whole, ord N; col=3 manifests currency-code …
+```
+
+## 9. Testimony
+
+### 9.1 What testimony is
+
+9.1.1 Where the bytes were found, when, by what and why is not a fact about the bytes and cannot be checked against them. It is **testimony**: a snapshot a producer made, irreplaceable because the moment is gone, and never part of the record.
+
+9.1.2 Testimony is an **artifact**. What a producer emits about a capture — a capture sidecar, an export's own manifest, a statement of origin — is ingested verbatim. Its identity is its BLAKE3. Its file holds `properties` and one `testimony` line per subject it describes:
+
+```
+{"at":"whole","predicate":"properties","value":{"mime":"application/yaml","bytes":612,"encoding":"utf-8"},"by":"yaml.properties@1"}
+{"at":"whole","predicate":"testimony","value":"corpus://1409369e…","by":"ath.ingest@1"}
+```
+
+9.1.3 A testimony cannot be edited, because its bytes cannot change. A mistaken testimony is answered by a later testimony and, where the owner judges it wrong, by a `disowned` owner act (§13.5).
+
+9.1.4 Testimony is evidence, not knowledge. It holds no claim and has no status. A ledger claim about where or when something was found or published cites the testimony artifact by an ordinary anchor into its bytes, under its own surface; such an entry's kind is `direct`.
+
+### 9.2 Delivery
+
+9.2.1 Testimony arrives with the bytes it describes: beside them as `<file>.testimony.<ext>`, or named explicitly at ingest. A producer's file is stored as delivered: nothing is folded into another line, renamed or dropped.
+
+9.2.2 A testimony describing a container describes the container only; its constituents inherit it by derivation (§9.6). A producer manifest describing several files testifies to each, one line per subject.
+
+### 9.3 The receipt
+
+9.3.1 Every ingest writes one testimony of the tooling's own, the **receipt**: a JSON object
+
+```json
+{"actor": "reader-a", "received": "2026-01-12T09:14:03Z", "name": "statement-03.pdf", "testimony": ["<blake3>", "…"]}
+```
+
+— who handed the bytes in, the instant, the name they arrived under, and the testimony delivered with them. The receipt covers the bytes and every testimony it lists. Testimony is not itself receipted, so every artifact has at least one testimony and the chain stops at one.
+
+9.3.2 The receipt is the only testimony shape the tooling prescribes. The foundation carries its term, `receipt`, refining `testimony`.
+
+### 9.4 Origin terms
+
+9.4.1 An instance says what testimony it accepts in its ontology. An **origin term** refines `testimony`. It `matches` a producer's shape over the testimony's mime (§11.5), and declares its facets as `select` and `field` lines:
+
+- the **source** — where the bytes came from: a uri, a sender, an account;
+- the **producer** — what found or made them: the machine, the tool and its version, the session;
+- the **context** — why they were acquired;
+
+with `required` on every field each testimony of that origin MUST carry. A new origin, or a new required field, is an ontology edit.
+
+9.4.2 The tooling knows no origin. Which facets exist, what they are called and which are required is the instance's.
+
+### 9.5 Admission
+
+9.5.1 Ingest MUST refuse, before any byte is placed, a delivered testimony that classifies to no term refining `testimony`, or that lacks a field its origin term requires.
+
+9.5.2 The same check runs over the corpus as a lint (§17), so an origin term that tightens lists the testimony it no longer admits. A testimony admitted once is never removed for failing a later check; it is listed.
+
+### 9.6 Provenance
+
+9.6.1 An artifact's **provenance** is derived (§12): the testimony whose `testimony` lines name it, together with the provenance of every container whose constituent list holds its BLAKE3, at that path, transitively.
+
+9.6.2 Provenance is shown as a chain — receipt, the container's testimony, the path, the constituent — so a container's uri is never presented as a constituent's. Nothing is copied to a constituent: an artifact first met alone and later inside an export has both origins the moment the export is ingested.
+
+9.6.3 A disowned testimony stays in provenance, marked, with the owner's reason; an evidence entry anchored into it is held (§14.4).
+
+### 9.7 Retiring a copy
+
+Once another route resolves the same bytes — a container's constituent, a location (§18) — a standalone copy of an artifact's bytes MAY be retired, the full BLAKE3 verified first. Its readings, claims and testimony stay, since identity is the hash. Testimony bytes are never retired. Bytes a container re-encoded are a different artifact; "the same image as" is a ledger claim.
+
+### 9.8 Placement
+
+A testimony is placed in a layer like any artifact. It MAY sit in a more private layer than its subject — a public document, a private record of the machine that fetched it — and an extension MAY hold testimony about a lower layer's artifact.
+
+## 10. Formats
+
+Everything in this section is knowledge of a format's own specification. None of it says what the data means.
+
+### 10.1 Sniffing
+
+10.1.1 Ingest names an artifact's mime from its bytes. A format with a signature is named by its signature, never by a file extension:
+
+- leading magic bytes (PDF, PNG, JPEG, GIF, TIFF, WebP, ZIP, RAR, 7z, gzip, PE, ELF, Ogg, the ICO header, MPEG audio frames and ID3, ADTS, IVF, Annex B elementary streams, ZIM, OSM PBF, …);
+- a ZIP is told apart by its entries: EPUB by its `mimetype` entry, OOXML by its parts (`word/`, `xl/`, `ppt/`), an application package by its declared parts;
+- ISO base media files by the `ftyp` brand (HEIC, AVIF, M4A, QuickTime, 3GPP, else MP4);
+- a message by its header lines; a mailbox by a `From ` line followed by a header line;
+- vCard, iCalendar and STEP by their first line;
+- JSON by parsing — one value, or one value per line (NDJSON).
+
+10.1.2 Where no signature decides, the extension MAY name a text format (markdown, YAML, TSV, source code). What nothing names is `application/octet-stream`.
+
+10.1.3 A constituent is sniffed by its bytes and, where the container gives one, by the name the container gives it.
+
+### 10.2 Properties
+
+10.2.1 Every `properties` line carries `mime`, `bytes` (the size) and, for text, `encoding`. Each format adds what its specification defines:
+
+| format | properties beyond mime, size, encoding |
+|---|---|
+| pdf | page count; page sizes; the document information dictionary |
+| raster images | width and height in pixels; the format's embedded metadata (EXIF, XMP, ICC) as recorded |
+| audio, video | duration; tracks with their codec, and for video the frame size and rate |
+| csv, tsv | rows, columns, the delimiter, whether a byte-order mark is present |
+| html, xhtml | the declared encoding; `<title>`; the standard `<meta>` names the format defines (`generator`, `description`, `author`) |
+| rfc822 | `message_id`, `subject`, `from`, `to`, `cc`, `date` and `date_iso`; the part table, each part with its mime, transfer encoding, charset, filename, disposition and raw byte span; the constituents |
+| mbox | the message count; the constituents |
+| zip | the constituents |
+| epub | the package's Dublin Core (`title`, `creator`, `language`, `identifier`, `isbn`, `date`, `publisher`); the package document's path; the spine as constituent paths in reading order; the constituents |
+
+10.2.2 A header field is read as UTF-8 where it is valid UTF-8, else as ISO-8859-1, and then its encoded words decode (RFC 2047, RFC 6532).
+
+10.2.3 A field a producer asserts — inserted into the bytes by a capturing tool under a name of its own — is not a property. It is text in the bytes, which an origin term or any term MAY select like any other text.
+
+10.2.4 Each format's properties op is named `<format>.properties@<version>`. The tool registers one current version per mime; a `properties` line by an older version is stale (§12).
+
+### 10.3 Constituents
+
+| container | a constituent is | its `path` |
+|---|---|---|
+| zip | every file entry (stored, deflate, zstd); a ZIP64 archive is refused | the entry name |
+| epub | every file entry of its ZIP | the entry name |
+| rfc822 | every leaf part whose content is not `text/plain`, and every nested message, decoded from its transfer encoding | the MIME part path (`1.2`, `3`) |
+| mbox | every message, un-stuffed (one `>` removed from every `^>+From ` line) | the 1-based ordinal |
+| html, xhtml | the payload of every `data:` URI in the bytes, wherever it stands — an attribute, a `srcset` candidate, a CSS `url()` — base64- or percent-decoded; an empty payload is skipped | the URI's byte span, `<a>-<b>` |
+
+10.3.1 The same bytes at several paths are one constituent subject listed several times.
+
+10.3.2 A container format with no registered reader is an artifact with no constituents.
+
+### 10.4 Surface ops
+
+10.4.1 A **surface op** decodes the text at a scope: given the bytes, one region of an address and an optional argument, it yields a string or nothing. A union address yields the regions' surfaces joined by a newline. Each op says which arguments it takes and refuses every other.
+
+10.4.2 The bytes are parsed once per family per artifact, and the classification probes (§11.5) read that parse.
+
+10.4.3 The registered surface ops:
+
+| op | family | regions served | surface |
+|---|---|---|---|
+| `html.text@1` | html, xhtml | `whole`, `bytes` | the text of the elements in the span: `head`, `script`, `style`, `template`, `noscript` and `svg` dropped; block elements and `<br>` end a line; table cells separated by a tab; whitespace runs collapsed to one space; lines trimmed; blank lines collapsed |
+| `html.attr@1 <name>` | html, xhtml | `whole`, `bytes` | the named attribute of the root element at the span |
+| `html.title@1` | html, xhtml | `whole` | the document's `<title>` |
+| `csv.parse@1 [<delimiter>]` | csv | `row`, `row&col` | a cell's value; a row's cells joined by a tab; RFC 4180 quoting; a byte-order mark stripped; the argument names the delimiter (`tab`, `;`, `|`), default comma |
+| `pdf.words@1` | pdf | `whole`, `page`, `page&bbox` | the words of the text layer inside the region, banded into lines on each glyph's baseline origin, in column-aware reading order; boxes rounded to 4 decimals |
+| `eml.text@1` | rfc822 | `bytes` | the span transfer-decoded (7bit, 8bit, binary, quoted-printable, base64) and charset-decoded, CRLF folded to LF, trailing whitespace trimmed |
+| `json.text@1 [lines]` | json, ndjson | `whole`, `bytes` | the scalar values inside the span in document order, strings unescaped, one per line; `lines` parses one document per line |
+| `yaml.text@1` | yaml | `whole`, `bytes` | as `json.text@1`, over the YAML parse |
+| `vcard.text@1` | vcard | `whole`, `bytes` | the content lines in the span unfolded (RFC 6350 §3.2), each value unescaped, a structured value's components joined by a space |
+| `markdown.text@1` | markdown | `whole`, `bytes` | the blocks in the span with their block markers removed (`#` runs, `>`, a list bullet or number, fence lines); inline markup verbatim |
+
+10.4.4 An HTML scope's span runs from its start tag's first byte to its end tag's last byte, half-open; an element whose end is implied is flagged. Offsets in the decoded text map to bytes by a prefix sum of the UTF-8 lengths of its code units.
+
+10.4.5 A JSON or YAML value's span covers its source text, a string's quotes included. A vCard content line's span covers its folded physical lines. A markdown block's span covers its lines, its markers included.
+
+10.4.6 An op's version identifies its behaviour. Any change to an op's output for any input is a new version.
+
+### 10.5 Proposal ops
+
+A **proposal op** — optical character recognition over a raster, layout analysis over a page, transcription of a stream — prints candidate lines a pass MAY stage, accept or correct (§13.1). Its output is never stored under its own `by` and never bound as a surface. `image.words@1` proposes one `label` scope per recognised line of a raster, with a text reading; its engine and version ride in the pass's note.
+
+### 10.6 Selector languages
+
+10.6.1 A `select` line's selector, and a `matches` line's `selector`, are read in the language of the family the artifact's root derivation names:
+
+| family | selector | a field's source (`attr`) |
+|---|---|---|
+| html, xhtml | a CSS selector | an attribute name |
+| json, ndjson, yaml | a JSON pointer (RFC 6901) in which `*` stands for any key or index (`/messages/*`) | a pointer relative to the selected value (`sender_name`) |
+| vcard | `card` (one `BEGIN`…`END`), or a content-line name (`FN`, `EMAIL`) | a parameter name (`TYPE`) |
+| markdown | a block kind: `heading`, `paragraph`, `list`, `list-item`, `code`, `table`, `quote`, `break`, `front-matter` | — (a heading's `level` is its depth) |
+| rfc822 | `header` (the header block); `part[type=<mime>]` (a part by its type); inside a decoded `text/plain` part, a line rule: `{"lines": "<regex>"}` (a run of lines each matching), `{"from": "<regex>"}` (from a matching line to the part's end), `{"blank": true}` (runs delimited by blank lines) | — |
+| containers | a path pattern over the constituent list (`*` any run of characters) | — |
+
+10.6.2 A line rule applies only where the part's transfer encoding is line-local (7bit, 8bit, binary, quoted-printable); a base64 part is one scope.
+
+10.6.3 Every scope a selector mints is a `bytes=` span in a text format, or a `path=` route in a container.
+
+10.6.4 A value filled from a source is its source text verbatim (`1772355428000`, `Sunday, March 1 at 8:57 AM`); interpreting it is a value op's work. Where the field declares a `pattern`, the first capture (else the whole match) is the value, and a source that does not match keeps its raw text.
+
+## 11. The ontology
+
+### 11.1 Terms as subjects
+
+A term is a subject whose expectations are lines in `ontology/<term>.claims.jsonl`. One vocabulary serves the corpus (what a scope may manifest), testimony (what an origin admits), the ledger (what a concept may be and owes) and the export (how a term renders). Formats, kinds of documents, units, containers, data shapes, conversations, origins and concept types are all terms.
+
+### 11.2 Term predicates
+
+| predicate | value |
+|---|---|
+| `refines` | the single parent term |
+| `definition` | one sentence: the contract for the word |
+| `aligns` | an IRI of a class in a published vocabulary the RDF projection asserts the term under |
+| `matches` | a classification condition (§11.5); repeatable, every line must hold |
+| `axes` | the address axes of a root (§7.3) |
+| `physical` | the axis whose scopes are physical (`page`) |
+| `tree` | `asserted` (structure is judgment: `in` and `ord` are written by passes) or `derived` (structure comes from the parse under `select`, `shape`, `spine`) |
+| `derivation` | the surface op, `<op>@<version>[ <argument>]` (§10.4) |
+| `reads` | the aspect a scope of this term is read under: exactly one of `text`, `cells`, `tex`, `none` |
+| `field` | a field on `manifests`: `{name, kind, required?, derived?, options?, where?, pattern?, address?}`; `kind` is one of `int`, `enum`, `datetime`, `string`, `col`, `designator`, `list`. A **designator** is a verbatim sub-reading with `where` (`leading`, `trailing`, or a descendant term), `pattern` and the derived-address key it feeds (`address`) |
+| `expects` | child terms a scope of this term normally contains; satisfied by a scope manifesting the term or a refinement of it |
+| `owes` | world predicates the concept a scope of this term manifests should carry |
+| `functional` | world predicates that take one value per concept |
+| `convention` | reading conventions inherited down the `in` chain, from a closed set the comparator applies (§13.4): `{"footnotes": "[^n]"}`, `{"hyphens": "rejoin"}`, `{"scripts": "flatten-outside-math"}`, `{"bullets": "drop"}` |
+| `renders` | the markdown form of a scope: `{"md": "<template>"}` over `{body}`, a field's name, and `{level+1}` |
+| `select` | `{selector, term, in?, field?, attr?, ord?, level?}` — derived structure (§11.7) |
+| `shape` | `{col, term, scheme?, pattern?, required?}` maps a column to a term; `{header: <row> \| null}` declares which row, if any, is the header |
+| `spine` | the order a container's package declares, placed `in whole` |
+| `sentinel` | values that derive to null in harvest ("Not Available") |
+| `keys` | the key column of a key-value table |
+| `cells` | names for cell positions of a row's `cells` reading |
+| `chrome` | what is chrome: `{"selector": …}`, or `{"repeats": {"pages": <n>, "share": <fraction>}, "mask": "digits", "box": <decimals>, "roles": {"page-number": "<masked pattern>"}}` — a run is chrome when its masked text and its box at the declared precision recur on at least *n* pages and that share of them; role by pattern, else `running-header` or `running-footer` by position |
+| `concept` | a harvest rule (§14.6) |
+| `lint` | a declarative check over scopes of the term (§17.3) |
+
+### 11.3 The effective rules of a scope
+
+A scope's rules are the union of its terms' `refines` chains and its ancestors' conventions down the `in` chain. Where two terms declare the same expectation, the most specific wins. A term with no `renders` renders as its parent; an unknown term renders as `unit`.
+
+### 11.4 Roots, classes and trees
+
+11.4.1 An artifact's **mime root** is the most specific term whose `matches` names its mime and nothing else. Its **root** is the most specific term that matches it at all. Its effective chain is the root's `refines` chain followed by the mime root's. `axes`, `physical`, `tree` and `derivation` come from the first term along that chain that declares them.
+
+11.4.2 Every root refines one of these classes:
+
+- **document** — readings can total to a proxy: pdf, html, xhtml, markdown, rfc822, the documents of a package;
+- **lossy** — readings can be drawn, never total: **image** (raster images) and **media** (audio, video);
+- **data** — values given by the parse: csv, json, ndjson, yaml, vcard, and **container**;
+- **testimony**, refining data — what a producer said about other artifacts (§9).
+
+11.4.3 Class is a lookup on the chain. One stored `manifests` at `whole` overrides the derived root (a PDF of photographs manifests `scan-album`); where two roots match an artifact, the most specific `matches` decides and a stored override settles the rest. Constituents carry their own terms; nothing is classified twice.
+
+### 11.5 Classification
+
+11.5.1 A `matches` line is a set of conditions, every one of which must hold:
+
+| condition | holds when |
+|---|---|
+| `mime` | the artifact's mime is the value; required on every `matches` |
+| `header` | a tabular artifact's first row begins with the listed cells |
+| `selector` | the selector, in the root family's language (§10.6), selects something |
+| `magic` | the bytes begin with the value |
+| `container` | some container holding the artifact has this root term |
+| `constituent` | some path on the artifact's own constituent list matches the pattern |
+| `path` | the artifact's own path in some container matches the pattern |
+
+A pattern is a prefix, or a glob where `*` stands for any run of characters, anchored at the start.
+
+11.5.2 A term's `matches` lines all hold, or the term does not match. Alternatives are sibling terms under a common parent.
+
+11.5.3 An artifact held by several containers is probed against every (container, path) pair the constituent lists give; a `container` or `path` condition holds if any pair satisfies it.
+
+11.5.4 Among the matching terms, the most specific wins: the most conditions held, then the longer `refines` chain, then the term name in code-point order.
+
+### 11.6 Which op yields a surface
+
+11.6.1 A scope's surface comes from the first `derivation` along its own terms' chains, else along the artifact's effective chain. A `timestamp` term that declares `html.attr@1 datetime` yields the attribute while its siblings yield `html.text@1`.
+
+11.6.2 A term naming an op the tool has not registered, a value that does not parse, or an argument the op refuses is a configuration error wherever the artifact loads, and a blocking ontology lint. A root that declares no derivation has no surface; its scopes are bound only by readings.
+
+### 11.7 Derived structure
+
+11.7.1 Where the tree is derived, every `select`, `shape` and `spine` line along the effective chain mints scopes from the parse:
+
+- a selected node becomes a scope at its span (or its route), manifesting `term`;
+- its parent is the nearest enclosing scope of the term named by `in`, else `whole`;
+- its `ord` is byte order among its siblings, unless `ord` names another order the format defines;
+- a `field` is filled from `attr` (§10.6.4); a designator field from the text `where` names;
+- `level` sets a heading's level.
+
+11.7.2 A tabular tree: the declared header row is `in whole, ord 0`; every other row is a `record`, `in whole`, ordered by row number; each shaped column is a scope at `col=M` manifesting its term, with `name` from the header, and contains its cells.
+
+11.7.3 A container's tree: one route scope per constituent a `select` path pattern names, or per spine entry in spine order, `in whole`.
+
+11.7.4 A derived reading lives in the scope table and binds as `derived:<op>@<version>[ <argument>]` (§14.4). It is never stored.
+
+### 11.8 The pin
+
+11.8.1 A pass pins the ontology it read against: `b3:` followed by the first 16 hex digits of the BLAKE3 of the ontology as loaded — the term files sorted by term name, each file's lines sorted by identity, each line in canonical form (§6.4.2). A harvest pin is the first 6 hex digits.
+
+11.8.2 A term change makes every pass pinned at an older hash **stale** for the scopes that manifest the changed term or its refinements: derived, listed, re-run. Nobody edits a recipe.
+
+### 11.9 What the tooling prescribes
+
+The tooling relies on exactly these terms, which every foundation carries: `unit`, `document`, `lossy`, `image`, `media`, `data`, `container`, `testimony` and `receipt`. Every other term is the instance's.
+
+## 12. Derived, never stored
+
+The following are functions of stored lines and are computed at read time. Writing any of them to a file is a lint failure.
+
+| | derived from |
+|---|---|
+| class, root term | `properties.mime` through `matches`; the `refines` chain; a stored override |
+| `manifests` and `in` on a derived tree | the parse through `select`, `shape`, `spine`; a stored line at the same scope wins |
+| chrome | the rules `chrome` lines declare |
+| positional and designated addresses | `manifests` fields, `in`, `ord` |
+| containers of an artifact | the constituent lists that hold its BLAKE3 |
+| provenance | testimony naming the artifact, and its containers' provenance (§9.6) |
+| testimony admitted | whether a testimony classifies to an origin term and carries its required fields |
+| stale properties | a `properties` line by an older op version than the tool's for its mime |
+| binding state | an evidence entry's reading reference against the current revisions and surfaces (§14.4) |
+| status | bound entries, kinds, modes and standing challenges (§14.5) |
+| demand | §14.7 |
+| staleness of a pass | `pass.ontology` against the current pin, for the scopes a changed term reaches |
+| complete extent, section closure, paragraph numbers | `in` and `ord` |
+| the export, the remainder, the envelope | §15 |
+| sensitivity | the layer a line lives in |
+
+## 13. Passes and the owner
+
+### 13.1 Passes
+
+13.1.1 A pass is one author and one verifier over one artifact, one set of constituents of a container (its `with` names the container's pass), or one concept file. The author and the verifier MUST differ. A judgment exists only once both have signed; there is no draft state in the trees.
+
+13.1.2 A pass line: `{"at": "whole", "predicate": "pass", "value": {"id", "by", "verify", "ontology", "date", "note"?, "with"?}}` in an artifact file; the same value with `subject` in a concept file. `ontology` is the pin (§11.8). An id is `p<n>`, the lowest number free after every signed and open pass on the subject.
+
+13.1.3 A correction pass swaps roles, so no correction is self-verified. A pass MAY start from a proposal op's output (§10.5) and accept or correct it.
+
+### 13.2 Staging and signing
+
+13.2.1 An open pass stages its lines under `.ath/passes/<subject>/<id>.jsonl`, outside the trees. Nothing under `corpus/` or `ledger/` exists unsigned.
+
+13.2.2 Signing lays the staged lines over the stored lines by identity (with `complete` where the author asks), in canonical order, and runs G1–G3, the per-file and the per-term lints over the result. Any blocking finding refuses the signature and leaves the staging untouched. A staged line at an existing identity with different content is a correction with a lineage row `by: pass:<id>`. Abandoning a pass discards its staging.
+
+### 13.3 Complete
+
+`complete` is written only on an asserted tree. Under it, every word of the surface must lie in a scope or in chrome, and G3 blocks (§17.1). On a derived tree, completeness is the export's remainder (§15.1).
+
+### 13.4 L7 — the reading against the bytes
+
+13.4.1 For every reading, the body is compared with the surface at its `at` after the scope's conventions and designators are applied — per aspect. Divergence is listed for a human; it is never resolved automatically. Where the root declares no derivation, every reading is listed for inspection.
+
+13.4.2 **One normaliser** serves L7 and quote binding (§14.4): Unicode NFKC; typographic quotes and dashes folded to ASCII; no-break space to space; whitespace runs collapsed. A second, **squashed** comparison removes whitespace and hyphens. Punctuation is content: a dropped period diverges.
+
+13.4.3 **text.** Designator fields are removed from the surface's head or tail; footnote marks and bullets are treated as the scope's conventions declare; the bodies are compared token by token (longest common subsequence), then squashed.
+
+13.4.4 **cells.** Each cell of the reading must occur as a contiguous run in the row's column-aware words.
+
+13.4.5 **tex.** Control words map to their symbols (`\sum` → ∑, `\times` → ×, the Greek alphabet), braces and script marks drop, a label the scope's designator names drops from the surface; the multisets of letters, digits and operators must agree. A cell written as TeX is compared the same way.
+
+### 13.5 The owner file
+
+13.5.1 The owner's acts are lines in `<blake3>.owner.jsonl`, written `by: owner` with a `date`. The owner file holds exactly two predicates:
+
+| predicate | at | meaning |
+|---|---|---|
+| `inspected` | a scope | `{rev, diverges: "accepted", why}` — an accepted L7 divergence, bound to the reading's revision; a re-read lapses it, so L7 converges on re-run |
+| `disowned` | `whole` of a testimony | `{why}` — the owner judges the testimony wrong; it stays in provenance, marked, and evidence anchored into it is held |
+
+13.5.2 Revoking an act removes its line with a lineage row.
+
+13.5.3 Acquiring bytes from outside, deleting, retiring a standalone copy, moving an artifact between layers and changing a foundation's ontology are owner-gated acts of the tool (§19), not lines.
+
+13.5.4 Owner prose has no place in the instance: anything worth saying about an artifact or a concept is a claim with evidence.
+
+## 14. The ledger
+
+### 14.1 Concepts
+
+14.1.1 A concept is a real-world thing with a slug, its file `ledger/<slug>.claims.jsonl`. Its lines: `term` (one per term it is), `manifested_by` (one per scope that manifests it, at any grain — a book, a chapter, a figure, a list item), `part_of`, and one line per claim. Artifacts are evidence for a concept, never its identity.
+
+14.1.2 A concept file carries its ledger passes as `pass` lines with `subject`. An authored claim carries `pass`; a harvested claim carries `by: harvest:<term>@<pin>`.
+
+### 14.2 Claims and edges
+
+14.2.1 A claim is `{subject, predicate, value | object, qualifiers?, evidence, <authorship>}`. An **edge** is a claim whose `object` is a slug; `qualifiers.as` keeps the value the bytes printed.
+
+14.2.2 Predicates with fixed meaning:
+
+| predicate | meaning |
+|---|---|
+| `same_as` | two slugs are one concept; it merges the moment it derives `confirmed`, with one lineage row |
+| `supersedes` | an artifact or concept replaces another; anchors carry across as §7.8 says |
+| `challenges` | names a claim by identity key and content hash, with evidence against it |
+| `presence` | `none`: the thing is not attested where it would be |
+| `blocked` | names the demand a claim blocks and why; the only demand that is authored |
+
+### 14.3 Evidence entries
+
+14.3.1 A claim carries `evidence: []`. Each entry is authored once and bound by verify:
+
+| field | meaning |
+|---|---|
+| `anchor` | `corpus://<blake3>?<at>[&<aspect>]` — tight: the smallest scope the quote lies in, one cell of a table, never a region; a route through a container canonicalises to the constituent |
+| `quote` | verbatim from the reading or surface the binding names; an elided composite (`…`) or a typographic re-take is refused; `prefix` and `suffix` disambiguate a repeated string and extend a long one |
+| `kind` | the source's grade: `authoritative`, `direct`, `incidental` |
+| `mode` | how the entry supports the value: `stated`, `inferred`, `reported`; `reasoning` is required when it is not `stated` |
+| `reading` | the binding, stamped by verify (§14.4) |
+
+14.3.2 A `stated` entry supports a string value only where the value is within its quote after normalisation; otherwise the claim is `inferred` with `reasoning`.
+
+### 14.4 Binding
+
+14.4.1 `reading` is one of:
+
+- `b3:<16 hex>` — a stored reading's revision;
+- `derived:<op>@<version>[ <argument>]` — the surface op yields the quote's surface;
+- `line:<predicate>[ <field>]` — a value read off a `manifests` or `properties` line at the anchor;
+- `null` — held.
+
+14.4.2 An entry is **bound** when its anchor resolves to a scope, its binding yields a surface there, and its quote (with prefix and suffix) is in that surface under the normaliser (§13.4.2), plain or squashed. It is **held** when its binding is `null`, when the revision it names no longer exists, or when it is anchored into a disowned testimony. It is **flagged** otherwise, with the reason.
+
+14.4.3 Three links are checked separately: claim to reading (the quote is in the bound body), reading to bytes (L7), value to quote (the verifier's judgment).
+
+### 14.5 Status, derived
+
+| status | when |
+|---|---|
+| `confirmed` | a bound `authoritative` entry, or two bound `direct` entries from distinct artifacts, and no standing challenge |
+| `provisional` · `inferred` · `reported` | the bar is not met; the mode of the best bound entry decides — `stated` gives `provisional` |
+| `disputed` | a challenge stands |
+| `conflicting` | a bound sibling claim disagrees on a predicate the concept's term declares `functional` |
+| `unsupported` | no bound entry — a hypothesis is a claim in this state; a proposed concept is one whose lines are all here |
+| `refuted` | unsupported with an upheld challenge; it stays, so harvest does not infer it again |
+
+### 14.6 Harvest
+
+14.6.1 A term's `concept` lines are its harvest rules: `{term, key?, claims, group?, slug?, case?, extract?}`. For every scope manifesting the term, harvest mints the concept keyed as declared and writes one claim per mapped predicate, with an entry anchored at the evidencing scope or cell and bound to its surface, `by: harvest:<term>@<pin>`. A repeat appearance is another entry on the one claim. Harvest never cites two sources in one entry. Change a term's map and the ledger follows.
+
+14.6.2 A map names scopes by **term** (`author`), a field as `term.field` or `properties.field`, a field source of the scope's own node as `@<source>` (§10.6), an edge as `term → concept-term`, a cell by index, or `*` for every row. A selector is never a map value or key.
+
+14.6.3 **Keys.** A concept line without `key` augments the concept the enclosing document manifests. With a key, harvest mints one concept per holder of the key under each scope of the owning term: every scope of the key's term, every record row for a column key, the owner scope itself for a field source or a `properties` key. A claim resolves within the holder, then within its parent — never in `whole`.
+
+14.6.4 **Slugs.** `slug` is a template over `{term}`, `{key}` and `{1}` (the first group of `extract` applied to the key), default `{term}-{key}`; every non-alphanumeric run becomes `-`; lowercase unless `case: keep`.
+
+14.6.5 **Edges.** When an edge's left side is a term whose scopes contain the target (`post → forum-post`), one edge per scope, cited by the target concept's key; a value edge is cited by the cell or text that names it.
+
+14.6.6 **Key-value tables and text.** A reference that is one of the term's `keys` reads the row whose first cell is that key and yields its second cell (`-` and empty yield nothing); a name on the term's `cells` line reads that index of the first `cells` reading at or under the scope; a reference that matches the leading `Key` of a line in a text reading yields the rest of the line. Entries bind at the row (`&cells`) or the block (`&text`).
+
+14.6.7 **Grade.** Harvest writes `authoritative` when the concept is `manifested_by` a scope of the cited artifact and the predicate is one the concept's term `owes`; otherwise `direct`. Sentinel values yield nothing.
+
+### 14.7 Demand
+
+Derived, never stored:
+
+- a held entry enqueues a reading pass over its unit;
+- an unmet `owes` is a search;
+- an unsupported claim is an acquisition;
+- a stale pass is a re-run;
+- an unmet `expects` is a soft finding;
+- an extension's minted term, or its disagreement with a lower layer's line, is demand upward.
+
+An absence the bytes print ("–", a missing row) is demand, not a defect. Only `blocked` is authored.
+
+## 15. Export
+
+### 15.1 The markdown proxy
+
+15.1.1 The proxy is an output, never a record and never a citation target. It walks the tree in `ord` and emits each scope through its term's `renders` rule, designators re-emitted from fields, every block prefixed by its `at`.
+
+15.1.2 Its header names: the authority (the bytes); every pass and its ontology pin; the inspected divergences; the chrome; and the **remainder** — on an asserted tree, the words outside every scope and chrome; on a derived tree, the characters outside every unit and declared chrome, of the total.
+
+15.1.3 It is lossless back to the bytes and never breaks on a new term.
+
+### 15.2 Provenance view
+
+An artifact's provenance chain (§9.6) is exported beside the proxy on the owner plane, never on the public plane unless its testimony lies in the foundation.
+
+### 15.3 N-Quads
+
+15.3.1 Every stored line maps to one N-Quads statement and back, byte-identical: the subject `corpus://<blake3>?<at>`, `ledger://<slug>` or `ontology://<term>`; the predicate `urn:athenaeum:ns:<predicate>`; the line's payload as a literal typed `urn:athenaeum:ns:json`; the graph its authorship — `pass://<subject>#<id>`, or `op://<name>@<version>`.
+
+15.3.2 A term's `aligns` IRIs are asserted as its classes in the projection.
+
+## 16. Planes and publication
+
+16.1 The **public plane** serves the foundation, and the claims whose derived status is `confirmed`. An **audience plane** serves the foundation plus every extension whose tier the audience's grant names, under the same status filter unless the grant names another. The **owner plane** serves the whole chain, every status, the owner files, provenance, demand and every finding.
+
+16.2 Read-only is normative. A consumer reads `ledger://`, materialises `corpus://` only for what the ledger asserts, never cites a generated view, and pins the reproducibility tuple — each layer's commit and the ontology pin — when it freezes a build.
+
+16.3 A server re-reads the layers per request and holds no state of its own.
+
+## 17. Lints
+
+### 17.1 Generic
+
+A failing generic lint blocks the pass from signing.
+
+| lint | checks |
+|---|---|
+| G1 unit | every `reads_as` sits at a scope with a `manifests` whose term reads that aspect |
+| G2 tree | every `in` resolves to a scope; `ord` contiguous from 0 per parent; no cycle; every non-physical scope reachable from `whole` |
+| G3 cover | on an asserted tree, the words outside every scope and chrome are listed; under `complete` they block |
+| G4 cite | every anchor resolves; every quote is in its bound surface; a bound revision that no longer exists is flagged |
+
+### 17.2 Per term and per file
+
+| lint | checks |
+|---|---|
+| per term | `reads` satisfied; required fields present; designators match the surface under `where` and `pattern`; `expects` met (soft); `owes` met (demand); the term's `lint` lines; L7 per aspect; `matches` agrees with a stored root |
+| per testimony | it classifies to a term refining `testimony`; it carries every field its origin term requires |
+| per file | no undeclared field; no derivable value stored; no aspect outside `text`, `cells`, `tex`; one writer per file; sorted; pass references resolve; every pin known; `testimony` only on a testimony artifact, by an op, naming a subject in the chain; `properties` only by an op; no stale `properties` (soft) |
+
+### 17.3 Term lints
+
+A term's `lint` lines are declarative checks over its scopes, composed from:
+
+- `{"every": "<field>", "names": "<term>"}` — every value of the field names a scope of the term by designated address (a table of contents row names a heading);
+- `{"contains": "<term>", "at_least": <n>}` — every scope of the term contains at least *n* scopes of the term named;
+- `{"field": "<field>", "agrees": "properties.<key>"}` — the field equals the property.
+
+### 17.4 Ontology lints
+
+`ontology lint` refuses: a `reads` value outside the four; a `derivation` that does not parse, names an unregistered op or carries an argument the op refuses; a selector the root family's language rejects; a `concept` map naming a selector; a `matches` without `mime`; a write at a lower layer's ontology identity; a `refines` cycle.
+
+## 18. Custody
+
+Custody is where bytes live and how a BLAKE3 finds them. The trees are tracked text; custody is the byte plane beneath them, machine-specific and untracked. An artifact's identity is a tree fact; its residence is a custody fact, and the two never touch: the same bytes may live standalone, inside a container, on an attached share or in several places at once, and no line changes when they move.
+
+### 18.1 The contract
+
+1. **An id resolves to its bytes.** Given a BLAKE3, the instance produces the bytes through whichever route holds them. Every route yields identical bytes; a resolver may take any.
+2. **Residence is derived, never stored.** No line says where bytes live. Every route is computed from declared locations, constituent lists or derived indexes.
+3. **The index proposes, the hash disposes.** A derived residence map may route a read under its staleness pins, but every act that mints, copies or retires bytes — ingest, adoption, replication, retiring a copy — verifies the full BLAKE3 first. A wrong map can at worst misroute a read.
+4. **Nothing normative depends on custody state.** Location indexes and caches are regenerable deployment state. A consumer missing a row recomputes it when the bytes are in hand, or reports it.
+
+### 18.2 Routes
+
+An id resolves through five classes of route, in this order; a declared cost (§18.3.4) reorders within a class, never across classes:
+
+1. **the co-located store** — `corpus/bytes/<b2>/<blake3>` in some layer of the chain;
+2. **other store locations** — content-addressed trees the tool writes, declared in the custody file;
+3. **attached locations** — trees whose files stay in place, resolved through the location index (§18.4);
+4. **the constituent route** — bytes streamed out of a container through its constituent list; a constituent may have no standalone copy at all;
+5. **remote hydration** — a store location with a remote transport, pulled local on demand.
+
+### 18.3 Locations
+
+18.3.1 A layer's custody is declared in `custody.yaml` at its root, untracked:
+
+```yaml
+locations:
+  - name: bulk
+    kind: store                    # a content-addressed tree the tool writes
+    path: /mnt/slow/bytes
+    place:
+      mimes: [application/x-openzim]
+      origins: [map-extract]       # origin terms: bytes whose testimony classifies here land here
+  - name: shares
+    kind: attached                 # files stay in place
+    path: /mnt/shares/media
+    manifest: true                 # the host's residence scanner presents a manifest (§18.5)
+    cost: 20
+  - name: offsite
+    kind: store
+    remote: rclone:offsite-bytes   # a transport, not a layout
+floors:
+  document: 2                      # redundancy floors by root or origin term (§18.6.3)
+```
+
+18.3.2 **Store locations.** A store location is a `<b2>/<blake3>` tree at another root. Placement directs new bytes there: an `origins` claim (the origin term the delivered testimony classifies to) beats a `mimes` claim, which beats a location declared `default: true`, which beats the co-located store; within one kind of claim, declaration order breaks ties.
+
+18.3.3 **Attached locations.** An attached location is a tree the tool reads and never rewrites: files keep their names and paths. Attesting it streams and hashes the tree — or reads its presented manifest — and writes the location index; from then on its files resolve by bare id. Ingesting an attached file writes its subject without copying its bytes, the full BLAKE3 verified at ingest. An index row pins `size` and `mtime`; a mismatch makes the row stale, and the route reports the bytes unresolvable rather than serving bytes that may no longer match their id.
+
+18.3.4 **Cost.** A location MAY declare `cost`, a non-negative integer, lower being nearer. Undeclared, cost follows the route order. When bytes must move, the resolver takes the cheapest residence whose pins verify, falling through on staleness.
+
+### 18.4 The location index
+
+The location index maps a BLAKE3 to `(location, relpath, size, mtime)` with the row's provenance — `computed` (the tool hashed the bytes) or `presented` (a host's claim, §18.5) — and, for a presented row, the manifest generation it came from, so re-attesting skips generations already read. It persists under `.ath/`, because rebuilding it needs the bytes; deleting it is always safe at the cost of one attest per location.
+
+### 18.5 Presented manifests
+
+18.5.1 An attached location on another host MAY present its own manifest, maintained on that host against its local filesystem by the residence scanner. The scanner's identity model — `(dev, ino) → (size, mtime) → BLAKE3` — is sound only where inodes are real, so it runs where the bytes are: an unchanged stat is never re-hashed, a rename is a new path on a known identity, hard links collapse to one hash, and an interrupted scan resumes per file.
+
+18.5.2 The manifest is published at the location root by temp-then-rename at each generation, so a reader only ever sees a whole generation. Its format is the scanner's own versioned contract, outside this specification. A manifest carries the stat facts of each identity and an advisory mime claim sniffed once when the bytes were hashed; ingest's own sniffing (§10.1) is authoritative.
+
+18.5.3 Presented rows serve resolution under the same pins as computed rows; every act that mints or copies verifies the full hash. A deployment MAY re-verify presented rows by an ordinary attest. Scrubbing for decay is the scanner's duty on its host.
+
+### 18.6 Custody acts
+
+18.6.1 **Locate** answers, for a bare hash, where those bytes reside — every store, the location index, constituent routes, remote objects — ordered by cost, and whether a subject exists. It works for a hash the instance has never ingested. A hash with several residences is the deduplication surface: listed, never deleted automatically.
+
+18.6.2 **Move** relocates a standalone copy between store locations by copy, verify, then remove: the bytes are copied under a temporary name, the full hash verified, the copy renamed into place, and only then the source removed. A failed verify leaves the source untouched. Attached files never move; a constituent with no standalone copy has nothing to move.
+
+18.6.3 **Adopt** copies an attached file into a store under move's contract and leaves the original in place; from then on the store copy is served. Removing the original is a separate act.
+
+18.6.4 **Retire** removes a standalone copy once another route resolves the same bytes, the full hash verified through that route first (§9.7). Testimony bytes are never retired.
+
+18.6.5 **Floors.** `floors` names, per root or origin term, how many distinct locations should hold a route to an artifact's bytes — a standalone copy in a store, a container residence, a remote object and an attached file each count once. Across layers the highest floor wins. Below-floor artifacts are a health finding; a removal that would break a floor names it. Nothing enforces a floor at write.
+
+18.6.6 **Caches.** A cache sweep never removes the location index or any index whose rebuild needs bytes.
+
+## 19. The tool
+
+### 19.1 Profiles and tiers
+
+19.1.1 Every verb has a tier: `read`, `write` or `admin`. A caller runs under one profile: `owner` (admin), `agent` (write) or `reader` (read). A caller at a terminal is `owner`; a caller under an agent or a script is `agent`. A profile may be narrowed by flag or environment, never widened. A verb above the caller's tier does not exist for it.
+
+19.1.2 Every mutating verb needs an **actor**: `ATH_ACTOR`, or the login name at a terminal. Without one the verb is denied. The actor is recorded in the receipt, in staging and in the history.
+
+### 19.2 Writes
+
+19.2.1 Every write is atomic. Bytes are written under a temporary name, verified against their BLAKE3 and renamed into place; a line file is rewritten under a temporary name and renamed. A verb that is interrupted leaves the layer as it was, or with every write it completed whole. Delivered files are copied and never removed by the tool.
+
+19.2.2 Mutating verbs take named locks under `.ath/locks/`; a held lock is `busy`. Every mutating verb appends its actor, arguments and outcome to the history under `.ath/`.
+
+### 19.3 Envelope and exit codes
+
+19.3.1 With `--json`, every verb prints one envelope: `{ok, cmd, version, elapsed_ms, data | error}`. A verdict — lint findings, failed bindings — is an `ok` envelope with exit code 1, never an error.
+
+| code | meaning |
+|---|---|
+| 0 | ok |
+| 1 | a verdict: the verb ran and its answer is no |
+| 64 | usage |
+| 66 | not found: a subject, file or layer that does not exist |
+| 70 | internal: an unexpected failure |
+| 71 | external: a tool outside the tooling failed |
+| 73 | conflict: a write the contract refuses — identity, shadowing, an undeclared field, an unadmitted testimony |
+| 75 | busy: a lock is held |
+| 77 | denied: the caller's profile or actor may not run this |
+| 78 | config: the layer file, the chain, the custody file or the ontology is broken |
+
+### 19.4 Verbs
+
+| verb | tier | contract |
+|---|---|---|
+| `layer init` · `layer show` · `layer check` | write · read · read | init writes `athenaeum.yaml`, the empty trees and the foundation terms §11.9 names; show prints the chain; check verifies the chain, its pins and its configuration |
+| `ingest <file…> [--testimony <file>…]` | write | sniffs, records `properties`, makes subjects of constituents one level deep, admits or refuses testimony before any byte is placed, writes the receipt; the same bytes again add testimony only |
+| `properties sweep [--stale]` | write | writes superseding `properties` lines where the op version is older than the tool's |
+| `resolve <anchor>` | read | the bytes, the surface or the reading at an address, through routes |
+| `tree <subject>` | read | the scope table in `ord`; a designated or positional address to its intrinsic `at` |
+| `provenance <subject>` | read | the provenance chain (§9.6) |
+| `claims show` · `claims sort` | read · write | a subject's lines across the chain; rewrite a file in canonical order |
+| `pass open` · `stage` · `sign` · `abandon` · `show` | write (show: read) | §13.1–§13.2 |
+| `propose <op> <subject>` | read | a proposal op's candidate lines (§10.5) |
+| `inspect show` · `accept` · `revoke` | read · admin · admin | L7 findings; write or remove an `inspected` act, confirmed at a terminal |
+| `disown <testimony> --why <text>` · `disown revoke` | admin | write or remove a `disowned` act |
+| `harvest <subject>` | write | mint and update harvested concepts and claims (§14.6) |
+| `verify [<subject>…]` | read | bindings, status, demand, stale passes |
+| `lint [<subject>…] [--all]` | read | §17 |
+| `ontology list` · `show` · `rules` · `pin` · `lint` | read | the terms, a term's lines, a scope's effective rules, the pin, §17.4 |
+| `export markdown <subject>` · `export nquads [<subject>]` | read | §15 |
+| `serve` | read | the planes over HTTP (§16) |
+| `location attest` · `locate` | write · read | §18.3.3, §18.6.1 |
+| `location move` · `adopt` · `retire` | admin | §18.6.2–§18.6.4 |
+| `log` · `whoami` | read | the history; the caller's profile, actor and instance root |

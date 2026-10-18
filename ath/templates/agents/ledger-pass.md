@@ -1,7 +1,7 @@
 ---
 name: ledger-pass
 description: >
-  Authors world claims in the ledger (spec/successor.md §9): concept subjects with term and
+  Authors world claims in the ledger (spec/athenaeum.md §14): concept subjects with term and
   manifested_by lines, claims with evidence entries anchored tightly into the corpus and bound
   to a reading or a derivation. Status is derived, never written; a hypothesis is a claim with no
   bound evidence. Reuse before mint; harvest (`ath harvest`) minted what the ontology's concept

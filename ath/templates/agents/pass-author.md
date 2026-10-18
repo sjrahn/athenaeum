@@ -1,7 +1,7 @@
 ---
 name: pass-author
 description: >
-  Authors one pass over one artifact (spec/successor.md §6, §10): the structure judgments
+  Authors one pass over one artifact (spec/athenaeum.md §8, §13): the structure judgments
   (manifests, in) and the readings (reads_as) the bytes support, staged with `ath claims append`
   and signed with `ath pass sign` once the lints are clean. Readings are transcriptions checkable
   against the bytes (L7) — never a summary, description or paraphrase. Dispatched with a blake3

@@ -231,8 +231,7 @@ skipped the same way an unreadable file is — reason `b3sum-failed` — never a
 
 ## Catalog metadata
 
-Schema v3 grows the manifest from a residence map into a **light catalog** (spec/corpus.md
-§12.1.1): four nullable columns on `identities` — `ctime_ns`, `btime_ns`, `mode`,
+Schema v3 grows the manifest from a residence map into a **light catalog** (spec/athenaeum.md §18.5): four nullable columns on `identities` — `ctime_ns`, `btime_ns`, `mode`,
 `mime_claim` — so format-and-placement questions are answerable straight from the manifest,
 without a reader touching bytes over the wire. See
 [`MANIFEST-SCHEMA.md`](./MANIFEST-SCHEMA.md)'s "Catalog metadata (v3)" section for the

@@ -4,7 +4,7 @@ This repository is one **layer** of an Athenaeum: three trees of sorted JSONL cl
 `ontology/` (what a kind of thing expects), `corpus/` (artifact subjects by blake3: what the
 bytes are and manifest) and `ledger/` (concept subjects by slug: what the world is, cited into
 the corpus). A **foundation** is public by construction; an **extension** names the foundation
-it extends in `athenaeum.yaml` and never writes it. The contract is `spec/successor.md` in the
+it extends in `athenaeum.yaml` and never writes it. The contract is `spec/athenaeum.md` in the
 Athenaeum distribution; `ath` on PATH finds this layer by walking up for `athenaeum.yaml`
 (`$ATHENAEUM_ROOT` overrides).
 

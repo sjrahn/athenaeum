@@ -17,7 +17,7 @@ Fixtures with no private content, committed under `testdata/synthetic/` with man
 them, and the script that generates each one kept under `testdata/synthetic/gen/`
 (see `gen/README.md` for the tool and version behind every file). The committed bytes, not a fresh run of
 a generator, are what the manifest's blake3 pins: an encoder's output drifts across tool versions even for
-identical input (see spec/CHANGELOG.md's v32 entry, born from exactly this problem for real media), so
+identical input, so
 pinning a freshly-generated hash would make the manifest non-reproducible from one machine or ffmpeg/libheif
 version to the next. The text formats the scripts write themselves do reproduce byte-for-byte.
 
@@ -40,8 +40,7 @@ in the test, on purpose.
 ### The regression ontology
 
 `ontology/` is the ontology every test foundation copies in (`ath/test/layers.ts`): the
-methodological-tool terms, the XenForo and Amazon expression roots, and a root term per mime (spec/successor.md
-Appendix D, D-roots). Edit it here; `ath ontology lint` over a fresh foundation is the gate.
+methodological-tool terms, the XenForo and Amazon expression roots, and a root term per mime. Edit it here; `ath ontology lint` over a fresh foundation is the gate.
 
 ## Seeding a scratch instance
 

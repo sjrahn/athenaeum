@@ -32,18 +32,14 @@ outside the system and own voice, never knowledge.
 conforms to spec, and when code needs something the spec doesn't cover, the
 spec changes first.
 
-- [Part I — Architecture](spec/athenaeum.md): topology, layering, tenancy, the consumption contract
-- [Part II — Corpus](spec/corpus.md): records, addressing, atoms, forms, the normalize pass
-- [Part III — Ledger](spec/ledger.md): concepts, claims, evidence, epistemic status, derived sensitivity
-- [Part IV — Custody](spec/custody.md): byte residence and resolution
-
-Amendment history: [`spec/CHANGELOG.md`](spec/CHANGELOG.md). The spec text
-carries current law only.
+[`spec/athenaeum.md`](spec/athenaeum.md) — one normative document: principles,
+layers, the claim line, artifacts and addresses, testimony, formats, the
+ontology, passes, the ledger, export, planes, lints, custody and the tool.
 
 ## The tooling
 
-[`ath/`](ath/) is the `ath` CLI (Bun/TypeScript) — the successor contract's
-reference implementation: a layer of sorted JSONL claim files (`ontology/`,
+[`ath/`](ath/) is the `ath` CLI (Bun/TypeScript) — the specification's
+reference implementation (conformance and open gaps: [`ath/CONFORMANCE.md`](ath/CONFORMANCE.md)): a layer of sorted JSONL claim files (`ontology/`,
 `corpus/`, `ledger/`), bytes ingested from disk (never fetched), derivation
 ops as the quote surface (`pdf.words@1`, `html.text@1`, `csv.parse@1`),
 passes that stage and sign judgments, lints, L7, verify, harvest, the
