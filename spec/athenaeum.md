@@ -40,7 +40,8 @@ This document is normative. The key words MUST, MUST NOT, SHOULD and MAY are use
 | term | meaning |
 |---|---|
 | **instance** | one repository of trees, rulings and custody (§4): **standalone**, or an **extension** of a **base** instance it builds on |
-| **artifact** | bytes, identified by their BLAKE3; the subject `corpus://<blake3>` |
+| **artifact** | bytes, identified by their BLAKE3; the subject `ath://<blake3>` |
+| **name** | the identifier of a term or a concept; one name space for both (§5.3) |
 | **container** | an artifact whose format holds whole files of its own |
 | **constituent** | an artifact held whole inside a container; its own subject |
 | **record** | an artifact's file: its properties and the judgments over its scopes (§8) |
@@ -60,7 +61,7 @@ This document is normative. The key words MUST, MUST NOT, SHOULD and MAY are use
 | **family** | the format an op parses (html, csv, pdf, rfc822, json, …); one parse per family per artifact |
 | **pass** | one author and one verifier over one artifact or one concept file; the named graph of every judgment it signs |
 | **authorship** | what a line carries to say who wrote it: `by` (an op, or `owner`) or `pass` |
-| **concept** | a real-world thing with a slug, the subject of world claims |
+| **concept** | a real-world thing with a name, the subject of world claims |
 | **claim** | a ledger line asserting a value of a predicate of a concept, carrying evidence |
 | **evidence entry** | an anchor and quote into an artifact supporting a claim, bound by verify |
 | **ruling** | the owner's final judgment on something the tooling derived: an accepted divergence or a disowned testimony (§13.5) |
@@ -74,7 +75,9 @@ This document is normative. The key words MUST, MUST NOT, SHOULD and MAY are use
 4.2 An instance's root holds `athenaeum.yaml`:
 
 ```yaml
+id: 0f4c2a8e-7b1d-4e5a-9c3f-6d2e8b1a4c70   # a UUID, the instance's identity on every host
 name: household
+shard: { records: 2, concepts: 2 }         # §5.2
 extends:                      # absent on a standalone instance
   path: ../reference
   commit: 3f1c0e9a…
@@ -87,7 +90,7 @@ A cycle among bases, a base missing at its path or not at its pinned commit, or 
 
 4.3 An extension reads its base at the pinned commit and at no other. Moving the pin (`instance repin`, §19.5) recomputes everything derived from the base: the ontology pin, and with it the staleness of the extension's passes; bindings, status and lints; anchors into artifacts the base no longer holds, which are flagged.
 
-4.4 A hash or slug resolves in the extension first, then in its base, and so on down; the view of a subject is the line-set union of its files. Within that union:
+4.4 A subject resolves in the extension first, then in its base, and so on down; the view of a subject is the line-set union of its files. Within that union:
 
 - an artifact line is never overridden: an extension MUST NOT write at an identity (§6.3) its base holds with different content, and bytes the base holds are the same subject — ingesting them in the extension writes only their receipt and testimony there;
 - an extension's ledger line wins over its base's at the same identity;
@@ -96,32 +99,36 @@ A cycle among bases, a base missing at its path or not at its pinned commit, or 
 
 4.5 Every line an instance holds carries the instance's `tier`; no line declares its own. An instance MUST NOT be `public` unless its base is.
 
-## 5. Trees and files
+## 5. Files
 
-5.1 An instance holds three trees and its private working state:
+5.1 An instance's repository holds tracked content and nothing else:
 
 ```
 <instance>/
 ├── athenaeum.yaml
-├── ontology/<term>.claims.jsonl        terms — what a kind of thing expects
-├── corpus/<blake3>.claims.jsonl        artifacts — what the bytes are and manifest; testimony links
-│          <blake3>.rulings.jsonl       the owner's rulings on that artifact
-│          lineage.jsonl                corrections, re-keys, supersessions
-├── ledger/<slug>.claims.jsonl          concepts — what the world is, cited into the corpus
-│          lineage.jsonl
-├── strings/<b2>/<rev>                  reading bodies stored out of line
-├── custody/stores/<name>.yaml          the stores the instance declares (§18.2)
-│          policies/<name>.yaml        how it keeps its artifacts (§18.6)
-└── .ath/                               working state: staged passes, locks, caches, history — untracked
+├── terms/<term>.jsonl                      §11
+├── records/<shard>/<blake3>.jsonl          §8
+├── concepts/<shard>/<name>.jsonl           §14
+├── stores/<name>.yaml                      §18.2
+└── policies/<name>.yaml                    §18.6
 ```
 
-`<b2>` is the first two hex digits of the name it shards.
+5.2 **Shards.** `<shard>` is the first *n* hex digits of the BLAKE3 of the file's name — for a record, of its artifact, so the leading digits of the hash itself. `athenaeum.yaml` declares *n* per directory; absent, `records` and `concepts` take 2 and `terms` 0 (flat). Changing it is `instance reshard` (§19.5), which moves files and changes no line.
 
-5.2 **One-way reference.** An artifact's file never names a concept, and never names its testimony or its containers: those are indexes (§12). The ledger cites `corpus://` freely. The ontology is read by both and names neither.
+5.3 **Names.** A term and a concept are each named by a **name**: lowercase letters, digits and hyphens, starting with a letter or digit, and never 64 hex digits. Terms and concepts share one name space: no name names both. Every subject is therefore `ath://<blake3>` or `ath://<name>`, and resolves to exactly one file.
 
-5.3 **One file, one writer.** Passes and ops write `.claims.jsonl`; the owner writes `.rulings.jsonl`. Ops write only `properties` and `testimony` lines, at ingest and in a properties sweep (§8.1).
+5.4 **One-way reference.** A record never names a concept, its testimony or its containers: those are indexes (§12). Concepts cite records freely. Terms are read by both and name neither.
 
-5.4 Everything under `.ath/` is regenerable or transient; nothing normative depends on it, and it is never tracked.
+5.5 **Host state.** What belongs to one machine lives outside every repository, under the XDG base directories:
+
+| path | holds |
+|---|---|
+| `$XDG_DATA_HOME/athenaeum/artifacts/` | the host's local store (§18.2.3) |
+| `$XDG_STATE_HOME/athenaeum/index.sqlite` | the custody index (§18.4) |
+| `$XDG_STATE_HOME/athenaeum/instances/<id>/` | an instance's staged passes, locks and history, by the instance's `id` |
+| `$XDG_CONFIG_HOME/athenaeum/access.yaml` | how this host reaches each store |
+
+Nothing normative depends on host state except the artifacts a store holds.
 
 ## 6. The claim line
 
@@ -136,7 +143,7 @@ A cycle among bases, a base missing at its path or not at its pinned commit, or 
 {"at":"page=3&bbox=0.1192,0.6933,0.4851,0.019","predicate":"manifests","term":"heading","num":"5.","level":1,"pass":"p1"}
 {"at":"page=3&bbox=0.1192,0.6933,0.4851,0.019","predicate":"reads_as","aspect":"text","rev":"b3:9f86d081884c7d65","body":"Baseline emissions","pass":"p1"}
 {"subject":"heading","predicate":"reads","value":"text"}
-{"subject":"tide-table-02","predicate":"version","value":"02.1","evidence":[{"anchor":"corpus://5e6e497d…?page=1&bbox=0.1429,0.6906,0.0901,0.0087&text","quote":"Version 02.1","kind":"authoritative","mode":"stated","reading":"b3:aae7b6bb9c216abb"}],"pass":"p1"}
+{"subject":"tide-table-02","predicate":"version","value":"02.1","evidence":[{"anchor":"ath://5e6e497d…?page=1&bbox=0.1429,0.6906,0.0901,0.0087&text","quote":"Version 02.1","kind":"authoritative","mode":"stated","reading":"b3:aae7b6bb9c216abb"}],"pass":"p1"}
 ```
 
 ### 6.2 Authorship
@@ -173,15 +180,13 @@ A cycle among bases, a base missing at its path or not at its pinned commit, or 
 
 6.4.3 The packed `value` is the unit of judgment: `in` packs its parent and `ord` because they are verified together.
 
-### 6.5 Strings and revisions
+### 6.5 Revisions
 
-6.5.1 A reading's `rev` is `b3:` followed by the first 16 hex digits of the BLAKE3 of its body: a string as UTF-8, an array as its canonical JSON (§6.4.2).
+6.5.1 A reading's body is always on its line. Its `rev` is `b3:` followed by the first 16 hex digits of the BLAKE3 of its body: a string as UTF-8, an array as its canonical JSON (§6.4.2).
 
-6.5.2 A body MAY be inline (`body`) or stored out of line under `strings/` by its `rev`. A body is retained while the instance references its `rev`; an extension's references never keep or remove a body in its base.
+### 6.6 Corrections
 
-### 6.6 Corrections and lineage
-
-6.6.1 A correction is a delete and an insert, never an edit in place. Every correction, re-key (§7.8) and supersession appends a row to the tree's `lineage.jsonl`: `{"from": <identity + content hash>, "to": <identity + content hash>, "by": <authorship>, "date": <ISO date>}`.
+6.6.1 A write at an existing identity with different content replaces the line. The repository's history is the record of every correction; no line records one.
 
 6.6.2 `properties` and `testimony` lines are never corrected: a newer attester supersedes a `properties` line with a second line (§8.1); a testimony cannot change, since its bytes cannot.
 
@@ -189,7 +194,7 @@ A cycle among bases, a base missing at its path or not at its pinned commit, or 
 
 ### 7.1 Artifact subjects
 
-7.1.1 An artifact subject is `corpus://<blake3>`, the full 64-hex BLAKE3 of its bytes. Identity is the hash and nothing else: no URL, name, path or producer key takes part in it.
+7.1.1 An artifact subject is `ath://<blake3>`, the full 64-hex BLAKE3 of its bytes. Identity is the hash and nothing else: no URL, name, path or producer key takes part in it.
 
 7.1.2 New bytes are a new subject. The same bytes met again are the same subject; the encounter adds testimony only (§9) and changes nothing on the subject.
 
@@ -197,9 +202,9 @@ A cycle among bases, a base missing at its path or not at its pinned commit, or 
 
 7.2.1 A **container** is an artifact whose format holds whole files of its own: an archive entry, a package's documents, a message's parts, a mailbox's messages, the payload of a `data:` URI in markup. Which formats are containers, and how their constituents are named, is the format's definition (§10.3).
 
-7.2.2 A container's `properties` carries its **constituents**: per constituent, its `path` in the format's own terms and its BLAKE3, plus the fields the format defines for it (a filename, a mediatype, a Message-ID). Every constituent is its own artifact subject. A constituent's file names no container.
+7.2.2 A container's `properties` carries its **constituents**: per constituent, its `path` in the format's own terms and its BLAKE3, plus the fields the format defines for it (a filename, a mediatype, a Message-ID). Every constituent is its own artifact subject, addressable and resolvable from the moment its container is ingested.
 
-7.2.3 Ingest makes subjects of a container's constituents, one level deep: a constituent's own constituents stay on its list until that constituent is itself ingested as a container.
+7.2.3 A constituent's record is derived until something is written about it: its properties from its bytes, resolved through the container; its provenance through the container (§9.6); its structure from the ontology. Its record file comes into being with the first line a pass, a testimony or the owner writes about it, and its `properties` line is written then. Ingesting a container writes the container's record only.
 
 7.2.4 Which containers hold an artifact is derived from the constituent lists (§12). Cite the constituent, which outlives the package.
 
@@ -250,7 +255,7 @@ A page the document has, a row the parse holds and a cell within such a row are 
 
 7.8.1 A re-capture is a new subject. A `supersedes` claim in the ledger relates the two (§14.2); an anchor carries across where the surface at the same intrinsic address still holds its quote, and is otherwise held (§14.4).
 
-7.8.2 A structure correction that moves a scope re-keys the readings on it — same body, same `rev`, new identity, one lineage row. Anchors that still lie inside the new box do not move.
+7.8.2 A structure correction that moves a scope moves the readings on it — same body, same `rev`, new address. An anchor still inside the new region does not move; an anchor left outside is flagged, and verify finds the reading by its `rev` at its new address and reports the anchor to move.
 
 ## 8. The artifact file
 
@@ -259,7 +264,7 @@ A page the document has, a row the parse holds and a cell within such a row are 
 | predicate | authorship | meaning |
 |---|---|---|
 | `properties` | op | what the bytes are, as the format defines: mime, size, encoding, page count, dimensions, duration, embedded metadata the format specifies, and a container's constituents. Nothing a producer asserts. A cache with a pin: `by` names the format's properties op and its version; a line written by an older version than the tool's is **stale** (§12) and a properties sweep writes a superseding line. |
-| `testimony` | op | on a testimony artifact only (§9): the subject it describes, `corpus://<blake3>`. One line per subject. |
+| `testimony` | op | on a testimony artifact only (§9): the subject it describes, `ath://<blake3>`. One line per subject. |
 | `pass` | — | a pass: `{id, by, verify, ontology, date}`. The named graph every judgment in the file belongs to (§13.1). |
 | `complete` | pass | the pass's attestation that structure over `at` is complete — every word of the surface lies in a scope or in derived chrome. It means complete, never correct. It lapses on any structure change inside its extent. Written only on an asserted tree (§11.4). |
 | `manifests` | pass, or derived | the scope at `at` manifests `term`, with the fields the term declares. An undeclared field is refused at write. A stored line wins over a derived one at the same scope. |
@@ -301,7 +306,7 @@ A page the document has, a row the parse holds and a cell within such a row are 
 
 ```
 {"at":"whole","predicate":"properties","value":{"mime":"application/yaml","bytes":612,"encoding":"utf-8"},"by":"yaml.properties@1"}
-{"at":"whole","predicate":"testimony","value":"corpus://1409369e…","by":"ath.ingest@1"}
+{"at":"whole","predicate":"testimony","value":"ath://1409369e…","by":"ath.ingest@1"}
 ```
 
 9.1.3 A testimony cannot be edited, because its bytes cannot change. A mistaken testimony is answered by a later testimony and, where the owner judges it wrong, by a `disowned` ruling (§13.5).
@@ -469,7 +474,7 @@ A **proposal op** — optical character recognition over a raster, layout analys
 
 ### 11.1 Terms as subjects
 
-A term is a subject whose expectations are lines in `ontology/<term>.claims.jsonl`. One vocabulary serves the corpus (what a scope may manifest), testimony (what an origin admits), the ledger (what a concept may be and owes) and the export (how a term renders). Formats, kinds of documents, units, containers, data shapes, conversations, origins and concept types are all terms.
+A term is a subject whose expectations are lines in `terms/<term>.jsonl`. One vocabulary serves the corpus (what a scope may manifest), testimony (what an origin admits), the ledger (what a concept may be and owes) and the export (how a term renders). Formats, kinds of documents, units, containers, data shapes, conversations, origins and concept types are all terms.
 
 ### 11.2 Term predicates
 
@@ -606,9 +611,9 @@ The following are functions of stored lines and are computed at read time. Writi
 
 ### 13.2 Staging and signing
 
-13.2.1 An open pass stages its lines under `.ath/passes/<subject>/<id>.jsonl`, outside the trees. Nothing under `corpus/` or `ledger/` exists unsigned.
+13.2.1 An open pass stages its lines in the host state of its instance (§5.5), outside the repository. Nothing in the repository exists unsigned.
 
-13.2.2 Signing lays the staged lines over the stored lines by identity (with `complete` where the author asks), in canonical order, and runs G1–G3, the per-file and the per-term lints over the result. Any blocking finding refuses the signature and leaves the staging untouched. A staged line at an existing identity with different content is a correction with a lineage row `by: pass:<id>`. Abandoning a pass discards its staging.
+13.2.2 Signing lays the staged lines over the stored lines by identity (with `complete` where the author asks), in canonical order, and runs G1–G3, the per-file and the per-term lints over the result. Any blocking finding refuses the signature and leaves the staging untouched. A staged line at an existing identity with different content is a correction (§6.6). Abandoning a pass discards its staging.
 
 ### 13.3 Complete
 
@@ -637,7 +642,7 @@ The following are functions of stored lines and are computed at read time. Writi
 
 13.5.2 A ruling holds in the instance that makes it. An extension's owner MAY rule on a base artifact; the ruling lives in the extension.
 
-13.5.3 Revoking a ruling removes its line with a lineage row.
+13.5.3 Revoking a ruling removes its line.
 
 13.5.4 Acquiring artifacts from outside, deleting, removing a copy from a store, moving an artifact between an extension and its base, repinning a base and changing an ontology are owner-gated verbs of the tool (§19), not rulings.
 
@@ -647,19 +652,19 @@ The following are functions of stored lines and are computed at read time. Writi
 
 ### 14.1 Concepts
 
-14.1.1 A concept is a real-world thing with a slug, its file `ledger/<slug>.claims.jsonl`. Its lines: `term` (one per term it is), `manifested_by` (one per scope that manifests it, at any grain — a book, a chapter, a figure, a list item), `part_of`, and one line per claim. Artifacts are evidence for a concept, never its identity.
+14.1.1 A concept is a real-world thing with a name, its file `concepts/<shard>/<name>.jsonl`. Its lines: `term` (one per term it is), `manifested_by` (one per scope that manifests it, at any grain — a book, a chapter, a figure, a list item), `part_of`, and one line per claim. Artifacts are evidence for a concept, never its identity.
 
 14.1.2 A concept file carries its ledger passes as `pass` lines with `subject`. An authored claim carries `pass`; a harvested claim carries `by: harvest:<term>@<pin>`.
 
 ### 14.2 Claims and edges
 
-14.2.1 A claim is `{subject, predicate, value | object, qualifiers?, evidence, <authorship>}`. An **edge** is a claim whose `object` is a slug; `qualifiers.as` keeps the value the bytes printed.
+14.2.1 A claim is `{subject, predicate, value | object, qualifiers?, evidence, <authorship>}`. An **edge** is a claim whose `object` is a concept's name; `qualifiers.as` keeps the value the bytes printed.
 
 14.2.2 Predicates with fixed meaning:
 
 | predicate | meaning |
 |---|---|
-| `same_as` | two slugs are one concept; it merges the moment it derives `confirmed`, with one lineage row |
+| `same_as` | two concepts are one; they merge the moment it derives `confirmed` |
 | `supersedes` | an artifact or concept replaces another; anchors carry across as §7.8 says |
 | `challenges` | names a claim by identity key and content hash, with evidence against it |
 | `presence` | `none`: the thing is not attested where it would be |
@@ -671,7 +676,7 @@ The following are functions of stored lines and are computed at read time. Writi
 
 | field | meaning |
 |---|---|
-| `anchor` | `corpus://<blake3>?<at>[&<aspect>]` — tight: the smallest scope the quote lies in, one cell of a table, never a region; a route through a container canonicalises to the constituent |
+| `anchor` | `ath://<blake3>?<at>[&<aspect>]` — tight: the smallest scope the quote lies in, one cell of a table, never a region; a route through a container canonicalises to the constituent |
 | `quote` | verbatim from the reading or surface the binding names; an elided composite (`…`) or a typographic re-take is refused; `prefix` and `suffix` disambiguate a repeated string and extend a long one |
 | `kind` | the source's grade: `authoritative`, `direct`, `incidental` |
 | `mode` | how the entry supports the value: `stated`, `inferred`, `reported`; `reasoning` is required when it is not `stated` |
@@ -711,7 +716,7 @@ The following are functions of stored lines and are computed at read time. Writi
 
 14.6.3 **Keys.** A concept line without `key` augments the concept the enclosing document manifests. With a key, harvest mints one concept per holder of the key under each scope of the owning term: every scope of the key's term, every row the `rows` term manifests for a column key, the owner scope itself for a field source or a `properties` key. A claim resolves within the holder, then within its parent — never in `whole`.
 
-14.6.4 **Slugs.** `slug` is a template over `{term}`, `{key}` and `{1}` (the first group of `extract` applied to the key), default `{term}-{key}`; every non-alphanumeric run becomes `-`; lowercase unless `case: keep`.
+14.6.4 **Names.** `slug` is a template over `{term}`, `{key}` and `{1}` (the first group of `extract` applied to the key), default `{term}-{key}`, giving a name (§5.3); every non-alphanumeric run becomes `-`; lowercase unless `case: keep`.
 
 14.6.5 **Edges.** When an edge's left side is a term whose scopes contain the target (`post → forum-post`), one edge per scope, cited by the target concept's key; a value edge is cited by the cell or text that names it.
 
@@ -748,7 +753,7 @@ An artifact's provenance chain (§9.6) is exported beside the proxy on the owner
 
 ### 15.3 N-Quads
 
-15.3.1 Every stored line maps to one N-Quads statement and back, byte-identical: the subject `corpus://<blake3>?<at>`, `ledger://<slug>` or `ontology://<term>`; the predicate `urn:athenaeum:ns:<predicate>`; the line's payload as a literal typed `urn:athenaeum:ns:json`; the graph its authorship — `pass://<subject>#<id>` for a pass, `op://<name>@<version>` for an op or a harvest, `owner://<subject>` for a ruling; an ontology line's graph is `ontology://<term>`.
+15.3.1 Every stored line maps to one N-Quads statement and back, byte-identical. Subjects are `ath://<blake3>?<at>` and `ath://<name>`; the vocabulary sits under the same scheme without an authority: the predicate `ath:p/<predicate>`, the payload a literal typed `ath:json`, and the graph the line's authorship — `ath://<subject>#<pass-id>` for a pass, `ath:by/<op>` for an op or a harvest, `ath:by/owner` for a ruling, `ath:terms` for a term's lines.
 
 15.3.2 A term's `aligns` IRIs are asserted as its classes in the projection.
 
@@ -756,7 +761,7 @@ An artifact's provenance chain (§9.6) is exported beside the proxy on the owner
 
 16.1 Serving an instance serves the instance and everything it builds on, filtered by plane. The **public plane** serves the `public` instances of the chain, and the claims whose derived status is `confirmed`. An **audience plane** serves those plus every instance whose tier the audience's grant names, under the same status filter unless the grant names another. The **owner plane** serves every instance of the chain, every status, the rulings, provenance, demand and every finding.
 
-16.2 Read-only is normative. A consumer reads `ledger://`, materialises `corpus://` only for what the ledger asserts, never cites a generated view, and pins the reproducibility tuple — the commit of every instance in the chain and the ontology pin — when it freezes a build.
+16.2 Read-only is normative. A consumer reads concepts, materialises artifacts only for what the concepts assert, never cites a generated view, and pins the reproducibility tuple — the commit of every instance in the chain and the ontology pin — when it freezes a build.
 
 16.3 A server re-reads the instances per request and holds no state of its own.
 
@@ -779,7 +784,7 @@ A failing generic lint blocks the pass from signing.
 |---|---|
 | per term | `reads` satisfied; required fields present; designators match the surface under `where` and `pattern`; `expects` met (soft); `owes` met (demand); the term's `lint` lines; L7 per aspect; `matches` agrees with a stored root |
 | per testimony | it classifies to a term refining `testimony`; it carries every field its origin term requires |
-| per file | no undeclared field; no derivable value stored; no aspect outside `text`, `cells`, `tex`; one writer per file; sorted; pass references resolve; every pin known; `testimony` only on a testimony artifact, by an op, naming a subject in the chain; `properties` only by an op; no stale `properties` (soft) |
+| per file | no undeclared field; no derivable value stored; no aspect outside `text`, `cells`, `tex`; sorted; pass references resolve; every pin known; `testimony` only on a testimony artifact, by an op, naming a subject in the chain; `properties` only by an op; no stale `properties` (soft) |
 
 ### 17.3 Term lints
 
@@ -806,7 +811,7 @@ Custody keeps artifacts and finds them by BLAKE3. The trees name artifacts by ha
 
 ### 18.2 Stores
 
-18.2.1 A **store** holds artifacts. Each is declared in the instance under `custody/stores/<name>.yaml`:
+18.2.1 A **store** holds artifacts. Each is declared in the instance as `stores/<name>.yaml`:
 
 ```yaml
 id: 6b1f0c52-5d0e-4a8e-9c1e-2f0d6f9b2a71
@@ -859,7 +864,7 @@ evict: { above: 90% }          # only on a store that may shed copies (§18.6.3)
 
 ### 18.6 Policies
 
-18.6.1 A **policy** says how an instance keeps a selection of its artifacts. Each is a file `custody/policies/<name>.yaml`:
+18.6.1 A **policy** says how an instance keeps a selection of its artifacts. Each is a file `policies/<name>.yaml`:
 
 ```yaml
 select: { origin: agent-session }
@@ -921,7 +926,7 @@ Each host MAY run one custody daemon, `athd`, serving every instance on the host
 
 19.3.1 Every write is atomic. An artifact is written under a temporary name, verified against its BLAKE3 and renamed into place; a line file is rewritten under a temporary name and renamed. A verb that is interrupted leaves the instance as it was, or with every write it completed whole. A delivered file is placed in the local store by copy, or from an observed tree by link (§18.5.3); the tool never removes it from where it was delivered.
 
-19.3.2 Mutating verbs take named locks under `.ath/locks/`; a held lock is `busy`. Every mutating verb appends its actor, arguments and outcome to the history under `.ath/`.
+19.3.2 Mutating verbs take named locks in the instance's host state (§5.5); a held lock is `busy`. Every mutating verb appends its actor, arguments and outcome to the instance's history there.
 
 ### 19.4 Envelope and exit codes
 
@@ -946,6 +951,7 @@ Each host MAY run one custody daemon, `athd`, serving every instance on the host
 |---|---|---|
 | `instance init [--extends <path>]` · `instance show` · `instance check` | write · read · read | init writes `athenaeum.yaml` and the empty trees — for a standalone instance with the terms §11.9 names, for an extension pinned to its base's current commit; show prints the instance and what it builds on; check verifies the chain, its pins and its configuration |
 | `instance repin` | admin | moves the base pin to the base's current commit and reports what the move makes stale (§4.3) |
+| `instance reshard` | admin | moves files to the shard widths `athenaeum.yaml` declares (§5.2); no line changes |
 | `ingest <file…> [--testimony <file>…]` | write | sniffs, records `properties`, makes subjects of constituents one level deep, admits or refuses testimony before any artifact is placed, writes the receipt; the same bytes again add testimony only |
 | `properties sweep [--stale]` | write | writes superseding `properties` lines where the op version is older than the tool's |
 | `resolve <anchor> [--trace]` | read | the artifact, the surface or the reading at an address; `--trace` reports the route (§18.8.2) |
