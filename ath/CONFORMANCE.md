@@ -11,15 +11,15 @@ with the test that pins it.
 |---|---|---|
 | 4 | instances: standalone or one pinned, read-only base; tiers; repin | gap: the code models foundation/extension layers (`layer:`, `successor: true`, `layer init`); no pin verification, no repin |
 | 5 | layout `terms/ records/ entities/ stores/ policies/ rulings.jsonl`; shards; one name space; file is the subject; host state under XDG; holdings | gap: the code writes `ontology/ corpus/ ledger/`, `.claims.jsonl`, `.owner.jsonl`, `lineage.jsonl`, `corpus/bytes/`, `.ath/` in the repository |
-| 6 | lines `at · pred · val · by · pass`; canonical key order, authorship last; identity table | gap: the code writes `subject · predicate · value`; key order is insertion order |
+| 6 | one scope line per scope (`at`, `form`, `in`, `ord`, fields, `text`/`cells`/`tex`, `pass`); whole lines with `pred`; revisions computed, never stored; canonical key order | gap: the code writes three lines per scope (`in`, `manifests`, `reads_as`) with `subject · predicate · value` and a stored `rev` |
 | 7.1 | 8-hex ids, 16 on collision, base wins at repin | gap: full hashes everywhere |
 | 7.2–7.8 | constituents, axes, unions, routes anywhere in an address, derived addresses | partly: routes only in bind and only leading; constituents are written as subjects at ingest (must not be) |
-| 8 | records exist only once something is said; `intrinsics` (was `attests`) cached with its op version; `complete` (was `walked`); only forms manifested | gap |
+| 8 | records exist only once something is said; `intrinsics` cached with its op version; `complete`; a stored `shape` at `whole` | gap |
 | 9 | testimony as artifacts in the stores; links inside testimony bytes; receipt `{actor, artifact, instance, name, received, testimony}`; origin forms; admission before placement; derived provenance | gap: ingest folds a sidecar into `captured_from` lines |
 | 10.1–10.4 | sniffing (YAML by extension); intrinsics per format; constituents incl. `data:` URIs; surface ops; `pdf.words@1` ignores invisible text | gap: YAML, `data:` constituents, json/yaml/vcard/markdown ops, invisible-text rule; html reads producer meta tags |
 | 10.5 | the one proposal op, `audio.speech@1` | gap: `image.words@1` (tesseract) exists and must be removed |
 | 10.6 | selector languages by family | gap: CSS only; rfc822 blocks are named by the op, not the vocabulary |
-| 11 | corpus forms and graph kinds/properties in separate vocabularies; forms never restate a format — axes, physical axis, own surface op and containment are the tooling's (§10.4.8); `evidenced_by` on kinds; `range`, `functional`, `authority` on properties; declared header rows and chrome rules; declarative `check` | gap: the code reads mime-root terms (`pdf`, `html`, …) and `axes`/`tree`/`physical` from the ontology; one undifferentiated term sort; `concept`, `keys`, `cells`, `sentinel`, prose `lint` still read |
+| 11 | corpus forms (structure only, format-agnostic) and shapes (family `matches`, `select`, `columns`, `spine`, `chrome`, `surface`, testimony fields); graph kinds and properties; nothing restates a format | gap: the code reads one undifferentiated term vocabulary with mime-root terms, `axes`/`tree`/`physical`, semantic forms, `concept`/`keys`/`cells`/`sentinel` and prose `lint` |
 | 12 | derived table, holdings, relevance | gap |
 | 13.1–13.3 | passes, staging in host state, signing creates the record | gap: staging under `.ath/` in the repository; `pass sign` overwrites the real file temporarily |
 | 13.4 | the reading check (was L7) | conforms in substance (`ath/test/lint.l7.test.ts`); names to change |
