@@ -65,57 +65,34 @@ This document is normative. The key words MUST, MUST NOT, SHOULD and MAY are use
 | **plane** | a served view of the instance: public, audience, owner (§16) |
 | **demand** | work the stored lines imply is owed, derived (§14.7) |
 
-## 4. Instances and extension
+## 4. Instances
 
-### 4.1 Standalone and extending instances
+4.1 An instance is one repository holding the trees of §5, its rulings and its custody declaration. It is standalone, or it extends exactly one other instance, its **base**. An extension reads everything its base holds as its own and writes only to itself; a base never reads its extensions. A base may itself extend another.
 
-4.1.1 An instance is one repository holding the trees of §5, its rulings and its custody declaration. It is either **standalone** — complete in itself: its own ontology (carrying the terms §11.9 names), corpus, ledger and custody — or an **extension**: it builds on exactly one existing instance, its **base**, sees everything the base holds, and adds to it. The base never sees its extensions. A base may itself be an extension; an extension then builds on everything its base builds on.
-
-4.1.2 An instance's root holds `athenaeum.yaml`:
+4.2 An instance's root holds `athenaeum.yaml`:
 
 ```yaml
-name: household               # the instance's name
+name: household
 extends:                      # absent on a standalone instance
-  path: ../reference          # where the base is checked out
-  commit: 3f1c0e9a…           # the base commit this instance is built against
-tier: private                 # who may read this instance: public, or a named tier
-audiences:                    # named audiences and the tiers each is granted (§16)
+  path: ../reference
+  commit: 3f1c0e9a…
+tier: private                 # public, or a named tier
+audiences:                    # §16
   family: [private]
 ```
 
-A cycle among bases, a base missing at its path, a base checkout not at the pinned commit, or an unparseable file is a configuration error.
+A cycle among bases, a base missing at its path or not at its pinned commit, or an unparseable file is a configuration error.
 
-4.1.3 **Visibility is per instance.** Every line an instance holds carries its tier; no line declares its own. An extension MUST NOT be `public` unless its base is: what it adds cites what the base holds.
+4.3 An extension reads its base at the pinned commit and at no other. Moving the pin (`instance repin`, §19.5) recomputes everything derived from the base: the ontology pin, and with it the staleness of the extension's passes; bindings, status and lints; anchors into artifacts the base no longer holds, which are flagged.
 
-### 4.2 What extending means for management
+4.4 A hash or slug resolves in the extension first, then in its base, and so on down; the view of a subject is the line-set union of its files. Within that union:
 
-4.2.1 **The base is read-only.** Every write an extension makes lands in the extension. Nothing the extension does changes a file of its base, and the base's owner manages the base as a standalone owner would.
+- an artifact line is never overridden: an extension MUST NOT write at an identity (§6.3) its base holds with different content, and bytes the base holds are the same subject — ingesting them in the extension writes only their receipt and testimony there;
+- an extension's ledger line wins over its base's at the same identity;
+- an extension adds terms and lines to the ontology, and MUST NOT write at an identity the base's ontology holds;
+- a disagreement with a base line, and a term the extension mints, are demand on the base (§14.7).
 
-4.2.2 **The base is pinned.** An extension is built against one commit of its base and reads the base at that commit. Moving the pin is an owner-gated verb (`instance repin`, §19.4). After a repin everything that depends on the base is re-derived: the ontology pin (§11.8) changes wherever the base's terms changed, so the extension's passes over affected scopes become stale; bindings, status and lints are recomputed against the new base; an anchor into an artifact the base no longer holds is flagged. Nothing the base does reaches the extension before a repin.
-
-4.2.3 **Resolution** is content-addressed: a hash or slug resolves in the extension first, then in its base, and so on down. The view of a subject is the line-set union of its files across the instances.
-
-4.2.4 **The corpus is shared, never overwritten.** An extension MUST NOT write an artifact line at an identity (§6.3) its base holds with different content. Bytes the base already holds are the same subject: ingesting them in the extension writes their receipt and any testimony delivered with them in the extension, and nothing on the subject. A disagreement with a base line is demand on the base (§14.7).
-
-4.2.5 **The ledger may be overridden.** An extension's ledger line wins over its base's at the same identity, within the extension's view only.
-
-4.2.6 **The ontology is extended, never redefined.** An extension MAY add terms and add lines to the base's terms; it MUST NOT write at an identity the base's ontology holds. A term an extension mints is a proposal to the base, listed as demand on the base.
-
-4.2.7 **Rulings belong to the instance that makes them.** An extension's owner MAY rule on a base artifact (an accepted divergence, a disowned testimony); the ruling lives in the extension's rulings file and holds in the extension's view only.
-
-4.2.8 **Demand flows to the base and stops there.** What an extension cannot fix — a disagreement with a base line, a proposed term, a base reading it judges wrong — is listed as demand for the base's owner. The base acts on it, or does not, in its own history; the extension sees the outcome at its next repin.
-
-4.2.9 **Reproducibility** names every instance in the chain: each one's commit and the ontology pin.
-
-### 4.3 What extending means for the tooling
-
-4.3.1 **One tool reads the whole chain.** It loads every instance from the extension down to the standalone one, at their pinned commits, and writes only the extension. It takes the extension's locks; a base is read without them.
-
-4.3.2 **The combined ontology is the ontology.** Classification, derivation, lints and the pin (§11.8) run over the base's terms and the extension's together, as loaded.
-
-4.3.3 **The tool must serve the whole chain.** It MUST register every op the combined ontology names (§11.6), and for every mime a properties op at least as new as any `properties` line anywhere in the chain. A tool that falls short refuses to load the extension (configuration error) and names what it lacks; it never writes `properties` older than a line already stored.
-
-4.3.4 **Bytes resolve through every custody declaration in the chain.** A base artifact's bytes resolve through the extension's own custody first and then through its base's declaration, read-only. A copy the extension holds counts toward the extension's floors (§18.6.5).
+4.5 Every line an instance holds carries the instance's `tier`; no line declares its own. An instance MUST NOT be `public` unless its base is.
 
 ## 5. Trees and files
 
@@ -583,7 +560,7 @@ A pattern is a prefix, or a glob where `*` stands for any run of characters, anc
 
 ### 11.8 The pin
 
-11.8.1 A pass pins the ontology it read against: `b3:` followed by the first 16 hex digits of the BLAKE3 of the ontology as loaded — the term files sorted by term name, each file's lines sorted by identity, each line in canonical form (§6.4.2). A harvest pin is the first 6 hex digits.
+11.8.1 A pass pins the ontology it read against: `b3:` followed by the first 16 hex digits of the BLAKE3 of the ontology as loaded, an extension's terms together with its base's — the term files sorted by term name, each file's lines sorted by identity, each line in canonical form (§6.4.2). A harvest pin is the first 6 hex digits.
 
 11.8.2 A term change makes every pass pinned at an older hash **stale** for the scopes that manifest the changed term or its refinements: derived, listed, re-run. Nobody edits a recipe.
 
@@ -654,11 +631,13 @@ The following are functions of stored lines and are computed at read time. Writi
 | `inspected` | a scope | `{rev, diverges: "accepted", why}` — an accepted L7 divergence, bound to the reading's revision; a re-read lapses it, so L7 converges on re-run |
 | `disowned` | `whole` of a testimony | `{why}` — the owner judges the testimony wrong; it stays in provenance, marked, and evidence anchored into it is held |
 
-13.5.2 Revoking a ruling removes its line with a lineage row.
+13.5.2 A ruling holds in the instance that makes it. An extension's owner MAY rule on a base artifact; the ruling lives in the extension.
 
-13.5.3 Acquiring bytes from outside, deleting, retiring a standalone copy, moving an artifact between an extension and its base, repinning a base and changing an ontology are owner-gated verbs of the tool (§19), not rulings.
+13.5.3 Revoking a ruling removes its line with a lineage row.
 
-13.5.4 Owner prose has no place in the instance: anything worth saying about an artifact or a concept is a claim with evidence.
+13.5.4 Acquiring bytes from outside, deleting, retiring a standalone copy, moving an artifact between an extension and its base, repinning a base and changing an ontology are owner-gated verbs of the tool (§19), not rulings.
+
+13.5.5 Owner prose has no place in the instance: anything worth saying about an artifact or a concept is a claim with evidence.
 
 ## 14. The ledger
 
@@ -745,7 +724,7 @@ Derived, never stored:
 - an unsupported claim is an acquisition;
 - a stale pass is a re-run;
 - an unmet `expects` is a soft finding;
-- an extension's minted term, or its disagreement with a base line, is demand on the base (§4.2.8).
+- an extension's minted term, or its disagreement with a base line, is demand on the base (§4.4).
 
 An absence the bytes print ("–", a missing row) is demand, not a defect. Only `blocked` is authored.
 
@@ -825,7 +804,7 @@ Custody is where bytes live and how a BLAKE3 finds them. The trees are tracked t
 
 An id resolves through five classes of route, in this order; a declared cost (§18.3.4) reorders within a class, never across classes:
 
-1. **the co-located store** — `corpus/bytes/<b2>/<blake3>` in the instance, then in each base (§4.3.4);
+1. **the co-located store** — `corpus/bytes/<b2>/<blake3>` in the instance, then in each base it builds on, through that base's custody declaration;
 2. **other store locations** — content-addressed trees the tool writes, declared in the custody file;
 3. **attached locations** — trees whose files stay in place, resolved through the location index (§18.4);
 4. **the constituent route** — bytes streamed out of a container through its constituent list; a constituent may have no standalone copy at all;
@@ -883,7 +862,7 @@ The location index maps a BLAKE3 to `(location, relpath, size, mtime)` with the 
 
 18.6.4 **Retire** removes a standalone copy once another route resolves the same bytes, the full hash verified through that route first (§9.7). Testimony bytes are never retired.
 
-18.6.5 **Floors.** `floors` names, per root or origin term, how many distinct locations should hold a route to an artifact's bytes — a standalone copy in a store, a container residence, a remote object and an attached file each count once. Across an extension and its base the highest floor wins. Below-floor artifacts are a health finding; a removal that would break a floor names it. Nothing enforces a floor at write.
+18.6.5 **Floors.** `floors` names, per root or origin term, how many distinct locations should hold a route to an artifact's bytes — a standalone copy in a store, a container residence, a remote object and an attached file each count once. Across an extension and its base the highest floor wins; a copy the extension holds counts toward its own. Below-floor artifacts are a health finding; a removal that would break a floor names it. Nothing enforces a floor at write.
 
 18.6.6 **Caches.** A cache sweep never removes the location index or any index whose rebuild needs bytes.
 
@@ -895,15 +874,21 @@ The location index maps a BLAKE3 to `(location, relpath, size, mtime)` with the 
 
 19.1.2 Every mutating verb needs an **actor**: `ATH_ACTOR`, or the login name at a terminal. Without one the verb is denied. The actor is recorded in the receipt, in staging and in the history.
 
-### 19.2 Writes
+### 19.2 Loading an instance
 
-19.2.1 Every write is atomic. Bytes are written under a temporary name, verified against their BLAKE3 and renamed into place; a line file is rewritten under a temporary name and renamed. A verb that is interrupted leaves the instance as it was, or with every write it completed whole. Delivered files are copied, or for a file on an attached location left in place (§18.3.3), and never removed by the tool.
+19.2.1 The tool loads an instance with every base it builds on, at their pinned commits, and writes only the instance it was pointed at, under that instance's locks.
 
-19.2.2 Mutating verbs take named locks under `.ath/locks/`; a held lock is `busy`. Every mutating verb appends its actor, arguments and outcome to the history under `.ath/`.
+19.2.2 It MUST register every op the loaded ontology names (§11.6) and, for every mime, a properties op at least as new as any `properties` line in the chain. A tool that falls short refuses to load (configuration error) and names what it lacks; it never writes a `properties` line older than one already stored.
 
-### 19.3 Envelope and exit codes
+### 19.3 Writes
 
-19.3.1 With `--json`, every verb prints one envelope: `{ok, cmd, version, elapsed_ms, data | error}`. A verdict — lint findings, failed bindings — is an `ok` envelope with exit code 1, never an error.
+19.3.1 Every write is atomic. Bytes are written under a temporary name, verified against their BLAKE3 and renamed into place; a line file is rewritten under a temporary name and renamed. A verb that is interrupted leaves the instance as it was, or with every write it completed whole. Delivered files are copied, or for a file on an attached location left in place (§18.3.3), and never removed by the tool.
+
+19.3.2 Mutating verbs take named locks under `.ath/locks/`; a held lock is `busy`. Every mutating verb appends its actor, arguments and outcome to the history under `.ath/`.
+
+### 19.4 Envelope and exit codes
+
+19.4.1 With `--json`, every verb prints one envelope: `{ok, cmd, version, elapsed_ms, data | error}`. A verdict — lint findings, failed bindings — is an `ok` envelope with exit code 1, never an error.
 
 | code | meaning |
 |---|---|
@@ -916,14 +901,14 @@ The location index maps a BLAKE3 to `(location, relpath, size, mtime)` with the 
 | 73 | conflict: a write the contract refuses — identity, shadowing, an undeclared field, an unadmitted testimony |
 | 75 | busy: a lock is held |
 | 77 | denied: the caller's profile or actor may not run this |
-| 78 | config: `athenaeum.yaml`, a base, the custody file or the ontology is broken, or the tool cannot serve the chain (§4.3.3) |
+| 78 | config: `athenaeum.yaml`, a base, the custody file or the ontology is broken, or the tool cannot serve the chain (§19.2.2) |
 
-### 19.4 Verbs
+### 19.5 Verbs
 
 | verb | tier | contract |
 |---|---|---|
 | `instance init [--extends <path>]` · `instance show` · `instance check` | write · read · read | init writes `athenaeum.yaml` and the empty trees — for a standalone instance with the terms §11.9 names, for an extension pinned to its base's current commit; show prints the instance and what it builds on; check verifies the chain, its pins and its configuration |
-| `instance repin` | admin | moves the base pin to the base's current commit and reports what the move makes stale (§4.2.2) |
+| `instance repin` | admin | moves the base pin to the base's current commit and reports what the move makes stale (§4.3) |
 | `ingest <file…> [--testimony <file>…] [--in-place]` | write | sniffs, records `properties`, makes subjects of constituents one level deep, admits or refuses testimony before any byte is placed, writes the receipt; the same bytes again add testimony only |
 | `properties sweep [--stale]` | write | writes superseding `properties` lines where the op version is older than the tool's |
 | `resolve <anchor>` | read | the bytes, the surface or the reading at an address, through routes |

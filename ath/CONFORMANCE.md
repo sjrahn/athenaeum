@@ -8,7 +8,7 @@ with the test that pins it.
 
 | § | requirement | tests | state |
 |---|---|---|---|
-| 4 | instances: standalone or extending one base; pinned, read-only base; the tool serves the chain | `ath/test/corpus.ingest.test.ts`, `ath/test/serve.test.ts` | gap: the code models foundation/extension *layers* (`layer:` key, foundation public, `layer init`); needs `extends: {path, commit}`, per-instance `tier`, `instance init/show/check/repin`, pin verification, tool-coverage check (§4.3.3), custody through the base (§4.3.4) |
+| 4 | instances: standalone or extending one base; pinned, read-only base; the tool serves the chain | `ath/test/corpus.ingest.test.ts`, `ath/test/serve.test.ts` | gap: the code models foundation/extension *layers* (`layer:` key, foundation public, `layer init`); needs `extends: {path, commit}`, per-instance `tier`, `instance init/show/check/repin`, pin verification, tool-coverage check (§19.2.2), custody through the base (§18.2) |
 | 5 | trees and files, one writer | — | conforms (no dedicated test) |
 | 6.2 | authorship | `ath/test/lint.test.ts` | conforms |
 | 6.3 | identity | `ath/test/model.line.test.ts`, `ath/test/ontology.test.ts` | gap: `properties`/`testimony` identities replace `attests`/`captured_from`; owner `disowned` |
@@ -47,9 +47,10 @@ with the test that pins it.
 | 17 | lints | `ath/test/corpus.pass.test.ts`, `ath/test/lint.test.ts` | gap: per-testimony lint; stale properties; term lints §17.3 |
 | 18 | custody | — | gap: only the co-located store exists; locations, the index, presented manifests and custody acts are not implemented |
 | 19.1 | profiles, tiers, actor | — | conforms (ath/test/kit.dispatch.test.ts) |
-| 19.2 | atomic writes, locks, history | — | gap: line files and bytes are not written by temp-then-rename |
-| 19.3 | envelope, exit codes | — | conforms (ath/test/kit.dispatch.test.ts) |
-| 19.4 | verbs | — | gap: `provenance`, `disown`, `propose`, `properties sweep`, `location …` |
+| 19.2 | loading an instance with its bases; op and properties coverage | — | gap: no coverage check |
+| 19.3 | atomic writes, locks, history | — | gap: line files and bytes are not written by temp-then-rename |
+| 19.4 | envelope, exit codes | — | conforms (ath/test/kit.dispatch.test.ts) |
+| 19.5 | verbs | — | gap: `provenance`, `disown`, `propose`, `properties sweep`, `location …` |
 
 ## Regression set
 
