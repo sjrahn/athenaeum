@@ -19,7 +19,7 @@ with the test that pins it.
 | 10.1–10.4 | sniffing (YAML by extension); intrinsics per format; constituents incl. `data:` URIs; surface ops; `pdf.words@1` ignores invisible text | gap: YAML, `data:` constituents, json/yaml/vcard/markdown ops, invisible-text rule; html reads producer meta tags |
 | 10.5 | the one proposal op, `audio.speech@1` | gap: `image.words@1` (tesseract) exists and must be removed |
 | 10.6 | selector languages by family | gap: CSS only; rfc822 blocks are named by the op, not the vocabulary |
-| 11 | forms, kinds, properties; `evidences`; `range`, `functional` on properties; declared header rows and chrome rules; declarative `check` | gap: one undifferentiated term sort; `concept`, `keys`, `cells`, `sentinel`, prose `lint` still read |
+| 11 | corpus forms and graph kinds/properties in separate vocabularies; forms never restate a format — axes, physical axis, own surface op and containment are the tooling's (§10.4.8); `evidenced_by` on kinds; `range`, `functional`, `authority` on properties; declared header rows and chrome rules; declarative `check` | gap: the code reads mime-root terms (`pdf`, `html`, …) and `axes`/`tree`/`physical` from the ontology; one undifferentiated term sort; `concept`, `keys`, `cells`, `sentinel`, prose `lint` still read |
 | 12 | derived table, holdings, relevance | gap |
 | 13.1–13.3 | passes, staging in host state, signing creates the record | gap: staging under `.ath/` in the repository; `pass sign` overwrites the real file temporarily |
 | 13.4 | the reading check (was L7) | conforms in substance (`ath/test/lint.l7.test.ts`); names to change |

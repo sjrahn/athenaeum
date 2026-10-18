@@ -197,9 +197,12 @@ async function ingest(inst: Instance, bytes: Uint8Array, name: string, testimony
 }
 
 /** Copy a regression term and what it refines, in the specification's line shape (§6.1, §11.2). */
-const DROP = new Set(["concept", "keys", "cells", "sentinel", "owes", "functional", "origin", "lint"]);
+const DROP = new Set(["concept", "keys", "cells", "sentinel", "owes", "functional", "origin", "lint", "axes", "physical", "tree"]);
+/** What only restates a format (§11.4.1): the tooling knows these, so no form names them. */
+const FORMATS = new Set(["unit", "document", "data", "container", "lossy", "image", "media", "html", "xhtml", "pdf", "json", "ndjson", "csv", "tsv", "zip", "png", "jpeg", "gif", "markdown", "yaml", "rfc822", "plain-text"]);
+const OWN_SURFACE = new Set(["html.text@1", "pdf.words@1", "csv.parse@1", "eml.text@1", "json.text@1", "yaml.text@1", "markdown.text@1"]);
 function copyForm(inst: Instance, name: string, seen = new Set<string>()) {
-  if (seen.has(name) || inst.terms.has(`forms/${name}`)) return;
+  if (FORMATS.has(name) || seen.has(name) || inst.terms.has(`forms/${name}`)) return;
   seen.add(name);
   const path = join(ONTO, `${name}.claims.jsonl`);
   if (!existsSync(path)) throw new Error(`no regression term ${name}`);
@@ -209,6 +212,9 @@ function copyForm(inst: Instance, name: string, seen = new Set<string>()) {
     const pred = String(l.predicate);
     let val = l.value as unknown;
     if (DROP.has(pred)) continue;
+    if (pred === "refines" && FORMATS.has(String(val))) continue;
+    if (pred === "derivation" && OWN_SURFACE.has(String(val))) continue;
+    if (pred === "expects" && Array.isArray(val)) val = val.filter((f) => !FORMATS.has(String(f)));
     if (pred === "convention" && typeof val === "string") continue;
     if (pred === "tree" && typeof val === "string") val = val.split(" ")[0];
     if (pred === "chrome" && Array.isArray(val)) val = { selector: val.join(", ") };
@@ -226,6 +232,7 @@ function copyForm(inst: Instance, name: string, seen = new Set<string>()) {
     }
     lines.push({ pred, val });
   }
+  if (!lines.length) lines.push({ pred: "definition", val: name.replace(/-/g, " ") });
   inst.add("forms", name, lines);
   for (const l of lines) if (l.pred === "refines") copyForm(inst, String(l.val), seen);
   for (const l of lines) if (l.pred === "select") copyForm(inst, String((l.val as J).form), seen);
@@ -245,12 +252,11 @@ const ev = (anchor: string, quote: string, reading: string, extra: J = {}) => ({
 // ══ reference — public, standalone ════════════════════════════════════════════════════════════════════════════════
 rmSync(OUT, { recursive: true, force: true });
 const ref = new Instance(join(OUT, "reference"), { id: "3b8f1d2e-9a4c-4f6b-8e2d-5c7a1b9e0f43", name: "reference", tier: "public", shard: { records: 2, entities: 2 } });
-for (const f of ["header", "unit", "document", "data", "container", "lossy", "image", "media", "html", "pdf", "json", "csv", "zip", "png", "markdown", "listing-page", "methodological-tool"])
+for (const f of ["header", "listing-page", "methodological-tool"])
   copyForm(ref, f);
 for (const f of ["page", "cover-page", "label", "paragraph", "definition", "definition-list", "row", "caption", "list", "list-item", "parameter-table", "equation", "figure", "toc", "table-of-contents", "table", "revision-history", "metadata", "footnote", "end-mark"])
   copyForm(ref, f);
-ref.term("yaml", { pred: "refines", val: "data" }, { pred: "matches", val: { mime: "application/yaml" } }, { pred: "axes", val: ["bytes"] }, { pred: "tree", val: "derived" }, { pred: "derivation", val: "yaml.text@1" });
-ref.term("testimony", { pred: "refines", val: "data" }, { pred: "definition", val: "what a producer said about other artifacts: where, when, by what and why they were found" });
+ref.term("testimony", { pred: "definition", val: "what a producer said about other artifacts: where, when, by what and why they were found" });
 ref.term(
   "receipt",
   { pred: "refines", val: "testimony" },
@@ -269,8 +275,8 @@ ref.term(
   { pred: "field", val: { name: "uri", type: "string", required: true } },
   { pred: "field", val: { name: "tool", type: "string", required: true } },
 );
-ref.term("source", { pred: "refines", val: "unit" }, { pred: "reads", val: "none" });
-ref.term("producer", { pred: "refines", val: "unit" }, { pred: "reads", val: "none" });
+ref.term("source", { pred: "reads", val: "none" });
+ref.term("producer", { pred: "reads", val: "none" });
 kind(ref, "residence", ["address", "price", "bedrooms", "tenure"], "a dwelling offered or held", ["listing-page"]);
 kind(ref, "standard", ["title", "version", "issued-by", "source"], "a published method others follow", ["methodological-tool"]);
 kind(ref, "organization", ["legal-name"], "a body that acts in its own name");
@@ -363,17 +369,15 @@ home.term(
 );
 home.term(
   "berth-list",
-  { pred: "refines", val: "csv" },
   { pred: "definition", val: "a list of moorings: berth, vessel, length" },
   { pred: "matches", val: { mime: "text/csv", first_row: ["Berth", "Vessel", "Length (m)"] } },
   { pred: "shape", val: { header: 0, form: "header" } },
   { pred: "shape", val: { rows: "berth-row" } },
 );
-home.term("berth-row", { pred: "refines", val: "unit" }, { pred: "reads", val: "cells" });
-home.term("mooring-plan", { pred: "refines", val: "pdf" }, { pred: "definition", val: "a harbour's plan of berths for a season" });
+home.term("berth-row", { pred: "reads", val: "cells" });
+home.term("mooring-plan", { pred: "definition", val: "a harbour's plan of berths for a season" });
 home.term(
   "chat-thread",
-  { pred: "refines", val: "json" },
   { pred: "definition", val: "one conversation as a messaging service exports it: participants, then messages" },
   { pred: "matches", val: { mime: "application/json", selector: "/participants" } },
   { pred: "matches", val: { mime: "application/json", selector: "/messages/*/sender_name" } },
@@ -381,7 +385,7 @@ home.term(
   { pred: "select", val: { selector: "/messages/*/sender_name", form: "author", in: "message" } },
   { pred: "select", val: { selector: "/messages/*/content", form: "bubble", in: "message" } },
 );
-for (const f of ["message", "author", "bubble"]) home.term(f, { pred: "refines", val: "unit" }, { pred: "reads", val: f === "message" ? "none" : "text" });
+for (const f of ["message", "author", "bubble"]) home.term(f, { pred: "reads", val: f === "message" ? "none" : "text" });
 kind(home, "berth", ["occupant"], "a mooring place in a harbour", ["berth-list", "mooring-plan"]);
 kind(home, "vessel", ["display-name", "length"], "a boat", ["berth-list"]);
 kind(home, "person", ["display-name"], "a human being", ["chat-thread"]);
