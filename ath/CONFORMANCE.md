@@ -10,24 +10,24 @@ with the test that pins it.
 | § | requirement | state |
 |---|---|---|
 | 4 | instances: standalone or one pinned, read-only base; tiers; repin | gap: the code models foundation/extension layers (`layer:`, `successor: true`, `layer init`); no pin verification, no repin |
-| 5 | layout `terms/ records/ entities/ stores/ policies/ rulings.jsonl`; shards; one name space; file is the subject; host state under XDG; holdings | gap: the code writes `ontology/ corpus/ ledger/`, `.claims.jsonl`, `.owner.jsonl`, `lineage.jsonl`, `corpus/bytes/`, `.ath/` in the repository |
-| 6 | one scope line per scope (`at`, `form`, `in`, `ord`, fields, `text`/`cells`/`tex`, `pass`); whole lines with `pred`; revisions computed, never stored; canonical key order | gap: the code writes three lines per scope (`in`, `manifests`, `reads_as`) with `subject · predicate · value` and a stored `rev` |
+| 5 | layout `corpus/{forms,shapes,records}` `graph/{kinds,properties,entities}` `stores/ policies/ rulings.jsonl`; records as `<id>.yaml`; shards; names per vocabulary; file is the subject; host state under XDG; holdings | gap: the code writes `ontology/ corpus/ ledger/`, `.claims.jsonl`, `.owner.jsonl`, `lineage.jsonl`, `corpus/bytes/`, `.ath/` in the repository |
+| 6 | lines for terms, entities and rulings only; identity; canonical key order; revisions computed, never stored | gap: the code writes records as lines and a stored `rev` |
 | 7.1 | 8-hex ids, 16 on collision, base wins at repin | gap: full hashes everywhere |
 | 7.2–7.8 | constituents, axes, unions, routes anywhere in an address, derived addresses | partly: routes only in bind and only leading; constituents are written as subjects at ingest (must not be) |
-| 8 | records exist only once something is said; `intrinsics` cached with its op version; `complete`; a stored `shape` at `whole` | gap |
+| 8 | a record is one YAML document: `intrinsics`, `shape`, `chrome`, `passes`, `complete`, `readings` (by address, formless), `scopes` (a tree, signed whole); stages unread/read/transcribed/formed derived; rendered artifacts read, structured ones pass-through | gap: the code writes `.claims.jsonl` with three lines per scope (`in`, `manifests`, `reads_as`) |
 | 9 | testimony as artifacts in the stores; links inside testimony bytes; receipt `{actor, artifact, instance, name, received, testimony}`; origin forms; admission before placement; derived provenance | gap: ingest folds a sidecar into `captured_from` lines |
-| 10.1–10.4 | sniffing (YAML by extension); intrinsics per format; constituents incl. `data:` URIs; surface ops; `pdf.words@1` ignores invisible text | gap: YAML, `data:` constituents, json/yaml/vcard/markdown ops, invisible-text rule; html reads producer meta tags |
-| 10.5 | the one proposal op, `audio.speech@1` | gap: `image.words@1` (tesseract) exists and must be removed |
-| 10.6 | selector languages by family | gap: CSS only; rfc822 blocks are named by the op, not the vocabulary |
+| 10.1–10.5 | sniffing (YAML by the receipt's name); intrinsics per format; constituents incl. `data:` URIs; the rendered/structured classes; surface ops on structured formats only | gap: YAML, `data:` constituents, json/yaml/vcard/markdown ops; no class; html and pdf are treated as surfaces |
+| 10.6 | hint ops `pdf.words@1`, `html.text@1`, `html.attr@1`, `audio.speech@1`: never bound, never stored; drawn text only; no op reads | gap: `pdf.words`/`html.text` bind as surfaces; `image.words@1` (tesseract) exists and must be removed |
+| 10.7 | selector languages by family | gap: CSS only; rfc822 blocks are named by the op, not the vocabulary |
 | 11 | corpus forms (structure only, format-agnostic) and shapes (family `matches`, `select`, `columns`, `spine`, `chrome`, `surface`, testimony fields); graph kinds and properties; nothing restates a format | gap: the code reads one undifferentiated term vocabulary with mime-root terms, `axes`/`tree`/`physical`, semantic forms, `concept`/`keys`/`cells`/`sentinel` and prose `lint` |
 | 12 | derived table, holdings, relevance | gap |
-| 13.1–13.3 | passes, staging in host state, signing creates the record | gap: staging under `.ath/` in the repository; `pass sign` overwrites the real file temporarily |
-| 13.4 | the reading check (was L7) | conforms in substance (`ath/test/lint.l7.test.ts`); names to change |
+| 13.1–13.3 | passes in `passes`; staging in host state; signing lays readings by address and a tree whole; `complete.readings` attested, `complete.structure` checked | gap: staging under `.ath/` in the repository; `pass sign` overwrites the real file temporarily; one `complete` |
+| 13.4 | the reading check against the hint, advisory only; the normaliser | partly: the comparison exists (`ath/test/lint.l7.test.ts`) but blocks; names to change |
 | 13.5 | rulings `distrust · accept · seek · defer · decline` in `rulings.jsonl` | gap: only `inspected` in `.owner.jsonl` |
-| 14 | entities (`is`), claims on properties, `ev` with `grade`, binding, status, demand; no harvest | gap: concepts, `term`, `manifested_by`, harvest |
+| 14 | entities (`is`), claims on properties, `ev` without standing, bindings `b3:`/`derived:`/`field:`/`intrinsics:`, derived standing and status, demand; no harvest | gap: concepts, `term`, `manifested_by`, harvest, `line:` bindings |
 | 15 | markdown proxy, provenance view, graph projection under `ath:` | partly: proxy exists; N-Quads uses `corpus://`, `ledger://` |
 | 16 | planes | conforms in substance (`ath/test/serve.test.ts`) |
-| 17 | named checks: unit, tree, coverage, citation; sorts; per form, testimony, file; vocabulary checks | gap: codes G1–G4, O-codes; no sort checks |
+| 17 | named checks: class, unit, tree, coverage (advisory via hints), citation; sorts; per form, testimony, file; vocabulary checks | gap: codes G1–G4, O-codes; no sort checks; coverage blocks on the surface |
 | 18 | custody: stores, drivers (local, rclone), index, scanner testimony, links, policies, reconcile, resolution with trace, `athd` | gap: not implemented; the scanner exists (`scanner/`) |
 | 19.1 | profiles, tiers, actor | conforms (`ath/test/kit.dispatch.test.ts`) |
 | 19.2 | loading a chain; op and intrinsics coverage | gap |
