@@ -908,8 +908,8 @@ The location index maps a BLAKE3 to `(location, relpath, size, mtime)` with the 
 | `claims show` · `claims sort` | read · write | a subject's lines across the chain; rewrite a file in canonical order |
 | `pass open` · `stage` · `sign` · `abandon` · `show` | write (show: read) | §13.1–§13.2 |
 | `propose <op> <subject>` | read | a proposal op's candidate lines (§10.5) |
-| `inspect show` · `accept` · `revoke` | read · admin · admin | L7 findings; write or remove an `inspected` act, confirmed at a terminal |
-| `disown <testimony> --why <text>` · `disown revoke` | admin | write or remove a `disowned` act |
+| `inspect show` · `accept` · `revoke` | read · admin · admin | L7 findings; write or remove an `inspected` ruling, confirmed at a terminal |
+| `disown <testimony> --why <text>` · `disown revoke` | admin | write or remove a `disowned` ruling |
 | `harvest <subject>` | write | mint and update harvested concepts and claims (§14.6) |
 | `verify [<subject>…]` | read | bindings, status, demand, stale passes |
 | `lint [<subject>…] [--all]` | read | §17 |
