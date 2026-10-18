@@ -60,9 +60,10 @@ const yaml = (o: J, indent = ""): string =>
 const rev = async (body: unknown) => `b3:${(await blake3Hex(typeof body === "string" ? body : JSON.stringify(body))).slice(0, 16)}`;
 
 // ── records (§8.2): one document, keys in a fixed order, written in one style ────────────────────────────────────
-type Reading = { text?: string; cells?: string[][]; tex?: string; pass: string };
-type Scope = { form: string | string[]; at: string; pass: string; scopes?: Scope[]; [field: string]: unknown };
-type Rec = { intrinsics: J; shape?: J; chrome?: J[]; passes: Record<string, J>; complete?: J; readings?: Record<string, Reading>; scopes?: Scope[] };
+type Reading = { text?: string; cells?: string[][]; tex?: string };
+type Scope = Reading & { form: string | string[]; at: string; scopes?: Scope[]; [field: string]: unknown };
+type Rec = { intrinsics: J; shape?: string; chrome?: J[]; passes: Record<string, J>; readings?: Record<string, Reading>; scopes?: Scope[] };
+const ASPECTS = ["cells", "tex", "text"];
 const WORDS = /^(true|false|yes|no|null|on|off|y|n|~)$/i;
 const plainOk = (v: string, flow: boolean) => /^[A-Za-z][^\n]*$/.test(v) && !/: | #/.test(v) && !/[\s:]$/.test(v) && !WORDS.test(v) && !(flow && /[,[\]{}]/.test(v));
 const scalar = (v: unknown, flow = false) => (typeof v === "string" ? (plainOk(v, flow) ? v : JSON.stringify(v)) : JSON.stringify(v));
@@ -74,7 +75,11 @@ const block = (o: J, ind: string) =>
     .filter(([, v]) => v !== undefined)
     .map(([k, v]) => (typeof v === "string" && v.includes("\n") ? `${ind}${scalar(k)}: |-\n${v.split("\n").map((l) => `${ind}  ${l}`).join("\n")}\n` : `${ind}${scalar(k)}: ${typeof v === "string" ? scalar(v) : flow(v)}\n`))
     .join("");
-const scopeKeys = ({ form, at, pass, scopes: _, ...fields }: Scope): J => ({ form, at, ...Object.fromEntries(Object.entries(fields).sort(([a], [b]) => (a < b ? -1 : 1))), pass });
+const scopeKeys = ({ form, at, scopes: _, ...rest }: Scope): J => {
+  const fields = Object.entries(rest).filter(([k]) => !ASPECTS.includes(k)).sort(([a], [b]) => (a < b ? -1 : 1));
+  const reading = Object.entries(rest).filter(([k]) => ASPECTS.includes(k));
+  return { form, at, ...Object.fromEntries(fields), ...Object.fromEntries(reading) };
+};
 const scopesYaml = (list: Scope[], ind: string): string =>
   list.map((sc) => `${ind}- ${block(scopeKeys(sc), `${ind}  `).trimStart()}${sc.scopes?.length ? `${ind}  scopes:\n${scopesYaml(sc.scopes, `${ind}    `)}` : ""}`).join("");
 /** Addresses in canonical order (§7.4.2): page, then y, then x, then byte start. */
@@ -89,16 +94,12 @@ const byAddr = (a: string, b: string) => {
 };
 function recordYaml(r: Rec): string {
   let out = `intrinsics: ${flow(r.intrinsics)}\n`;
-  if (r.shape) out += `shape: ${flow(r.shape)}\n`;
+  if (r.shape) out += `shape: ${scalar(r.shape)}\n`;
   if (r.chrome) out += `chrome:\n${r.chrome.map((c) => `  - ${flow(c)}\n`).join("")}`;
   out += `passes:\n${Object.entries(r.passes).map(([id, pass]) => `  ${id}: ${flow(pass)}\n`).join("")}`;
-  if (r.complete) out += `complete: ${flow(r.complete)}\n`;
   if (r.readings) {
     out += "readings:\n";
-    for (const at of Object.keys(r.readings).sort(byAddr)) {
-      const { pass, ...aspects } = r.readings[at]!;
-      out += `  ${scalar(at)}:\n${block({ ...Object.fromEntries(Object.entries(aspects).sort()), pass }, "    ")}`;
-    }
+    for (const at of Object.keys(r.readings).sort(byAddr)) out += `  ${scalar(at)}:\n${block(Object.fromEntries(Object.entries(r.readings[at]!).sort()), "    ")}`;
   }
   if (r.scopes) out += `scopes:\n${scopesYaml(r.scopes, "  ")}`;
   return out;
@@ -373,7 +374,7 @@ const L = A(listing.full);
 const listingRead: Record<string, Reading> = {};
 const span = (open: string, tag: string, text: string) => {
   const at = htmlSpan(listingBytes, open, tag);
-  listingRead[at] = { text, pass: "p1" };
+  listingRead[at] = { text };
   return at;
 };
 const cite = async (at: string, quote: string) => ev(`${L}?${at}&text`, quote, await rev(listingRead[at]!.text!));
@@ -383,7 +384,7 @@ const [addrAt, priceAt, bedsAt, tenureAt] = [
   span('<li class="beds">', "li", "2 bedrooms"),
   span('<li class="tenure">', "li", "Freehold"),
 ];
-ref.record(listing.full, { intrinsics: (await intrinsics(listingBytes, "cottage-listing.html")).val, passes: { p1: recordPass }, readings: listingRead });
+ref.record(listing.full, { intrinsics: (await intrinsics(listingBytes, "cottage-listing.html")).val, passes: { p1: { ...recordPass, over: Object.keys(listingRead) } }, readings: listingRead });
 ref.entity(
   "12-quay-street-port-ellen",
   entityPass,
@@ -414,7 +415,8 @@ for (const raw of readFileSync(join(HERE, "passes", passFile), "utf8").split("\n
     sc.ord = Number((value as J).ord);
   } else if (predicate === "reads_as") (sc.body ??= {})[String(aspect)] = body;
 }
-// readings: every transcribed region, a leading designator rejoined to its body (§8.3.4); a table's rows fold into its grid
+// readings: every transcribed region, a leading designator rejoined to its body (§8.3.4); a table's rows fold into its grid;
+// the forming pass then adopts each into the scope at its address (§8.4.3), so none is written under `readings`
 const procRead: Record<string, Reading> = {};
 const kids = (parent: string) => [...old.values()].filter((o) => o.in === parent).sort((a, b) => a.ord! - b.ord!);
 for (const o of old.values()) {
@@ -422,7 +424,7 @@ for (const o of old.values()) {
   const parent = o.in && old.get(o.in);
   if (parent && GRID.has(parent.forms[0]!) && Array.isArray(o.body.cells) && !Array.isArray(o.body.cells[0])) continue;
   const lead = typeof o.num === "string" && o.forms.some((f) => ["heading", "paragraph", "list-item"].includes(f)) ? `${o.num} ` : typeof o.mark === "string" ? `${o.mark} ` : "";
-  const r: Reading = { pass: "p1" };
+  const r: Reading = {};
   if (typeof o.body.text === "string") r.text = lead + o.body.text;
   if (typeof o.body.tex === "string") r.tex = o.body.tex;
   if (Array.isArray(o.body.cells)) r.cells = o.body.cells as string[][];
@@ -431,25 +433,26 @@ for (const o of old.values()) {
 for (const o of old.values()) {
   if (!GRID.has(o.forms[0]!) || o.forms[0] === "row" || o.forms[0] === "definition") continue;
   const rows = kids(o.at).filter((k) => Array.isArray(k.body?.cells)).map((k) => k.body!.cells as string[]);
-  if (rows.length) procRead[o.at] = { cells: rows, pass: "p1" };
-  if (o.forms[0] === "definition-list" && typeof o.body?.text === "string") procRead[o.at] = { cells: o.body.text.split("\n").map((l) => l.split(/: (.*)/s).filter(Boolean)), pass: "p1" };
+  if (rows.length) procRead[o.at] = { cells: rows };
+  if (o.forms[0] === "definition-list" && typeof o.body?.text === "string") procRead[o.at] = { cells: o.body.text.split("\n").map((l) => l.split(/: (.*)/s).filter(Boolean)) };
 }
 // the tree: a page is nowhere in it; what sat `in` a page hangs from the scope at that page, else from the root
+const adopted = new Set<string>();
 const scopeOf = (o: Old): Scope => {
   const { at, forms, in: _in, ord: _o, body: _b, ...fields } = o;
   const children = kids(at).map(scopeOf);
-  return { form: forms.length === 1 ? forms[0]! : [...forms].sort(), at, ...fields, pass: "p1", ...(children.length ? { scopes: children } : {}) };
+  adopted.add(at);
+  return { form: forms.length === 1 ? forms[0]! : [...forms].sort(), at, ...fields, ...procRead[at], ...(children.length ? { scopes: children } : {}) };
 };
 const top = [...old.values()].filter((o) => o.forms.length && (o.in === "whole" || (o.in?.startsWith("page=") && !o.in.includes("&") && !old.get(o.in)?.forms.length)));
 const procTree = top.sort((a, b) => a.ord! - b.ord!).map(scopeOf);
+for (const at of Object.keys(procRead)) if (!adopted.has(at)) throw new Error(`reading no scope adopted: ${at}`);
 const read = (body: string) => Object.entries(procRead).find(([, r]) => r.text === body || r.text?.endsWith(` ${body}`))!;
 const procIntrinsics = (await intrinsics(procBytes, "procedure.pdf")).val;
 ref.record(proc.full, {
   intrinsics: procIntrinsics,
-  chrome: [{ repeats: { pages: Number(procIntrinsics.page_count), share: 1 }, mask: "digits", box: 2, roles: { "page-number": "Page # of #" }, pass: "p1" }],
-  passes: { p1: recordPass },
-  complete: { readings: "p1", structure: "p1" },
-  readings: procRead,
+  chrome: [{ repeats: { pages: Number(procIntrinsics.page_count), share: 1 }, mask: "digits", box: 2, roles: { "page-number": "Page # of #" } }],
+  passes: { p1: { ...recordPass, attests: ["readings", "structure"] } },
   scopes: procTree,
 });
 const P = A(proc.full);
@@ -536,19 +539,18 @@ const [W, H] = [Number(pg[1]), Number(pg[2])];
 const [x0, y0, x1, y1] = [1, 2, 3, 4].map((i) => Number(ln[i]));
 const r4 = (n: number) => Math.round(n * 1e4) / 1e4;
 const headAt = `page=1&bbox=${r4(x0! / W)},${r4(y0! / H)},${r4((x1! - x0!) / W)},${r4((y1! - y0!) / H)}`;
-home.record(plan.blake3, { intrinsics: (await intrinsics(plan.bytes, "Mooring plan 2026.pdf")).val, passes: { p1: recordPass }, readings: { [headAt]: { text: "Mooring plan 2026", pass: "p1" } } });
+home.record(plan.blake3, { intrinsics: (await intrinsics(plan.bytes, "Mooring plan 2026.pdf")).val, passes: { p1: { ...recordPass, over: [headAt] } }, readings: { [headAt]: { text: "Mooring plan 2026" } } });
 
 // a photograph of a sign, read in full: transcribed, never formed — three readings and the attestation
 const signBytes = readFileSync(join(SYN, "sign.jpg"));
 const sign = await ingest(home, signBytes, "sign.jpg", null);
 home.record(sign.full, {
   intrinsics: (await intrinsics(signBytes, "sign.jpg")).val,
-  passes: { p1: recordPass },
-  complete: { readings: "p1" },
+  passes: { p1: { ...recordPass, attests: ["readings"] } },
   readings: {
-    "bbox=0.0667,0.1786,0.6022,0.1548": { text: "RETURNS ONLY", pass: "p1" },
-    "bbox=0.0667,0.4643,0.4556,0.1024": { text: "Bay 12 - Depot 7", pass: "p1" },
-    "bbox=0.0667,0.6976,0.6467,0.1071": { text: "No parking 7am to 6pm", pass: "p1" },
+    "bbox=0.0667,0.1786,0.6022,0.1548": { text: "RETURNS ONLY" },
+    "bbox=0.0667,0.4643,0.4556,0.1024": { text: "Bay 12 - Depot 7" },
+    "bbox=0.0667,0.6976,0.6467,0.1071": { text: "No parking 7am to 6pm" },
   },
 });
 
