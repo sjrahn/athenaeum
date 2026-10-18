@@ -397,8 +397,13 @@ scopes:
     num: "5."
     pass: p2
     scopes:
-      - {form: paragraph, at: page=3&bbox=0.1192,0.6102,0.7612,0.071, pass: p2}
-      - {form: equation, at: page=4&bbox=0.2842,0.3844,0.572,0.0293, label: Equation (1), pass: p2}
+      - form: paragraph
+        at: page=3&bbox=0.1192,0.6102,0.7612,0.071
+        pass: p2
+      - form: equation
+        at: page=4&bbox=0.2842,0.3844,0.572,0.0293
+        label: Equation (1)
+        pass: p2
 ```
 
 ```yaml
