@@ -289,7 +289,7 @@ A page the document has, a row the parse holds and a cell within such a row are 
 | key | holds |
 |---|---|
 | `intrinsics` | what the artifact's format defines about its bytes: mime, size, encoding, page count, dimensions, duration, the metadata the format specifies, and a container's constituents with their kind (§10.2, §10.3). Nothing a producer asserts. A cache: `op` names the intrinsics op and its version; a value by an older version than the tool's is **stale** (§12) and the sweep rewrites it |
-| `provenance` | the testimony naming the artifact, and what the instance read from it: per receipt `{receipt, actor, received, name}` — the receipt's own fields, since the receipt is the tooling's; per delivered testimony `{testimony: <hash>, <shape>: {<the fields that shape read>}}` — the testimony is the hash and nothing else; the fields under the shape's name are the instance's reading of it, as `intrinsics` is the op's reading of the bytes (§9). A cache written at every ingest of the artifact; a testimony shape newer than it makes it **stale** (§12) and the sweep rewrites it. Absent on an asset never ingested on its own, whose provenance is its containers' (§9.6) |
+| `provenance` | the testimony naming the artifact, projected: per receipt `{receipt, actor, received, name}`; per delivered testimony `{testimony: <hash>, content: <its parsed content, verbatim>}`. Nothing of the instance's is in it: what a testimony is admitted as is derived from its content (§9.5, §12) and never written. A cache written at every ingest of the artifact. Absent on an asset never ingested on its own, whose provenance is its containers' (§9.6) |
 | `shape` | a stored choice of the artifact's shape, overriding the one `matches` derives (§11.4.3) |
 | `chrome` | rules for what is chrome in this artifact, each in the grammar of a shape's `chrome` line (§11.2.3); applied together with the shape's (§8.4.6) |
 | `passes` | the passes over the artifact, by id: `{by, verify, vocab, date, over?, attests?, note?, with?}` (§8.5, §13.1) |
@@ -418,7 +418,8 @@ scopes:
 intrinsics: {op: zip.intrinsics@1, mime: application/zip, bytes: 184211, constituents: [{path: Harbour plans/Mooring plan 2026.pdf, blake3: 0c4efa13…, kind: asset}, {path: Harbour plans/Berth list.csv, blake3: 7a3e0c11…, kind: asset}]}
 provenance:
   - {receipt: d391e53a…, actor: reader-a, received: "2026-01-12T09:14:03Z", name: drive-folder.zip}
-  - {testimony: 277a7574…, drive-export: {account: ada.abbott@example.invalid, exported-at: "2026-03-18T16:00:00Z"}}
+  - testimony: 277a7574…
+    content: {origin: google-drive-export, via: export, origin_fields: {account: ada.abbott@example.invalid, folder: Harbour plans, exported_at: "2026-03-18T16:00:00Z"}}
 ```
 
 ## 9. Testimony
@@ -465,7 +466,7 @@ provenance:
 
 9.5.1 Ingest MUST refuse, before anything is placed in a store, a delivered testimony that matches no testimony shape, or that lacks a field its shape requires.
 
-9.5.2 The same check runs over the records (§17), so a testimony shape that tightens lists the testimony it no longer admits. A testimony admitted once is never removed for failing a later check; it is listed.
+9.5.2 The same check runs over the records (§17), over the content each record's provenance holds, so a testimony shape that tightens lists the testimony it no longer admits. Which shape admits a testimony is derived from its content and never written (§12). A testimony admitted once is never removed for failing a later check; it is listed.
 
 ### 9.6 Provenance
 
@@ -781,7 +782,7 @@ The following are computed at read time. Writing any of them to a file is a chec
 | containers of an artifact | the constituents of the containers the instance holds |
 | what an instance holds | its records (§5.7) |
 | a table's grid | its rows' readings in order (§8.4.7) |
-| stale provenance | a `provenance` by an older testimony shape than the instance's |
+| what a testimony is admitted as | `matches` over the content its record's provenance holds (§9.5) |
 | the provenance chain | the record's `provenance` and its containers' (§9.6) |
 | testimony admitted | whether a testimony matches a testimony shape and carries the fields it requires |
 | stale intrinsics | an `intrinsics` value by an older op version than the tool's for its mime |
@@ -994,7 +995,7 @@ A failing record check blocks a pass from signing; an advisory is listed and nev
 | **standing** | no evidence entry carries a standing; an authority claim names an artifact the instance holds |
 | **per form** | `reads` is satisfied; required fields are present; designators are found where `where` and `pattern` say, in the reading or beside it; `expects` is met (soft); the form's `check` lines hold; the reading check per aspect (advisory); a stored `shape` is one that matches |
 | **per testimony** | it matches a testimony shape; it carries every field the shape requires |
-| **per file** | no undeclared field; no derivable value stored; no stored revision; keys in the record's order, lines sorted; every reading and scope covered by a pass; every pin known; `intrinsics` and `provenance` only by the tool; no stale projection (soft); every id and name resolves to one subject |
+| **per file** | no undeclared field; no derivable value stored; no stored revision; keys in the record's order, lines sorted; every reading and scope covered by a pass; every pin known; `intrinsics` and `provenance` only by the tool; no stale `intrinsics` (soft); every id and name resolves to one subject |
 
 ### 17.3 Form checks
 
@@ -1088,7 +1089,7 @@ confine: { all: ["country:ca"] }
 verify: 90d
 ```
 
-18.6.2 **Selection** matches labels the instance computes for each artifact and testimony it holds: its shape and that shape's `refines` chain (`shape`), the testimony shapes in its record's provenance (`origin`), the kinds of the entities that cite it (`kind`), the instance's tier (`tier`), its mime and its size; `testimony: true` selects testimony. Every policy whose selection matches applies; an extension's policies apply together with its base's.
+18.6.2 **Selection** matches labels the instance computes for each artifact and testimony it holds: its shape and that shape's `refines` chain (`shape`), the testimony shapes its record's provenance matches (`origin`), the kinds of the entities that cite it (`kind`), the instance's tier (`tier`), its mime and its size; `testimony: true` selects testimony. Every policy whose selection matches applies; an extension's policies apply together with its base's.
 
 18.6.3 **Requirements.** A requirement holds when at least `copies` copies sit on stores whose tags satisfy `where` (`all`, `any`, `not`), spread across that many distinct values of the `distinct` key. A copy counts once per physical copy — routes through containers count (a constituent is held wherever its container is), linked copies sharing storage count once, observed trees and missing copies never count. `confine` restricts every copy to stores whose tags satisfy it; a copy outside is a finding and reconcile never places one there. `verify` is how recent a verification a copy needs to count; an older one is a finding and is re-verified.
 
@@ -1165,7 +1166,7 @@ Each host MAY run one custody daemon, `athd`, serving every instance on the host
 | `instance reshard` | admin | moves files to the shard widths `athenaeum.yaml` declares (§5.2); no line changes |
 | `ingest <file…> [--testimony <file>…]` | write | sniffs; admits or refuses delivered testimony before anything is placed; places the artifact and its testimony in the local store; writes the receipt; writes or refreshes the artifact's record with its projection (§8.1). Writes nothing judged |
 | `holdings` | read | what the instance holds: its records, each with its stage and provenance (§5.7) |
-| `sweep [--stale]` | write | rewrites `intrinsics` and `provenance` where the op or a testimony shape is newer than the projection's |
+| `sweep [--stale]` | write | rewrites `intrinsics` where the op is newer than the projection's |
 | `resolve <anchor> [--trace]` | read | the artifact, the surface or the reading at an address; `--trace` reports the route (§18.8.2) |
 | `tree <subject>` | read | the tree, derived or stored; a designated or positional address to its intrinsic `at` |
 | `record <subject>` | read | the record's stage, its passes with what each covers and attests, and what the next stage needs (§8.5) |

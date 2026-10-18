@@ -226,21 +226,17 @@ const TRACKS: Record<string, J> = {
     ],
   },
 };
-/** A testimony's fields, read through the instance's testimony shapes (§9.4): the first shape whose `matches` pointer resolves. */
+/** Admission (§9.5): a delivered testimony must satisfy one of the instance's testimony shapes, else ingest refuses it. Nothing of this is written. */
 const pointer = (doc: unknown, ptr: string) => ptr.split("/").slice(1).reduce<unknown>((v, k) => (v && typeof v === "object" ? (v as J)[k] : undefined), doc);
-function testimonyFields(inst: Instance, bytes: Uint8Array, base?: Instance): J {
-  const doc = Bun.YAML.parse(new TextDecoder().decode(bytes));
+function admit(inst: Instance, bytes: Uint8Array, base?: Instance): J {
+  const doc = Bun.YAML.parse(new TextDecoder().decode(bytes)) as J;
   for (const i of [inst, base].filter(Boolean) as Instance[])
     for (const [k, ls] of i.terms) {
       if (!k.startsWith("shapes/") || !ls.some((l) => l.pred === "testimony")) continue;
       const m = ls.find((l) => l.pred === "matches")?.val as J | undefined;
       if (!m || pointer(doc, String(m.selector)) === undefined) continue;
-      const fields: J = {};
-      for (const f of ls.filter((l) => l.pred === "field")) {
-        const v = pointer(doc, String((f.val as J).from));
-        if (v !== undefined) fields[String((f.val as J).name)] = v;
-      }
-      return { [k.slice(7)]: fields }; // the testimony is its hash; this is what the instance read from it, under the shape that read it
+      for (const f of ls.filter((l) => l.pred === "field" && (l.val as J).required)) if (pointer(doc, String((f.val as J).from)) === undefined) throw new Error(`testimony lacks ${(f.val as J).name}: ingest refuses it`);
+      return doc;
     }
   throw new Error("testimony matches no shape: ingest refuses it (§9.5)");
 }
@@ -296,7 +292,7 @@ async function ingest(inst: Instance, bytes: Uint8Array, name: string, testimony
     const t = await blake3Hex(testimony);
     keep("testimony", t, testimony);
     delivered.push({ hash: t, name: `${name}.testimony.yaml` });
-    provenance.push({ testimony: t, ...testimonyFields(inst, testimony, base) });
+    provenance.push({ testimony: t, content: admit(inst, testimony, base) }); // the testimony's own content, verbatim
     idOf(t);
   }
   const received = new Date(Date.parse(`${DATE}T09:00:00Z`) + 60_000 * clock++).toISOString().replace(".000", "");
