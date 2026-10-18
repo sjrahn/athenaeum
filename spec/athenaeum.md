@@ -15,14 +15,14 @@ This document is normative. The key words MUST, MUST NOT, SHOULD and MAY are use
 
 1.1 This specification defines:
 
-- what an **instance** stores: bytes, testimony, the owner's rulings, and the lines that describe, structure, read and cite the bytes;
+- what an **instance** holds: artifacts, testimony, the owner's rulings, and the lines that describe, structure, read and cite them;
 - what the **tooling** derives from them, and the rules every stored and derived thing obeys;
 - what the tooling knows about **formats**, and the primitives an **ontology** composes to say what the data means;
-- how bytes are kept and found (**custody**), and the tool surface through which all of it is read and written.
+- how artifacts are kept and found (**custody**), and the tool surface through which all of it is read and written.
 
 1.2 A conforming tool implements every MUST of this document for the formats it registers (§10). A conforming instance holds only what this document allows to be stored.
 
-1.3 The tooling acquires nothing. Bytes and testimony are acquired by producers outside the tooling and handed to it from disk; the tooling never fetches them. The only network traffic it may cause is a custody transport a deployment declares (§18.2), moving bytes the instance already holds.
+1.3 The tooling acquires nothing. Bytes and testimony are acquired by producers outside the tooling and handed to it from disk; the tooling never fetches them. The only network traffic it causes is custody's: reaching the stores an instance declares (§18.2), to keep and resolve artifacts it already holds.
 
 ## 2. Principles
 
@@ -46,6 +46,8 @@ This document is normative. The key words MUST, MUST NOT, SHOULD and MAY are use
 | **record** | an artifact's file: its properties and the judgments over its scopes (§8) |
 | **properties** | what the format defines about an artifact's bytes, recorded by an op (§8.1) |
 | **testimony** | an artifact a producer emitted about other artifacts — where, when, by what, why they were found (§9) |
+| **store** | a place custody keeps artifacts: **managed** (content-addressed, written only by custody) or **observed** (a tree that keeps its own names, only read) (§18.2) |
+| **policy** | an instance's rule for how many copies of which artifacts sit on which stores (§18.6) |
 | **receipt** | the testimony the tooling writes for every ingest (§9.3) |
 | **origin term** | a term that admits a shape of testimony (§9.4) |
 | **scope** | a region of an artifact named by an intrinsic address `at` |
@@ -67,7 +69,7 @@ This document is normative. The key words MUST, MUST NOT, SHOULD and MAY are use
 
 ## 4. Instances
 
-4.1 An instance is one repository holding the trees of §5, its rulings and its custody declaration. It is standalone, or it extends exactly one other instance, its **base**. An extension reads everything its base holds as its own and writes only to itself; a base never reads its extensions. A base may itself extend another.
+4.1 An instance is one repository holding the trees of §5, its rulings, and its store and policy declarations. It is standalone, or it extends exactly one other instance, its **base**. An extension reads everything its base holds as its own and writes only to itself; a base never reads its extensions. A base may itself extend another.
 
 4.2 An instance's root holds `athenaeum.yaml`:
 
@@ -104,11 +106,12 @@ A cycle among bases, a base missing at its path or not at its pinned commit, or 
 ├── ontology/<term>.claims.jsonl        terms — what a kind of thing expects
 ├── corpus/<blake3>.claims.jsonl        artifacts — what the bytes are and manifest; testimony links
 │          <blake3>.rulings.jsonl       the owner's rulings on that artifact
-│          bytes/<b2>/<blake3>          the co-located store (§18)
 │          lineage.jsonl                corrections, re-keys, supersessions
 ├── ledger/<slug>.claims.jsonl          concepts — what the world is, cited into the corpus
 │          lineage.jsonl
 ├── strings/<b2>/<rev>                  reading bodies stored out of line
+├── custody/stores/<name>.yaml          the stores the instance declares (§18.2)
+│          policies/<name>.yaml        how it keeps its artifacts (§18.6)
 └── .ath/                               working state: staged passes, locks, caches, history — untracked
 ```
 
@@ -337,7 +340,7 @@ with `required` on every field each testimony of that origin MUST carry. A new o
 
 ### 9.5 Admission
 
-9.5.1 Ingest MUST refuse, before any byte is placed, a delivered testimony that classifies to no term refining `testimony`, or that lacks a field its origin term requires.
+9.5.1 Ingest MUST refuse, before any artifact is placed in a store, a delivered testimony that classifies to no term refining `testimony`, or that lacks a field its origin term requires.
 
 9.5.2 The same check runs over the corpus as a lint (§17), so an origin term that tightens lists the testimony it no longer admits. A testimony admitted once is never removed for failing a later check; it is listed.
 
@@ -349,9 +352,9 @@ with `required` on every field each testimony of that origin MUST carry. A new o
 
 9.6.3 A disowned testimony stays in provenance, marked, with the owner's reason; an evidence entry anchored into it is held (§14.4).
 
-### 9.7 Retiring a copy
+### 9.7 Removing a copy
 
-Once another route resolves the same bytes — a container's constituent, a location (§18) — a standalone copy of an artifact's bytes MAY be retired, the full BLAKE3 verified first. Its readings, claims and testimony stay, since identity is the hash. Testimony bytes are never retired. Bytes a container re-encoded are a different artifact; "the same image as" is a ledger claim.
+A copy of an artifact MAY be removed from a store once the artifact's policies hold without it, counting every route — a container that holds it is a copy of it (§18.6.3). Its readings, claims and testimony stay, since identity is the hash. A container that re-encoded an artifact holds a different artifact; "the same image as" is a ledger claim.
 
 ### 9.8 Placement
 
@@ -586,6 +589,7 @@ The following are functions of stored lines and are computed at read time. Writi
 | status | bound entries, kinds, modes and standing challenges (§14.5) |
 | demand | §14.7 |
 | staleness of a pass | `pass.ontology` against the current pin, for the scopes a changed term reaches |
+| residence | the host index (§18.4) |
 | complete extent, section closure, paragraph numbers | `in` and `ord` |
 | the export, the remainder, the envelope | §15 |
 | sensitivity | the tier of the instance a line lives in |
@@ -635,7 +639,7 @@ The following are functions of stored lines and are computed at read time. Writi
 
 13.5.3 Revoking a ruling removes its line with a lineage row.
 
-13.5.4 Acquiring bytes from outside, deleting, retiring a standalone copy, moving an artifact between an extension and its base, repinning a base and changing an ontology are owner-gated verbs of the tool (§19), not rulings.
+13.5.4 Acquiring artifacts from outside, deleting, removing a copy from a store, moving an artifact between an extension and its base, repinning a base and changing an ontology are owner-gated verbs of the tool (§19), not rulings.
 
 13.5.5 Owner prose has no place in the instance: anything worth saying about an artifact or a concept is a claim with evidence.
 
@@ -791,80 +795,113 @@ A term's `lint` lines are declarative checks over its scopes, composed from:
 
 ## 18. Custody
 
-Custody is where bytes live and how a BLAKE3 finds them. The trees are tracked text; custody is the byte plane beneath them, machine-specific and untracked. An artifact's identity is a tree fact; its residence is a custody fact, and the two never touch: the same bytes may live standalone, inside a container, on an attached share or in several places at once, and no line changes when they move.
+Custody keeps artifacts and finds them by BLAKE3. The trees name artifacts by hash and never say where they reside; residence is the business of stores, an index and the policies an instance declares.
 
-### 18.1 The contract
+### 18.1 Guarantees
 
-1. **An id resolves to its bytes.** Given a BLAKE3, the instance produces the bytes through whichever route holds them. Every route yields identical bytes; a resolver may take any.
-2. **Residence is derived, never stored.** No line says where bytes live. Every route is computed from declared locations, constituent lists or derived indexes.
-3. **The index proposes, the hash disposes.** A derived residence map may route a read under its staleness pins, but every act that mints, copies or retires bytes — ingest, adoption, replication, retiring a copy — verifies the full BLAKE3 first. A wrong map can at worst misroute a read.
-4. **Nothing normative depends on custody state.** Location indexes and caches are regenerable deployment state. A consumer missing a row recomputes it when the bytes are in hand, or reports it.
+1. **A hash resolves or fails.** Given a BLAKE3, custody produces the artifact through whichever route holds it, or reports that none does. No caller names a store.
+2. **Every read is verified.** The BLAKE3 is computed over the bytes as they stream; a mismatch fails that route and the next is tried. No driver is trusted.
+3. **Residence is derived.** No line in the trees records where an artifact resides. The index is a belief about the stores, refreshed by inventory, transfer and verification.
+4. **Automation only adds.** Custody copies and verifies on its own. It removes a copy only from a store declared evictable, and only after verifying, at that moment, that the artifact's policies hold without it (§18.6.3). Every other removal is an owner-gated verb.
 
-### 18.2 Routes
+### 18.2 Stores
 
-An id resolves through five classes of route, in this order; a declared cost (§18.3.4) reorders within a class, never across classes:
-
-1. **the co-located store** — `corpus/bytes/<b2>/<blake3>` in the instance, then in each base it builds on, through that base's custody declaration;
-2. **other store locations** — content-addressed trees the tool writes, declared in the custody file;
-3. **attached locations** — trees whose files stay in place, resolved through the location index (§18.4);
-4. **the constituent route** — bytes streamed out of a container through its constituent list; a constituent may have no standalone copy at all;
-5. **remote hydration** — a store location with a remote transport, pulled local on demand.
-
-### 18.3 Locations
-
-18.3.1 An instance's custody is declared in `custody.yaml` at its root, untracked:
+18.2.1 A **store** holds artifacts. Each is declared in the instance under `custody/stores/<name>.yaml`:
 
 ```yaml
-locations:
-  - name: bulk
-    kind: store                    # a content-addressed tree the tool writes
-    path: /mnt/slow/bytes
-    place:
-      mimes: [application/x-openzim]
-      origins: [map-extract]       # origin terms: bytes whose testimony classifies here land here
-  - name: shares
-    kind: attached                 # files stay in place
-    path: /mnt/shares/media
-    manifest: true                 # the host's residence scanner presents a manifest (§18.5)
-    cost: 20
-  - name: offsite
-    kind: store
-    remote: rclone:offsite-bytes   # a transport, not a layout
-floors:
-  document: 2                      # redundancy floors by root or origin term (§18.6.3)
+id: 6b1f0c52-5d0e-4a8e-9c1e-2f0d6f9b2a71
+driver: rclone
+role: managed
+tags: [ssd, online, country:ca, city:winnipeg]
+encryption: client             # none | client | driver
+capacity: 4TB                  # only where the driver cannot report it
+evict: { above: 90% }          # only on a store that may shed copies (§18.6.3)
 ```
 
-18.3.2 **Store locations.** A store location is a `<b2>/<blake3>` tree at another root. Placement directs new bytes there: an `origins` claim (the origin term the delivered testimony classifies to) beats a `mimes` claim, which beats a location declared `default: true`, which beats the co-located store; within one kind of claim, declaration order breaks ties.
+| field | meaning |
+|---|---|
+| `id` | a UUID, the store's identity on every host; written into the store itself, so a store is recognised wherever it is mounted |
+| `driver` | how the store is reached (§18.3) |
+| `role` | `managed` — a content-addressed tree only custody writes, `<b2>/<blake3>`; or `observed` — a tree that keeps its own names and paths, which custody reads and never writes |
+| `tags` | free strings, meaningful only to policies; a `key:value` tag lets a policy count distinct values of `key` |
+| `encryption` | `none`; `client` — custody encrypts before the driver sees the artifact; `driver` — the driver's own encryption |
+| `capacity` | the size custody plans against when the driver cannot report one |
+| `evict` | the fill level above which the store sheds copies its policies no longer need |
+| `links` | on an observed tree: the link methods ingest may use to place an artifact in a managed store on the same filesystem, tried in order — `reflink`, `hardlink` (§18.5.3) |
 
-18.3.3 **Attached locations.** An attached location is a tree the tool reads and never rewrites: files keep their names and paths. Attesting it streams and hashes the tree — or reads its presented manifest — and writes the location index; from then on its files resolve by bare id. Ingesting an attached file in place (`ingest --in-place`) writes its subject without copying its bytes, the full BLAKE3 verified at ingest. An index row pins `size` and `mtime`; a mismatch makes the row stale, and the route reports the bytes unresolvable rather than serving bytes that may no longer match their id.
+18.2.2 How a host reaches a store is not the instance's: `$XDG_CONFIG_HOME/athenaeum/access.yaml` maps each store id to the driver's configuration on that host — a path, an rclone remote, a reference to credentials. Credentials never enter the trees.
 
-18.3.4 **Cost.** A location MAY declare `cost`, a non-negative integer, lower being nearer. Undeclared, cost follows the route order. When bytes must move, the resolver takes the cheapest residence whose pins verify, falling through on staleness.
+18.2.3 Every host has a **local store**: a managed store at `$XDG_DATA_HOME/athenaeum/artifacts/`, tagged `local` and declared evictable. Ingest writes new artifacts there first.
 
-### 18.4 The location index
+18.2.4 An observed tree, like the local store, holds artifacts without persisting them: a file in it may be edited, moved or deleted by anyone. A policy counts no copy in an observed tree.
 
-The location index maps a BLAKE3 to `(location, relpath, size, mtime)` with the row's provenance — `computed` (the tool hashed the bytes) or `presented` (a host's claim, §18.5) — and, for a presented row, the manifest generation it came from, so re-attesting skips generations already read. It persists under `.ath/`, because rebuilding it needs the bytes; deleting it is always safe at the cost of one attest per location.
+### 18.3 Drivers
 
-### 18.5 Presented manifests
+18.3.1 A driver offers: `capabilities`; `inventory(since)` — the artifacts or files present, with sizes, from a given generation; `has(blake3)`; `get(blake3 | path) → stream`; `put(blake3, stream)`; `remove(blake3)`; `stat()` — used and free space where it can tell. A managed store's driver puts under a temporary name and renames once the hash is verified.
 
-18.5.1 An attached location on another host MAY present its own manifest, maintained on that host against its local filesystem by the residence scanner. The scanner's identity model — `(dev, ino) → (size, mtime) → BLAKE3` — is sound only where inodes are real, so it runs where the bytes are: an unchanged stat is never re-hashed, a rename is a new path on a known identity, hard links collapse to one hash, and an interrupted scan resumes per file.
+18.3.2 The registered drivers are `local` (a directory on this host) and `rclone` (any backend rclone reaches: object stores, SMB shares, Proton Drive, SFTP and the rest). A further driver is one module implementing the same operations.
 
-18.5.2 The manifest is published at the location root by temp-then-rename at each generation, so a reader only ever sees a whole generation. Its format is the scanner's own versioned contract, outside this specification. A manifest carries the stat facts of each identity and an advisory mime claim sniffed once when the bytes were hashed; ingest's own sniffing (§10.1) is authoritative.
+### 18.4 The index
 
-18.5.3 Presented rows serve resolution under the same pins as computed rows; every act that mints or copies verifies the full hash. A deployment MAY re-verify presented rows by an ordinary attest. Scrubbing for decay is the scanner's duty on its host.
+18.4.1 Each host keeps one index, at `$XDG_STATE_HOME/athenaeum/index.sqlite`, shared by every instance on the host. Per store and BLAKE3 it records the state — `claimed` (an inventory says so), `verified` (custody hashed it, with the instant) or `missing` (looked for and absent) — with the size and the inventory generation. For an observed tree it records each path with its size and mtime, and any link to a managed copy.
 
-### 18.6 Custody acts
+18.4.2 The index persists, because rebuilding it needs every store's inventory and, for verification, the artifacts themselves. Deleting it is always safe; custody re-inventories.
 
-18.6.1 **Locate** answers, for a bare hash, where those bytes reside — every store, the location index, constituent routes, remote objects — ordered by cost, and whether a subject exists. It works for a hash the instance has never ingested. A hash with several residences is the deduplication surface: listed, never deleted automatically.
+### 18.5 Observed trees and the scanner
 
-18.6.2 **Move** relocates a standalone copy between store locations by copy, verify, then remove: the bytes are copied under a temporary name, the full hash verified, the copy renamed into place, and only then the source removed. A failed verify leaves the source untouched. Attached files never move; a constituent with no standalone copy has nothing to move.
+18.5.1 An observed tree is inventoried by the **scanner**, run on the host where the tree's filesystem is local, so that hashing runs at disk speed and only the manifest crosses the network. Its identity model — `(dev, ino) → (size, mtime) → BLAKE3` — re-hashes nothing whose stat is unchanged; a rename is a new path on a known identity; hard links collapse to one hash; an interrupted scan resumes per file. The manifest is published by temp-then-rename at each generation, so a reader sees only whole generations. Its format is the scanner's own versioned contract.
 
-18.6.3 **Adopt** copies an attached file into a store under move's contract and leaves the original in place; from then on the store copy is served. Removing the original is a separate act.
+18.5.2 For every file the scanner records what was observed — host, path, size, mtime, birth time, generation. That record is testimony the scanner prepares in advance; it enters the instance only when the file is ingested.
 
-18.6.4 **Retire** removes a standalone copy once another route resolves the same bytes, the full hash verified through that route first (§9.7). Testimony bytes are never retired.
+18.5.3 Ingesting a file from an observed tree writes its `properties`, its receipt and the scanner's record as a testimony artifact, and places the artifact in a managed store: by the first of the tree's `links` methods the filesystem supports, else by copy. A **reflink** is an independent copy-on-write clone. A **hardlink** shares the observed file's inode, so an edit made in place to the observed file changes the managed copy; verification then finds it corrupt and reconcile restores it from another copy. A linked copy shares physical storage with its source and is counted as one copy.
 
-18.6.5 **Floors.** `floors` names, per root or origin term, how many distinct locations should hold a route to an artifact's bytes — a standalone copy in a store, a container residence, a remote object and an attached file each count once. Across an extension and its base the highest floor wins; a copy the extension holds counts toward its own. Below-floor artifacts are a health finding; a removal that would break a floor names it. Nothing enforces a floor at write.
+18.5.4 Custody reports, per observed tree: artifacts also held by a managed store (with how each is linked) — candidates for clean-up outside the instance; tracked artifacts held only there — at risk; files that are no tracked artifact — candidates for ingest.
 
-18.6.6 **Caches.** A cache sweep never removes the location index or any index whose rebuild needs bytes.
+### 18.6 Policies
+
+18.6.1 A **policy** says how an instance keeps a selection of its artifacts. Each is a file `custody/policies/<name>.yaml`:
+
+```yaml
+select: { origin: agent-session }
+require:
+  - copies: 2
+    where: { not: [local] }
+    distinct: city
+  - copies: 1
+    where: { all: [ssd] }
+confine: { all: ["country:ca"] }
+verify: 90d
+```
+
+18.6.2 **Selection** matches labels the instance computes for each artifact it holds or cites: its root term and that term's `refines` chain (`term`), the origin terms of its provenance (`origin`), its class, the instance's tier (`tier`), its mime and its size. Every policy whose selection matches applies; an extension's policies apply together with its base's.
+
+18.6.3 **Requirements.** A requirement holds when at least `copies` copies sit on stores whose tags satisfy `where` (`all`, `any`, `not`), spread across that many distinct values of the `distinct` key. A copy counts once per physical copy — routes through containers count (a constituent is held wherever its container is), linked copies sharing storage count once, observed trees and missing copies never count. `confine` restricts every copy to stores whose tags satisfy it; a copy outside is a finding and reconcile never places one there. `verify` is how recent a verification a copy needs to count; an older one is a finding and is re-verified.
+
+18.6.4 Every instance carries the **default policy**: every artifact has at least one copy on a managed store not tagged `local`. An artifact held only in the local store or an observed tree is **unpersisted**.
+
+### 18.7 Reconcile
+
+18.7.1 **Status** lists every finding — unpersisted, below a requirement, outside a confinement, verification overdue, a store over capacity. **Plan** lists the actions that would resolve them. **Reconcile** performs them: it copies from the cheapest verified route to stores chosen by requirement, confinement, free space and declared cost; it re-verifies what is overdue; and it evicts from an evictable store above its fill level only copies whose policies hold without it, verified at that moment. Reconcile is idempotent and resumable: an interrupted run leaves every completed transfer in place and none half-written.
+
+18.7.2 A store that is unavailable — a removable disk unplugged, a remote unreachable — is skipped and reconciled when it next answers.
+
+### 18.8 Resolution
+
+18.8.1 Resolving a BLAKE3 tries the routes the index knows, cheapest first: the local store, other managed stores by declared cost, observed trees, the constituent route — the container resolved, then the constituent extracted — and the stores of every base the instance builds on. The first route whose bytes verify wins; if none does, resolution fails.
+
+18.8.2 Resolution reports how it succeeded: the route taken, nested through containers, and every other residence the index knows, with its state and the age of its verification:
+
+```
+b3:9f2c…  ← path=IMG_0042.HEIC in b3:41aa… (zip)
+            ← store nas-media [hdd, city:winnipeg]  verified 3d
+   also: offsite [object, city:toronto] verified 41d · local evicted
+```
+
+18.8.3 An artifact resolved from a store other than the local one MAY be kept in the local store as a cache copy.
+
+### 18.9 The custody daemon
+
+Each host MAY run one custody daemon, `athd`, serving every instance on the host. It runs reconcile on a schedule and on events — an ingest, a store becoming available, a change in an observed tree — keeps a resumable transfer queue with bandwidth limits and back-off, and is the single writer of the host index while it runs. Everything it does is a custody verb any caller can run by hand (§19.5); without it, those verbs take the index lock themselves.
 
 ## 19. The tool
 
@@ -882,7 +919,7 @@ The location index maps a BLAKE3 to `(location, relpath, size, mtime)` with the 
 
 ### 19.3 Writes
 
-19.3.1 Every write is atomic. Bytes are written under a temporary name, verified against their BLAKE3 and renamed into place; a line file is rewritten under a temporary name and renamed. A verb that is interrupted leaves the instance as it was, or with every write it completed whole. Delivered files are copied, or for a file on an attached location left in place (§18.3.3), and never removed by the tool.
+19.3.1 Every write is atomic. An artifact is written under a temporary name, verified against its BLAKE3 and renamed into place; a line file is rewritten under a temporary name and renamed. A verb that is interrupted leaves the instance as it was, or with every write it completed whole. A delivered file is placed in the local store by copy, or from an observed tree by link (§18.5.3); the tool never removes it from where it was delivered.
 
 19.3.2 Mutating verbs take named locks under `.ath/locks/`; a held lock is `busy`. Every mutating verb appends its actor, arguments and outcome to the history under `.ath/`.
 
@@ -901,7 +938,7 @@ The location index maps a BLAKE3 to `(location, relpath, size, mtime)` with the 
 | 73 | conflict: a write the contract refuses — identity, shadowing, an undeclared field, an unadmitted testimony |
 | 75 | busy: a lock is held |
 | 77 | denied: the caller's profile or actor may not run this |
-| 78 | config: `athenaeum.yaml`, a base, the custody file or the ontology is broken, or the tool cannot serve the chain (§19.2.2) |
+| 78 | config: `athenaeum.yaml`, a base, a store or policy declaration, the host's access file or the ontology is broken, or the tool cannot serve the chain (§19.2.2) |
 
 ### 19.5 Verbs
 
@@ -909,9 +946,9 @@ The location index maps a BLAKE3 to `(location, relpath, size, mtime)` with the 
 |---|---|---|
 | `instance init [--extends <path>]` · `instance show` · `instance check` | write · read · read | init writes `athenaeum.yaml` and the empty trees — for a standalone instance with the terms §11.9 names, for an extension pinned to its base's current commit; show prints the instance and what it builds on; check verifies the chain, its pins and its configuration |
 | `instance repin` | admin | moves the base pin to the base's current commit and reports what the move makes stale (§4.3) |
-| `ingest <file…> [--testimony <file>…] [--in-place]` | write | sniffs, records `properties`, makes subjects of constituents one level deep, admits or refuses testimony before any byte is placed, writes the receipt; the same bytes again add testimony only |
+| `ingest <file…> [--testimony <file>…]` | write | sniffs, records `properties`, makes subjects of constituents one level deep, admits or refuses testimony before any artifact is placed, writes the receipt; the same bytes again add testimony only |
 | `properties sweep [--stale]` | write | writes superseding `properties` lines where the op version is older than the tool's |
-| `resolve <anchor>` | read | the bytes, the surface or the reading at an address, through routes |
+| `resolve <anchor> [--trace]` | read | the artifact, the surface or the reading at an address; `--trace` reports the route (§18.8.2) |
 | `tree <subject>` | read | the scope table in `ord`; a designated or positional address to its intrinsic `at` |
 | `provenance <subject>` | read | the provenance chain (§9.6) |
 | `claims show` · `claims sort` | read · write | a subject's lines across the chain; rewrite a file in canonical order |
@@ -925,6 +962,10 @@ The location index maps a BLAKE3 to `(location, relpath, size, mtime)` with the 
 | `ontology list` · `show` · `rules` · `pin` · `lint` | read | the terms, a term's lines, a scope's effective rules, the pin, §17.4 |
 | `export markdown <subject>` · `export nquads [<subject>]` | read | §15 |
 | `serve` | read | the planes over HTTP (§16) |
-| `location attest` · `locate` | write · read | §18.3.3, §18.6.1 |
-| `location move` · `adopt` · `retire` | admin | §18.6.2–§18.6.4 |
+| `store add <name>` · `store list` | write · read | declare a store and write its id into it; the stores and their state |
+| `custody inventory [<store>]` · `custody verify [<store>]` | write | refresh the index from inventories or scanner manifests; re-hash copies |
+| `custody status` · `custody plan` | read | findings; the actions that would resolve them (§18.7) |
+| `custody reconcile` | write | perform the plan: copy, verify, evict (§18.7) |
+| `custody where <blake3>` · `custody report <store>` | read | every known residence of a hash, whether or not the instance holds it; an observed tree's report (§18.5.4) |
+| `custody remove <blake3> --from <store>` | admin | remove one copy, refused unless the artifact's policies hold without it, verified at that moment (§9.7) |
 | `log` · `whoami` | read | the history; the caller's profile, actor and instance root |

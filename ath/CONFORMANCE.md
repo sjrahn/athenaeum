@@ -45,7 +45,7 @@ with the test that pins it.
 | 15 | export | — | gap: provenance view (§15.2) |
 | 16 | planes | `ath/test/serve.test.ts` | conforms |
 | 17 | lints | `ath/test/corpus.pass.test.ts`, `ath/test/lint.test.ts` | gap: per-testimony lint; stale properties; term lints §17.3 |
-| 18 | custody | — | gap: only the co-located store exists; locations, the index, presented manifests and custody acts are not implemented |
+| 18 | custody: stores (managed/observed), drivers (local, rclone), the host index, scanner-prepared testimony, links, policies, reconcile, resolution with trace, `athd` | `scanner/test/*` (the scanner only) | gap: not implemented — artifacts live in the instance at `corpus/bytes/`; needs the `custody/` package, the local store under `$XDG_DATA_HOME/athenaeum/artifacts/`, the index under `$XDG_STATE_HOME`, store and policy declarations, the custody verbs |
 | 19.1 | profiles, tiers, actor | — | conforms (ath/test/kit.dispatch.test.ts) |
 | 19.2 | loading an instance with its bases; op and properties coverage | — | gap: no coverage check |
 | 19.3 | atomic writes, locks, history | — | gap: line files and bytes are not written by temp-then-rename |
