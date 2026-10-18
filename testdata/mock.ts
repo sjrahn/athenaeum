@@ -77,8 +77,8 @@ const keep = (tree: "artifacts" | "testimony", full: string, bytes: Uint8Array) 
 
 type Vocab = "forms" | "kinds" | "properties";
 class Instance {
+  /** Terms by `<vocabulary>/<name>`: forms, kinds and properties are separate name spaces. */
   terms = new Map<string, J[]>();
-  sort = new Map<string, Vocab>();
   records = new Map<string, J[]>();
   entities = new Map<string, J[]>();
   rulings: J[] = [];
@@ -90,14 +90,17 @@ class Instance {
     readonly config: J,
   ) {}
   term(name: string, ...lines: J[]) {
-    this.terms.set(name, [...(this.terms.get(name) ?? []), ...lines]);
-    if (!this.sort.has(name)) this.sort.set(name, "forms");
+    this.add("forms", name, lines);
+  }
+  add(v: Vocab, name: string, lines: J[]) {
+    const key = `${v}/${name}`;
+    this.terms.set(key, [...(this.terms.get(key) ?? []), ...lines]);
   }
   /** The pin of one vocabulary (§11.8): term files in name order, each preceded by its name, lines sorted. */
   async pin(vocab: "corpus" | "graph", base?: Instance) {
-    const want = (v: Vocab) => (vocab === "corpus" ? v === "forms" : v !== "forms");
+    const want = (key: string) => (vocab === "corpus") === key.startsWith("forms/");
     const all = new Map<string, J[]>();
-    for (const inst of [base, this].filter(Boolean) as Instance[]) for (const [n, ls] of inst.terms) if (want(inst.sort.get(n)!)) all.set(n, [...(all.get(n) ?? []), ...ls]);
+    for (const inst of [base, this].filter(Boolean) as Instance[]) for (const [k, ls] of inst.terms) if (want(k)) all.set(k, [...(all.get(k) ?? []), ...ls]);
     const text = [...all.keys()].sort().map((n) => `${n}\n${jsonl(all.get(n)!)}`).join("");
     return `b3:${(await blake3Hex(text)).slice(0, 16)}`;
   }
@@ -111,9 +114,9 @@ class Instance {
     const pins = { "@corpus": await this.pin("corpus", base), "@graph": await this.pin("graph", base) };
     const pinned = (ls: J[]) => JSON.parse(JSON.stringify(ls).replace(/"@(corpus|graph)"/g, (m) => JSON.stringify(pins[m.slice(1, -1) as keyof typeof pins]))) as J[];
     write(join(this.dir, "athenaeum.yaml"), yaml(this.config));
-    for (const [t, ls] of this.terms) {
-      const dir = { forms: "corpus/forms", kinds: "graph/kinds", properties: "graph/properties" }[this.sort.get(t)!];
-      write(join(this.dir, dir, `${t}.jsonl`), jsonl(ls));
+    for (const [k, ls] of this.terms) {
+      const [v, name] = k.split("/") as [Vocab, string];
+      write(join(this.dir, { forms: "corpus/forms", kinds: "graph/kinds", properties: "graph/properties" }[v], `${name}.jsonl`), jsonl(ls));
     }
     for (const [full, ls] of this.records) {
       const id = idOf(full);
@@ -196,7 +199,7 @@ async function ingest(inst: Instance, bytes: Uint8Array, name: string, testimony
 /** Copy a regression term and what it refines, in the specification's line shape (§6.1, §11.2). */
 const DROP = new Set(["concept", "keys", "cells", "sentinel", "owes", "functional", "origin", "lint"]);
 function copyForm(inst: Instance, name: string, seen = new Set<string>()) {
-  if (seen.has(name) || inst.terms.has(name)) return;
+  if (seen.has(name) || inst.terms.has(`forms/${name}`)) return;
   seen.add(name);
   const path = join(ONTO, `${name}.claims.jsonl`);
   if (!existsSync(path)) throw new Error(`no regression term ${name}`);
@@ -223,20 +226,17 @@ function copyForm(inst: Instance, name: string, seen = new Set<string>()) {
     }
     lines.push({ pred, val });
   }
-  inst.terms.set(name, lines);
-  inst.sort.set(name, "forms");
+  inst.add("forms", name, lines);
   for (const l of lines) if (l.pred === "refines") copyForm(inst, String(l.val), seen);
   for (const l of lines) if (l.pred === "select") copyForm(inst, String((l.val as J).form), seen);
   for (const l of lines) if (l.pred === "expects") for (const f of l.val as string[]) copyForm(inst, f, seen);
   for (const l of lines) if (l.pred === "shape" && (l.val as J).form) copyForm(inst, String((l.val as J).form), seen);
 }
 function kind(inst: Instance, name: string, owes: string[], definition: string, evidencedBy: string[] = []) {
-  inst.sort.set(name, "kinds");
-  inst.term(name, { pred: "definition", val: definition }, { pred: "owes", val: owes }, ...(evidencedBy.length ? [{ pred: "evidenced_by", val: evidencedBy }] : []));
+  inst.add("kinds", name, [{ pred: "definition", val: definition }, { pred: "owes", val: owes }, ...(evidencedBy.length ? [{ pred: "evidenced_by", val: evidencedBy }] : [])]);
 }
 function prop(inst: Instance, name: string, range: string, functional = false, authority = false) {
-  inst.sort.set(name, "properties");
-  inst.term(name, { pred: "range", val: range }, ...(functional ? [{ pred: "functional", val: true }] : []), ...(authority ? [{ pred: "authority", val: true }] : []));
+  inst.add("properties", name, [{ pred: "range", val: range }, ...(functional ? [{ pred: "functional", val: true }] : []), ...(authority ? [{ pred: "authority", val: true }] : [])]);
 }
 const recordPass = { pred: "pass", val: { by: "reader-a", date: DATE, id: "p1", verify: "reader-b", vocab: "@corpus" } };
 const entityPass = { pred: "pass", val: { by: "reader-a", date: DATE, id: "p1", verify: "reader-b", vocab: "@graph" } };
