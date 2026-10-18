@@ -4,7 +4,9 @@
 // regression ontology; the output (testdata/mock/) is never tracked. Run: bun testdata/mock.ts
 //
 // It writes the files by hand to show the layout; it is not the tool. Lines an author would sign are written here
-// the way a signed pass would leave them.
+// the way a signed pass would leave them. Records are one YAML document each (§8): the procedure PDF is formed, the
+// listing page and the mooring plan are read, the sign photograph is transcribed; the sheet and the thread are
+// structured and pass through with no record.
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -55,7 +57,52 @@ const yaml = (o: J, indent = ""): string =>
         : `${indent}${k}: ${Array.isArray(v) ? `[${v.join(", ")}]` : v}\n`,
     )
     .join("");
-const rev = async (body: string) => `b3:${(await blake3Hex(body)).slice(0, 16)}`;
+const rev = async (body: unknown) => `b3:${(await blake3Hex(typeof body === "string" ? body : JSON.stringify(body))).slice(0, 16)}`;
+
+// ── records (§8.2): one document, keys in a fixed order, written in one style ────────────────────────────────────
+type Reading = { text?: string; cells?: string[][]; tex?: string; pass: string };
+type Scope = { form: string | string[]; at: string; pass: string; scopes?: Scope[]; [field: string]: unknown };
+type Rec = { intrinsics: J; shape?: J; chrome?: J[]; passes: Record<string, J>; complete?: J; readings?: Record<string, Reading>; scopes?: Scope[] };
+const WORDS = /^(true|false|yes|no|null|on|off|y|n|~)$/i;
+const plainOk = (v: string, flow: boolean) => /^[A-Za-z][^\n]*$/.test(v) && !/: | #/.test(v) && !/[\s:]$/.test(v) && !WORDS.test(v) && !(flow && /[,[\]{}]/.test(v));
+const scalar = (v: unknown, flow = false) => (typeof v === "string" ? (plainOk(v, flow) ? v : JSON.stringify(v)) : JSON.stringify(v));
+const flow = (v: unknown): string =>
+  Array.isArray(v) ? `[${v.map(flow).join(", ")}]` : v && typeof v === "object" ? `{${Object.entries(v as J).map(([k, x]) => `${scalar(k, true)}: ${flow(x)}`).join(", ")}}` : scalar(v, true);
+/** A block mapping of scalars, multi-line strings as literal blocks, anything nested in flow style. */
+const block = (o: J, ind: string) =>
+  Object.entries(o)
+    .filter(([, v]) => v !== undefined)
+    .map(([k, v]) => (typeof v === "string" && v.includes("\n") ? `${ind}${scalar(k)}: |-\n${v.split("\n").map((l) => `${ind}  ${l}`).join("\n")}\n` : `${ind}${scalar(k)}: ${typeof v === "string" ? scalar(v) : flow(v)}\n`))
+    .join("");
+const scopeKeys = ({ form, at, pass, scopes: _, ...fields }: Scope): J => ({ form, at, ...Object.fromEntries(Object.entries(fields).sort(([a], [b]) => (a < b ? -1 : 1))), pass });
+const scopesYaml = (list: Scope[], ind: string): string =>
+  list.map((sc) => `${ind}- ${block(scopeKeys(sc), `${ind}  `).trimStart()}${sc.scopes?.length ? `${ind}  scopes:\n${scopesYaml(sc.scopes, `${ind}    `)}` : ""}`).join("");
+/** Addresses in canonical order (§7.4.2): page, then y, then x, then byte start. */
+const addrKey = (at: string) => {
+  const q = Object.fromEntries(at.split("&").map((kv) => kv.split("=") as [string, string]));
+  const [x = 0, y = 0] = (q.bbox ?? "0,0").split(",").map(Number);
+  return [Number(q.page ?? 0), y, x, Number((q.bytes ?? q.t ?? "0").split(",")[0])];
+};
+const byAddr = (a: string, b: string) => {
+  const [ka, kb] = [addrKey(a), addrKey(b)];
+  return ka.map((v, i) => v - kb[i]!).find((d) => d !== 0) ?? 0;
+};
+function recordYaml(r: Rec): string {
+  let out = `intrinsics: ${flow(r.intrinsics)}\n`;
+  if (r.shape) out += `shape: ${flow(r.shape)}\n`;
+  if (r.chrome) out += `chrome:\n${r.chrome.map((c) => `  - ${flow(c)}\n`).join("")}`;
+  out += `passes:\n${Object.entries(r.passes).map(([id, pass]) => `  ${id}: ${flow(pass)}\n`).join("")}`;
+  if (r.complete) out += `complete: ${flow(r.complete)}\n`;
+  if (r.readings) {
+    out += "readings:\n";
+    for (const at of Object.keys(r.readings).sort(byAddr)) {
+      const { pass, ...aspects } = r.readings[at]!;
+      out += `  ${scalar(at)}:\n${block({ ...Object.fromEntries(Object.entries(aspects).sort()), pass }, "    ")}`;
+    }
+  }
+  if (r.scopes) out += `scopes:\n${scopesYaml(r.scopes, "  ")}`;
+  return out;
+}
 
 // ── ids (§7.1): 8 hex digits, 16 where 8 collide, the first received keeping 8 ──────────────────────────────────
 const ids = new Map<string, string>();
@@ -79,7 +126,7 @@ type Vocab = "forms" | "shapes" | "kinds" | "properties";
 class Instance {
   /** Terms by `<vocabulary>/<name>`: forms, kinds and properties are separate name spaces. */
   terms = new Map<string, J[]>();
-  records = new Map<string, J[]>();
+  records = new Map<string, Rec>();
   entities = new Map<string, J[]>();
   rulings: J[] = [];
   stores = new Map<string, J>();
@@ -107,24 +154,25 @@ class Instance {
     const text = [...all.keys()].sort().map((n) => `${n}\n${jsonl(all.get(n)!)}`).join("");
     return `b3:${(await blake3Hex(text)).slice(0, 16)}`;
   }
-  record(full: string, ...lines: J[]) {
-    this.records.set(full, [...(this.records.get(full) ?? []), ...lines]);
+  record(full: string, doc: Rec) {
+    this.records.set(full, doc);
   }
   entity(name: string, ...lines: J[]) {
     this.entities.set(name, [...(this.entities.get(name) ?? []), ...lines]);
   }
   prune(base?: Instance) {
-    const have = new Set([...this.terms.keys(), ...(base ? [...base.terms.keys()] : [])].filter((k) => k.startsWith("forms/")).map((k) => k.slice(6)));
+    const have = new Set([...this.terms.keys(), ...(base ? [...base.terms.keys()] : [])]);
     for (const [k, ls] of this.terms) {
-      if (!k.startsWith("forms/")) continue;
+      if (!k.startsWith("forms/") && !k.startsWith("shapes/")) continue;
+      const v = k.slice(0, k.indexOf("/") + 1);
       this.terms.set(
         k,
         ls
-          .filter((l) => l.pred !== "refines" || have.has(String(l.val)))
-          .map((l) => (l.pred === "expects" ? { ...l, val: (l.val as string[]).filter((f) => have.has(f)) } : l))
+          .filter((l) => l.pred !== "refines" || have.has(v + String(l.val)))
+          .map((l) => (l.pred === "expects" ? { ...l, val: (l.val as string[]).filter((f) => have.has(`forms/${f}`)) } : l))
           .filter((l) => l.pred !== "expects" || (l.val as string[]).length),
       );
-      if (!this.terms.get(k)!.length) this.terms.set(k, [{ pred: "definition", val: k.slice(6).replace(/-/g, " ") }]);
+      if (!this.terms.get(k)!.length) this.terms.set(k, [{ pred: "definition", val: k.slice(v.length).replace(/-/g, " ") }]);
     }
   }
   async flush(base?: Instance) {
@@ -136,9 +184,9 @@ class Instance {
       const [v, name] = k.split("/") as [Vocab, string];
       write(join(this.dir, { forms: "corpus/forms", shapes: "corpus/shapes", kinds: "graph/kinds", properties: "graph/properties" }[v], `${name}.jsonl`), jsonl(ls));
     }
-    for (const [full, ls] of this.records) {
+    for (const [full, doc] of this.records) {
       const id = idOf(full);
-      write(join(this.dir, "corpus/records", id.slice(0, 2), `${id}.jsonl`), jsonl(pinned(ls)));
+      write(join(this.dir, "corpus/records", id.slice(0, 2), `${id}.yaml`), recordYaml(pinned([doc])[0] as Rec));
     }
     for (const [n, ls] of this.entities) write(join(this.dir, "graph/entities", n.slice(0, 2), `${n}.jsonl`), jsonl(pinned(ls)));
     for (const [n, s] of this.stores) write(join(this.dir, "stores", `${n}.yaml`), yaml(s));
@@ -150,7 +198,7 @@ class Instance {
   }
 }
 
-/** intrinsics (§8.1, §10.2): what the format defines, by the format's intrinsics op; a container's constituents. */
+/** intrinsics (§8.2, §10.2): what the format defines, by the format's intrinsics op; a container's constituents. */
 async function intrinsics(bytes: Uint8Array, name: string) {
   const sniffed = sniffMime(bytes, name);
   const mime = sniffed === "text/plain" && /\.ya?ml$/.test(name) ? "application/yaml" : sniffed;
@@ -162,7 +210,7 @@ async function intrinsics(bytes: Uint8Array, name: string) {
   if (mime === "text/html") parts.push(...(await dataUris(bytes)));
   if (parts.length) val.constituents = parts.map((p) => ({ path: p.path, blake3: p.blake3 }));
   const family = mime.split("/")[1]!.replace(/^x-/, "").split("+")[0]!;
-  return { line: { at: "whole", pred: "intrinsics", val, by: `${family}.intrinsics@1` }, parts };
+  return { val: { op: `${family}.intrinsics@1`, ...val }, parts };
 }
 
 /** Every `data:` URI in markup is a constituent; its path is the URI's byte span (§10.3). */
@@ -197,11 +245,11 @@ let clock = 0;
 async function ingest(inst: Instance, bytes: Uint8Array, name: string, testimony: Uint8Array | null, actor = "reader-a") {
   const full = await blake3Hex(bytes);
   keep("artifacts", full, bytes);
-  const delivered: string[] = [];
+  const delivered: { hash: string; name: string }[] = [];
   if (testimony) {
     const t = await blake3Hex(testimony);
     keep("testimony", t, testimony);
-    delivered.push(t);
+    delivered.push({ hash: t, name: `${name}.testimony.yaml` });
   }
   const received = new Date(Date.parse(`${DATE}T09:00:00Z`) + 60_000 * clock++).toISOString().replace(".000", "");
   const receipt = new TextEncoder().encode(`${JSON.stringify(sortKeys({ actor, artifact: full, instance: inst.config.id, name, received, testimony: delivered }))}\n`);
@@ -220,6 +268,8 @@ const DROP = new Set(["concept", "keys", "cells", "sentinel", "owes", "functiona
 const FORMATS = new Set(["unit", "document", "data", "container", "lossy", "image", "media", "html", "xhtml", "pdf", "json", "ndjson", "csv", "tsv", "zip", "png", "jpeg", "gif", "markdown", "yaml", "rfc822", "plain-text"]);
 /** Forms that named meaning, not structure (§11.1.2), and the structural form each scope really is. */
 const STRUCTURE: Record<string, string | null> = { "methodological-tool": null, regulation: null, "parameter-table": "table", "revision-history": "table", toc: "table", metadata: "definition-list", price: "value", "listing-fact": "list-item", "listing-page": null };
+/** A table and a definition list read their grid as one `cells` reading (§8.3.1); their rows and definitions are structure only. */
+const GRID = new Set(["table", "definition-list", "row", "header", "definition"]);
 const OWN_SURFACE = new Set(["html.text@1", "pdf.words@1", "csv.parse@1", "eml.text@1", "json.text@1", "yaml.text@1", "markdown.text@1"]);
 function copyForm(inst: Instance, name: string, seen = new Set<string>()) {
   if (FORMATS.has(name) || name in STRUCTURE || seen.has(name) || inst.terms.has(`forms/${name}`)) return;
@@ -243,15 +293,17 @@ function copyForm(inst: Instance, name: string, seen = new Set<string>()) {
       val = { ...rest, form: term };
     }
     if (pred === "field" && val && typeof val === "object") {
-      const { kind, ...rest } = val as J;
-      val = { ...rest, type: kind };
+      const { kind, where, ...rest } = val as J;
+      val = { ...rest, type: kind, ...(where ? { where: where === "right-margin" ? "margin" : where } : {}) };
     }
+    if (pred === "reads" && GRID.has(name)) continue;
     if (pred === "matches" && val && typeof val === "object") {
       const { header, member, ...rest } = val as J;
       val = { ...rest, ...(header ? { first_row: header } : {}), ...(member ? { constituent: member } : {}) };
     }
     lines.push({ pred, val });
   }
+  if (GRID.has(name)) lines.push({ pred: "reads", val: name === "table" || name === "definition-list" ? "cells" : "none" });
   if (!lines.length) lines.push({ pred: "definition", val: name.replace(/-/g, " ") });
   inst.add("forms", name, lines);
   for (const l of lines) if (l.pred === "refines") copyForm(inst, String(l.val), seen);
@@ -265,14 +317,14 @@ function kind(inst: Instance, name: string, owes: string[], definition: string, 
 function prop(inst: Instance, name: string, range: string, functional = false, authority = false) {
   inst.add("properties", name, [{ pred: "range", val: range }, ...(functional ? [{ pred: "functional", val: true }] : []), ...(authority ? [{ pred: "authority", val: true }] : [])]);
 }
-const recordPass = { pred: "pass", val: { by: "reader-a", date: DATE, id: "p1", verify: "reader-b", vocab: "@corpus" } };
+const recordPass = { by: "reader-a", verify: "reader-b", vocab: "@corpus", date: DATE };
 const entityPass = { pred: "pass", val: { by: "reader-a", date: DATE, id: "p1", verify: "reader-b", vocab: "@graph" } };
 const ev = (anchor: string, quote: string, reading: string, extra: J = {}) => ({ anchor, mode: "stated", quote, reading, ...extra });
 
 // ══ reference — public, standalone ════════════════════════════════════════════════════════════════════════════════
 rmSync(OUT, { recursive: true, force: true });
 const ref = new Instance(join(OUT, "reference"), { id: "3b8f1d2e-9a4c-4f6b-8e2d-5c7a1b9e0f43", name: "reference", tier: "public", shard: { records: 2, entities: 2 } });
-for (const f of ["header", "heading", "page", "cover-page", "label", "paragraph", "definition", "definition-list", "row", "caption", "list", "list-item", "equation", "figure", "table-of-contents", "table", "footnote", "end-mark"])
+for (const f of ["header", "heading", "cover-page", "label", "paragraph", "definition", "definition-list", "row", "caption", "list", "list-item", "equation", "figure", "table-of-contents", "table", "footnote", "end-mark"])
   copyForm(ref, f);
 ref.shape(
   "web-capture",
@@ -310,80 +362,118 @@ prop(ref, "version", "string", true);
 prop(ref, "issued-by", "organization", true);
 prop(ref, "legal-name", "string", true);
 
-// the listing: ingested, cited, never judged — it has no record
+// the listing: a rendered page, read where the entity cites it and nowhere else — a record at the read stage
 const listingBytes = readFileSync(join(SYN, "cottage-listing.html"));
 const captureSidecar = new TextEncoder().encode(
   ["source:", "  uri: https://homes.example.invalid/listing/12-quay-street", "producer:", "  tool: page-capture 4.2", "  host: capture-box", "  fetched: 2026-03-19T21:40:00Z", "context: house hunting, Port Ellen", ""].join("\n"),
 );
 const listing = await ingest(ref, listingBytes, "cottage-listing.html", captureSidecar);
 const L = A(listing.full);
+const listingRead: Record<string, Reading> = {};
+const span = (open: string, tag: string, text: string) => {
+  const at = htmlSpan(listingBytes, open, tag);
+  listingRead[at] = { text, pass: "p1" };
+  return at;
+};
+const cite = async (at: string, quote: string) => ev(`${L}?${at}&text`, quote, await rev(listingRead[at]!.text!));
+const [addrAt, priceAt, bedsAt, tenureAt] = [
+  span('<h1 class="listing-title">', "h1", "12 Quay Street, Port Ellen"),
+  span('<span class="amount">', "span", "£313,000"),
+  span('<li class="beds">', "li", "2 bedrooms"),
+  span('<li class="tenure">', "li", "Freehold"),
+];
+ref.record(listing.full, { intrinsics: (await intrinsics(listingBytes, "cottage-listing.html")).val, passes: { p1: recordPass }, readings: listingRead });
 ref.entity(
   "12-quay-street-port-ellen",
   entityPass,
   { pred: "is", val: "residence", pass: "p1" },
-  { pred: "address", val: "12 Quay Street, Port Ellen", ev: [ev(`${L}?${htmlSpan(listingBytes, '<h1 class="listing-title">', "h1")}&text`, "12 Quay Street, Port Ellen", "derived:html.text@1")], pass: "p1" },
-  { pred: "price", val: "£313,000", ev: [ev(`${L}?${htmlSpan(listingBytes, '<span class="amount">', "span")}&text`, "£313,000", "derived:html.text@1")], pass: "p1" },
-  { pred: "bedrooms", val: "2", ev: [ev(`${L}?${htmlSpan(listingBytes, '<li class="beds">', "li")}&text`, "2 bedrooms", "derived:html.text@1")], pass: "p1" },
-  { pred: "tenure", val: "Freehold", ev: [ev(`${L}?${htmlSpan(listingBytes, '<li class="tenure">', "li")}&text`, "Freehold", "derived:html.text@1")], pass: "p1" },
+  { pred: "address", val: "12 Quay Street, Port Ellen", ev: [await cite(addrAt, "12 Quay Street, Port Ellen")], pass: "p1" },
+  { pred: "price", val: "£313,000", ev: [await cite(priceAt, "£313,000")], pass: "p1" },
+  { pred: "bedrooms", val: "2", ev: [await cite(bedsAt, "2 bedrooms")], pass: "p1" },
+  { pred: "tenure", val: "Freehold", ev: [await cite(tenureAt, "Freehold")], pass: "p1" },
 );
 
-// the procedure: an asserted tree, read and signed — a record of 400-odd judgments
+// the procedure: formed — readings at their addresses, a tree over them, both complete; pages are addresses only
 const procBytes = readFileSync(join(SYN, "procedure.pdf"));
 const proc = await ingest(ref, procBytes, "procedure.pdf", null);
 const passFile = readdirSync(join(HERE, "passes")).find((f) => f.startsWith(proc.full))!;
-const scopes = new Map<string, J & { forms: string[] }>();
-const readings: { at: string; aspect: string; body: unknown; rev: string }[] = [];
+type Old = { at: string; forms: string[]; in?: string; ord?: number; body?: Record<string, unknown>; [field: string]: unknown };
+const old = new Map<string, Old>();
 for (const raw of readFileSync(join(HERE, "passes", passFile), "utf8").split("\n").filter(Boolean)) {
-  const { at, predicate, value, term, aspect, body, rev: r, ...fields } = JSON.parse(raw) as J;
-  const sc = scopes.get(String(at)) ?? { at, forms: [] as string[] };
-  scopes.set(String(at), sc);
+  const { at, predicate, value, term, aspect, body, rev: _r, ...fields } = JSON.parse(raw) as J;
+  const sc = old.get(String(at)) ?? { at: String(at), forms: [] };
+  old.set(String(at), sc);
   if (predicate === "manifests") {
     const form = String(term) in STRUCTURE ? STRUCTURE[String(term)] : String(term);
-    if (form === null) continue;
+    if (form === null || form === "page") continue;
     sc.forms.push(form!);
-    Object.assign(sc, fields);
+    Object.assign(sc, fields, term === "toc" ? { layout: "grid" } : {});
   } else if (predicate === "in") {
-    sc.in = (value as J).at;
-    sc.ord = (value as J).ord;
-  } else if (predicate === "reads_as") {
-    sc[String(aspect)] = body;
-    readings.push({ at: String(at), aspect: String(aspect), body, rev: String(r) });
-  }
+    sc.in = String((value as J).at);
+    sc.ord = Number((value as J).ord);
+  } else if (predicate === "reads_as") (sc.body ??= {})[String(aspect)] = body;
 }
-const procLines: J[] = [...scopes.values()]
-  .filter((sc) => sc.forms.length || sc.in !== undefined)
-  .map(({ forms, ...sc }) => ({ ...sc, ...(forms.length ? { form: forms.length === 1 ? forms[0] : [...forms].sort() } : {}), pass: "p1" }));
-const read = (body: string) => readings.find((l) => l.body === body)!;
-ref.record(
-  proc.full,
-  (await intrinsics(procBytes, "procedure.pdf")).line,
-  { at: "whole", ...recordPass },
-  ...procLines,
-  { at: "whole", pred: "complete", pass: "p1" },
-);
+// readings: every transcribed region, a leading designator rejoined to its body (§8.3.4); a table's rows fold into its grid
+const procRead: Record<string, Reading> = {};
+const kids = (parent: string) => [...old.values()].filter((o) => o.in === parent).sort((a, b) => a.ord! - b.ord!);
+for (const o of old.values()) {
+  if (!o.body) continue;
+  const parent = o.in && old.get(o.in);
+  if (parent && GRID.has(parent.forms[0]!) && Array.isArray(o.body.cells) && !Array.isArray(o.body.cells[0])) continue;
+  const lead = typeof o.num === "string" && o.forms.some((f) => ["heading", "paragraph", "list-item"].includes(f)) ? `${o.num} ` : typeof o.mark === "string" ? `${o.mark} ` : "";
+  const r: Reading = { pass: "p1" };
+  if (typeof o.body.text === "string") r.text = lead + o.body.text;
+  if (typeof o.body.tex === "string") r.tex = o.body.tex;
+  if (Array.isArray(o.body.cells)) r.cells = o.body.cells as string[][];
+  procRead[o.at] = r;
+}
+for (const o of old.values()) {
+  if (!GRID.has(o.forms[0]!) || o.forms[0] === "row" || o.forms[0] === "definition") continue;
+  const rows = kids(o.at).filter((k) => Array.isArray(k.body?.cells)).map((k) => k.body!.cells as string[]);
+  if (rows.length) procRead[o.at] = { cells: rows, pass: "p1" };
+  if (o.forms[0] === "definition-list" && typeof o.body?.text === "string") procRead[o.at] = { cells: o.body.text.split("\n").map((l) => l.split(/: (.*)/s).filter(Boolean)), pass: "p1" };
+}
+// the tree: a page is nowhere in it; what sat `in` a page hangs from the scope at that page, else from the root
+const scopeOf = (o: Old): Scope => {
+  const { at, forms, in: _in, ord: _o, body: _b, ...fields } = o;
+  const children = kids(at).map(scopeOf);
+  return { form: forms.length === 1 ? forms[0]! : [...forms].sort(), at, ...fields, pass: "p1", ...(children.length ? { scopes: children } : {}) };
+};
+const top = [...old.values()].filter((o) => o.forms.length && (o.in === "whole" || (o.in?.startsWith("page=") && !o.in.includes("&") && !old.get(o.in)?.forms.length)));
+const procTree = top.sort((a, b) => a.ord! - b.ord!).map(scopeOf);
+const read = (body: string) => Object.entries(procRead).find(([, r]) => r.text === body || r.text?.endsWith(` ${body}`))!;
+const procIntrinsics = (await intrinsics(procBytes, "procedure.pdf")).val;
+ref.record(proc.full, {
+  intrinsics: procIntrinsics,
+  chrome: [{ repeats: { pages: Number(procIntrinsics.page_count), share: 1 }, mask: "digits", box: 2, roles: { "page-number": "Page # of #" }, pass: "p1" }],
+  passes: { p1: recordPass },
+  complete: { readings: "p1", structure: "p1" },
+  readings: procRead,
+  scopes: procTree,
+});
 const P = A(proc.full);
-const lbl = (body: string) => `${P}?${read(body).at}&text`;
+const lbl = (body: string) => `${P}?${read(body)[0]}&text`;
 ref.entity(
   "hl-02",
   entityPass,
   { pred: "is", val: "standard", pass: "p1" },
-  { pred: "title", val: "Procedure to estimate heat loss from insulated pipework over a reporting period", ev: [ev(lbl("Procedure to estimate heat loss from insulated pipework over a reporting period"), "Procedure to estimate heat loss from insulated pipework over a reporting period", read("Procedure to estimate heat loss from insulated pipework over a reporting period").rev as string)], pass: "p1" },
-  { pred: "version", val: "02.1", ev: [ev(lbl("Version 02.1"), "Version 02.1", read("Version 02.1").rev as string)], pass: "p1" },
-  { pred: "source", val: P, ev: [ev(lbl("HL-02"), "HL-02", read("HL-02").rev as string, { mode: "inferred", reason: "the document prints the standard's designation on its cover, issued by the office" })], pass: "p1" },
-  { pred: "issued-by", val: "ath://harbour-standards-office", qual: { as: "HARBOUR STANDARDS OFFICE" }, ev: [ev(lbl("HARBOUR STANDARDS OFFICE"), "HARBOUR STANDARDS OFFICE", read("HARBOUR STANDARDS OFFICE").rev as string)], pass: "p1" },
+  { pred: "title", val: "Procedure to estimate heat loss from insulated pipework over a reporting period", ev: [ev(lbl("Procedure to estimate heat loss from insulated pipework over a reporting period"), "Procedure to estimate heat loss from insulated pipework over a reporting period", await rev(read("Procedure to estimate heat loss from insulated pipework over a reporting period")[1].text))], pass: "p1" },
+  { pred: "version", val: "02.1", ev: [ev(lbl("Version 02.1"), "Version 02.1", await rev(read("Version 02.1")[1].text))], pass: "p1" },
+  { pred: "source", val: P, ev: [ev(lbl("HL-02"), "HL-02", await rev(read("HL-02")[1].text), { mode: "inferred", reason: "the document prints the standard's designation on its cover, issued by the office" })], pass: "p1" },
+  { pred: "issued-by", val: "ath://harbour-standards-office", qual: { as: "HARBOUR STANDARDS OFFICE" }, ev: [ev(lbl("HARBOUR STANDARDS OFFICE"), "HARBOUR STANDARDS OFFICE", await rev(read("HARBOUR STANDARDS OFFICE")[1].text))], pass: "p1" },
 );
 ref.entity(
   "harbour-standards-office",
   entityPass,
   { pred: "is", val: "organization", pass: "p1" },
-  { pred: "legal-name", val: "HARBOUR STANDARDS OFFICE", ev: [ev(lbl("HARBOUR STANDARDS OFFICE"), "HARBOUR STANDARDS OFFICE", read("HARBOUR STANDARDS OFFICE").rev as string)], pass: "p1" },
+  { pred: "legal-name", val: "HARBOUR STANDARDS OFFICE", ev: [ev(lbl("HARBOUR STANDARDS OFFICE"), "HARBOUR STANDARDS OFFICE", await rev(read("HARBOUR STANDARDS OFFICE")[1].text))], pass: "p1" },
 );
-const tex = readings.find((l) => l.aspect === "tex")!;
+const tex = Object.entries(procRead).find(([, r]) => r.tex)!;
 ref.stores.set("mirror", { id: "8c2e4a1f-0b3d-4c5e-9f7a-2d1e6b8c4a90", driver: "rclone", role: "managed", tags: ["object", "online", "country:gb", "city:glasgow"], encryption: "none" });
 ref.policies.set("public-twice", { select: { tier: "public" }, require: { copies: 2, where: { not: ["local"] }, distinct: "city" }, verify: "180d" });
 ref.rulings.push(
   { id: "r1", pred: "seek", val: { select: { kind: "residence" }, owes: ["council-tax-band"], why: "compare running costs before viewing" }, date: DATE, by: "owner" },
-  { id: "r2", pred: "accept", val: { on: `${P}?${tex.at}`, rev: tex.rev, why: "two-dimensional maths; the surface is in baseline order" }, date: DATE, by: "owner" },
+  { id: "r2", pred: "accept", val: { on: `${P}?${tex[0]}`, rev: await rev(tex[1].tex), why: "two-dimensional maths; the hint is in baseline order" }, date: DATE, by: "owner" },
 );
 
 // ══ household — private, extends reference ════════════════════════════════════════════════════════════════════════
@@ -397,7 +487,6 @@ const home = new Instance(join(OUT, "household"), {
 });
 home.shape(
   "drive-export",
-  { pred: "refines", val: "testimony" },
   { pred: "definition", val: "a cloud drive's export sidecar: the account and folder exported, when, how much of it" },
   { pred: "testimony", val: true },
   { pred: "matches", val: { mime: "application/yaml", selector: "/origin_fields/folder" } },
@@ -434,7 +523,7 @@ const zipBytes = readFileSync(join(SYN, "drive-folder.zip"));
 const drive = await ingest(home, zipBytes, "drive-folder.zip", readFileSync(join(SYN, "drive-folder.zip.capture.yaml")));
 const part = (suffix: string) => drive.parts.find((p) => p.path.endsWith(suffix))!;
 
-// the plan inside the zip was read: that constituent alone has a record
+// the plan inside the zip was read for its title: that constituent alone has a record, at the read stage
 const plan = part("Mooring plan 2026.pdf");
 const tmp = mkdtempSync(join(process.env.TMPDIR ?? tmpdir(), "mock-"));
 writeFileSync(join(tmp, "p.pdf"), plan.bytes);
@@ -446,12 +535,21 @@ const [W, H] = [Number(pg[1]), Number(pg[2])];
 const [x0, y0, x1, y1] = [1, 2, 3, 4].map((i) => Number(ln[i]));
 const r4 = (n: number) => Math.round(n * 1e4) / 1e4;
 const headAt = `page=1&bbox=${r4(x0! / W)},${r4(y0! / H)},${r4((x1! - x0!) / W)},${r4((y1! - y0!) / H)}`;
-home.record(
-  plan.blake3,
-  (await intrinsics(plan.bytes, "Mooring plan 2026.pdf")).line,
-  { at: "whole", ...recordPass },
-  { at: headAt, form: "heading", in: "whole", ord: 0, level: 0, text: "Mooring plan 2026", pass: "p1" },
-);
+home.record(plan.blake3, { intrinsics: (await intrinsics(plan.bytes, "Mooring plan 2026.pdf")).val, passes: { p1: recordPass }, readings: { [headAt]: { text: "Mooring plan 2026", pass: "p1" } } });
+
+// a photograph of a sign, read in full: transcribed, never formed — three readings and the attestation
+const signBytes = readFileSync(join(SYN, "sign.jpg"));
+const sign = await ingest(home, signBytes, "sign.jpg", null);
+home.record(sign.full, {
+  intrinsics: (await intrinsics(signBytes, "sign.jpg")).val,
+  passes: { p1: recordPass },
+  complete: { readings: "p1" },
+  readings: {
+    "bbox=0.0667,0.1786,0.6022,0.1548": { text: "RETURNS ONLY", pass: "p1" },
+    "bbox=0.0667,0.4643,0.4556,0.1024": { text: "Bay 12 - Depot 7", pass: "p1" },
+    "bbox=0.0667,0.6976,0.6467,0.1071": { text: "No parking 7am to 6pm", pass: "p1" },
+  },
+});
 
 // berths and their vessels cite the CSV inside the zip by its own id — the CSV has no record
 const C = A(part("Berth list.csv").blake3);
