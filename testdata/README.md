@@ -42,6 +42,13 @@ in the test, on purpose.
 `ontology/` is the ontology every test instance copies in (`ath/test/layers.ts`): the
 methodological-tool terms, the XenForo and Amazon expression roots, and a root term per mime. Edit it here; `ath ontology lint` over a fresh standalone instance is the gate.
 
+## The mock instance pair
+
+`bun testdata/mock.ts` writes `testdata/mock/` (gitignored): a public standalone instance `reference`, a private
+extension `household` built on it, and the host state they share (`host/`: the local store, store access, each
+instance's state directory), all in the specification's layout and generated from the synthetic fixtures. It writes
+the files by hand to show the layout; it is not the tool.
+
 ## Seeding a scratch instance
 
 ```

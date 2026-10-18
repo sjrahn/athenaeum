@@ -16,3 +16,6 @@ __pycache__/
 
 # private bytes once placed here for the regression set; the set is synthetic now, the guard stays
 /testdata/regression/
+
+# the mock instance pair testdata/mock.ts generates
+/testdata/mock/
