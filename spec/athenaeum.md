@@ -7,7 +7,7 @@ license: "CC BY-SA 4.0"
 
 # The Athenaeum Specification
 
-The Athenaeum keeps bytes, says what they manifest, and asserts what they express — each as a line that names its subject, its author and the evidence it rests on. Three things are kept because nothing else can recover them: the bytes, the testimony of where and how they were found, and the owner's acts. Everything else is derived from them or rediscovered over them. The facts so found are the product.
+The Athenaeum keeps bytes, says what they manifest, and asserts what they express — each as a line that names its subject, its author and the evidence it rests on. Three things are kept because nothing else can recover them: the bytes, the testimony of where and how they were found, and the owner's rulings. Everything else is derived from them or rediscovered over them. The facts so found are the product.
 
 This document is normative. The key words MUST, MUST NOT, SHOULD and MAY are used as in RFC 2119. Examples are illustrative; where an example and the text disagree, the text governs.
 
@@ -15,7 +15,7 @@ This document is normative. The key words MUST, MUST NOT, SHOULD and MAY are use
 
 1.1 This specification defines:
 
-- what an **instance** stores: bytes, testimony, the owner's acts, and the lines that describe, structure, read and cite the bytes;
+- what an **instance** stores: bytes, testimony, the owner's rulings, and the lines that describe, structure, read and cite the bytes;
 - what the **tooling** derives from them, and the rules every stored and derived thing obeys;
 - what the tooling knows about **formats**, and the primitives an **ontology** composes to say what the data means;
 - how bytes are kept and found (**custody**), and the tool surface through which all of it is read and written.
@@ -26,9 +26,9 @@ This document is normative. The key words MUST, MUST NOT, SHOULD and MAY are use
 
 ## 2. Principles
 
-1. **Three things are kept; everything else is recovered.** The bytes, the testimony (§9) and the owner's acts (§13.5) are irreplaceable: each is a snapshot nothing else reproduces. Every other stored line is an op's output — deterministic, re-derivable, kept as a cache with a pin — or a judgment a pass wrote, checkable against the bytes and rediscoverable by another pass. The ontology is scaffolding of the second kind: two instances fed the same bytes may build different ontologies and should arrive, given time, at the same facts.
+1. **Three things are kept; everything else is recovered.** The bytes, the testimony (§9) and the owner's rulings (§13.5) are irreplaceable: each is a snapshot nothing else reproduces. Every other stored line is an op's output — deterministic, re-derivable, kept as a cache with a pin — or a judgment a pass wrote, checkable against the bytes and rediscoverable by another pass. The ontology is scaffolding of the second kind: two instances fed the same bytes may build different ontologies and should arrive, given time, at the same facts.
 2. **The tooling knows formats, never conventions.** An op sniffs a mime, records the properties the format's own specification defines, addresses the bytes on the axes the format has, decodes a surface, and exposes the format's own nodes — an element, a MIME part, a JSON value, an archive entry, a `data:` URI. It never names a term and never decides what a node means: that a row is a header, that a `>` line is a quote, that a repeated line is a running header, that an element is a post. A scope below `whole` exists only where an ontology line or a pass puts it. A new kind of thing is an ontology edit; a new format is one op module.
-3. **Everything is a claim line.** Properties, structure, readings, world facts, ontology terms, passes, testimony links and owner acts are lines of one grammar: a subject, a predicate, a value, an authorship. One sort, one merge, one lineage.
+3. **Everything is a claim line.** Properties, structure, readings, world facts, ontology terms, passes, testimony links and rulings are lines of one grammar: a subject, a predicate, a value, an authorship. One sort, one merge, one lineage.
 4. **Ops author byte facts; passes author judgments.** Anything that can be wrong is written by a pass and verified by a second author. Anything an op writes has no status, because it carries no judgment.
 5. **Addresses are intrinsic.** A scope is named by coordinates in the bytes — page and box, byte range, row and column, time, constituent path — never by a transform, a parser's tree or an identifier.
 6. **The ontology is the recipe.** A scope manifests terms; what a term expects — fields, reading aspect, children, owed world facts, render form, the op that yields its surface — rides on the term. A pass pins the ontology it read against by hash; nobody chooses a recipe.
@@ -62,7 +62,7 @@ This document is normative. The key words MUST, MUST NOT, SHOULD and MAY are use
 | **concept** | a real-world thing with a slug, the subject of world claims |
 | **claim** | a ledger line asserting a value of a predicate of a concept, carrying evidence |
 | **evidence entry** | an anchor and quote into an artifact supporting a claim, bound by verify |
-| **owner act** | a line the owner writes: an acceptance or a disowning (§13.5) |
+| **ruling** | the owner's final judgment on something the tooling derived: an accepted divergence or a disowned testimony (§13.5) |
 | **plane** | a served view of the instance: public, audience, owner (§16) |
 | **demand** | work the stored lines imply is owed, derived (§14.7) |
 
@@ -103,7 +103,7 @@ A foundation MUST NOT declare `tier`. An extension MUST declare `tier`. A chain 
 ├── athenaeum.yaml
 ├── ontology/<term>.claims.jsonl        terms — what a kind of thing expects
 ├── corpus/<blake3>.claims.jsonl        artifacts — what the bytes are and manifest; testimony links
-│          <blake3>.owner.jsonl         the owner's acts on that artifact
+│          <blake3>.rulings.jsonl       the owner's rulings on that artifact
 │          bytes/<b2>/<blake3>          the co-located store (§18)
 │          lineage.jsonl                corrections, re-keys, supersessions
 ├── ledger/<slug>.claims.jsonl          concepts — what the world is, cited into the corpus
@@ -116,7 +116,7 @@ A foundation MUST NOT declare `tier`. An extension MUST declare `tier`. A chain 
 
 5.2 **One-way reference.** An artifact's file never names a concept, and never names its testimony or its containers: those are indexes (§12). The ledger cites `corpus://` freely. The ontology is read by both and names neither.
 
-5.3 **One file, one writer.** Passes and ops write `.claims.jsonl`; the owner writes `.owner.jsonl`. Ops write only `properties` and `testimony` lines, at ingest and in a properties sweep (§8.1).
+5.3 **One file, one writer.** Passes and ops write `.claims.jsonl`; the owner writes `.rulings.jsonl`. Ops write only `properties` and `testimony` lines, at ingest and in a properties sweep (§8.1).
 
 5.4 Everything under `.ath/` is regenerable or transient; nothing normative depends on it, and it is never tracked.
 
@@ -124,7 +124,7 @@ A foundation MUST NOT declare `tier`. An extension MUST declare `tier`. A chain 
 
 ### 6.1 Shape
 
-6.1.1 A line is one JSON object on one line. Artifact lines are keyed by `at` (an intrinsic address in the file's artifact, §7.3); ledger and ontology lines by `subject`. Every line carries a `predicate` and the predicate's fields. Every artifact, owner and ledger line carries exactly one authorship; an ontology line carries none, since the ontology is authored by its layer's history.
+6.1.1 A line is one JSON object on one line. Artifact lines are keyed by `at` (an intrinsic address in the file's artifact, §7.3); ledger and ontology lines by `subject`. Every line carries a `predicate` and the predicate's fields. Every artifact, ruling and ledger line carries exactly one authorship; an ontology line carries none, since the ontology is authored by its layer's history.
 
 6.1.2 A line is a triple with provenance — `(subject, predicate, object)` plus its authorship — and maps to one N-Quads statement in the graph of its authorship (§15.3).
 
@@ -142,7 +142,7 @@ A foundation MUST NOT declare `tier`. An extension MUST declare `tier`. A chain 
 
 6.2.2 A `pass` line is itself the authorship of the lines that name it and carries none of its own.
 
-6.2.3 An artifact, owner or ledger line with no authorship, with both, or with a `pass` that does not resolve in its file MUST be refused at write.
+6.2.3 An artifact, ruling or ledger line with no authorship, with both, or with a `pass` that does not resolve in its file MUST be refused at write.
 
 ### 6.3 Identity
 
@@ -156,7 +156,7 @@ A foundation MUST NOT declare `tier`. An extension MUST declare `tier`. A chain 
 | `in` | (at, predicate) — one placement per scope |
 | `reads_as` | (at, predicate, aspect) — one reading per scope and aspect; a re-read is a new revision at the same identity |
 | `pass` · `complete` | (at, predicate, id) · (at, predicate, pass) |
-| owner acts | (at, predicate, rev) for `inspected`; (at, predicate) for `disowned` |
+| rulings | (at, predicate, rev) for `inspected`; (at, predicate) for `disowned` |
 | a ledger claim | (subject, predicate, value or object, qualifiers) — evidence entries accrue on the one line |
 | an ontology line | (subject, predicate) for a single-valued predicate; (subject, predicate, name) for a repeatable one, where the name is the value's `name`, `col`, `selector` or `term`, else the whole value |
 
@@ -301,7 +301,7 @@ A page the document has, a row the parse holds and a cell within such a row are 
 {"at":"whole","predicate":"testimony","value":"corpus://1409369e…","by":"ath.ingest@1"}
 ```
 
-9.1.3 A testimony cannot be edited, because its bytes cannot change. A mistaken testimony is answered by a later testimony and, where the owner judges it wrong, by a `disowned` owner act (§13.5).
+9.1.3 A testimony cannot be edited, because its bytes cannot change. A mistaken testimony is answered by a later testimony and, where the owner judges it wrong, by a `disowned` ruling (§13.5).
 
 9.1.4 Testimony is evidence, not knowledge. It holds no claim and has no status. A ledger claim about where or when something was found or published cites the testimony artifact by an ordinary anchor into its bytes, under its own surface; such an entry's kind is `direct`.
 
@@ -622,18 +622,18 @@ The following are functions of stored lines and are computed at read time. Writi
 
 13.4.5 **tex.** Control words map to their symbols (`\sum` → ∑, `\times` → ×, the Greek alphabet), braces and script marks drop, a label the scope's designator names drops from the surface; the multisets of letters, digits and operators must agree. A cell written as TeX is compared the same way.
 
-### 13.5 The owner file
+### 13.5 Rulings
 
-13.5.1 The owner's acts are lines in `<blake3>.owner.jsonl`, written `by: owner` with a `date`. The owner file holds exactly two predicates:
+13.5.1 A **ruling** is the owner's final judgment on something the tooling derived. Rulings are lines in `<blake3>.rulings.jsonl`, written `by: owner` with a `date`. A rulings file holds exactly two predicates:
 
 | predicate | at | meaning |
 |---|---|---|
 | `inspected` | a scope | `{rev, diverges: "accepted", why}` — an accepted L7 divergence, bound to the reading's revision; a re-read lapses it, so L7 converges on re-run |
 | `disowned` | `whole` of a testimony | `{why}` — the owner judges the testimony wrong; it stays in provenance, marked, and evidence anchored into it is held |
 
-13.5.2 Revoking an act removes its line with a lineage row.
+13.5.2 Revoking a ruling removes its line with a lineage row.
 
-13.5.3 Acquiring bytes from outside, deleting, retiring a standalone copy, moving an artifact between layers and changing a foundation's ontology are owner-gated acts of the tool (§19), not lines.
+13.5.3 Acquiring bytes from outside, deleting, retiring a standalone copy, moving an artifact between layers and changing a foundation's ontology are owner-gated verbs of the tool (§19), not rulings.
 
 13.5.4 Owner prose has no place in the instance: anything worth saying about an artifact or a concept is a claim with evidence.
 
@@ -742,13 +742,13 @@ An artifact's provenance chain (§9.6) is exported beside the proxy on the owner
 
 ### 15.3 N-Quads
 
-15.3.1 Every stored line maps to one N-Quads statement and back, byte-identical: the subject `corpus://<blake3>?<at>`, `ledger://<slug>` or `ontology://<term>`; the predicate `urn:athenaeum:ns:<predicate>`; the line's payload as a literal typed `urn:athenaeum:ns:json`; the graph its authorship — `pass://<subject>#<id>` for a pass, `op://<name>@<version>` for an op or a harvest, `owner://<subject>` for an owner act; an ontology line's graph is `ontology://<term>`.
+15.3.1 Every stored line maps to one N-Quads statement and back, byte-identical: the subject `corpus://<blake3>?<at>`, `ledger://<slug>` or `ontology://<term>`; the predicate `urn:athenaeum:ns:<predicate>`; the line's payload as a literal typed `urn:athenaeum:ns:json`; the graph its authorship — `pass://<subject>#<id>` for a pass, `op://<name>@<version>` for an op or a harvest, `owner://<subject>` for a ruling; an ontology line's graph is `ontology://<term>`.
 
 15.3.2 A term's `aligns` IRIs are asserted as its classes in the projection.
 
 ## 16. Planes and publication
 
-16.1 The **public plane** serves the foundation, and the claims whose derived status is `confirmed`. An **audience plane** serves the foundation plus every extension whose tier the audience's grant names, under the same status filter unless the grant names another. The **owner plane** serves the whole chain, every status, the owner files, provenance, demand and every finding.
+16.1 The **public plane** serves the foundation, and the claims whose derived status is `confirmed`. An **audience plane** serves the foundation plus every extension whose tier the audience's grant names, under the same status filter unless the grant names another. The **owner plane** serves the whole chain, every status, the rulings, provenance, demand and every finding.
 
 16.2 Read-only is normative. A consumer reads `ledger://`, materialises `corpus://` only for what the ledger asserts, never cites a generated view, and pins the reproducibility tuple — each layer's commit and the ontology pin — when it freezes a build.
 

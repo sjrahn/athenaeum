@@ -37,7 +37,7 @@ with the test that pins it.
 | 13.1–13.2 | passes, staging, signing | `ath/test/corpus.pass.test.ts` | gap: `complete` replaces `walked` |
 | 13.3 | complete | `ath/test/corpus.pass.test.ts`, `ath/test/export.test.ts`, `ath/test/lint.test.ts` | gap: rename |
 | 13.4 | L7 | `ath/test/lint.l7.test.ts` | conforms |
-| 13.5 | the owner file | `ath/test/corpus.pass.test.ts` | gap: `disowned` |
+| 13.5 | rulings (`<blake3>.rulings.jsonl`) | `ath/test/corpus.pass.test.ts` | gap: `disowned`; the file is `.rulings.jsonl` (code writes `.owner.jsonl`) |
 | 14.1–14.3 | concepts, claims, evidence | `ath/test/ledger.test.ts`, `ath/test/lint.test.ts`, `ath/test/ontology.test.ts` | conforms |
 | 14.4 | binding | `ath/test/corpus.container.test.ts`, `ath/test/ledger.test.ts` | gap: `line:captured_from` goes; disowned testimony holds |
 | 14.5 | status | `ath/test/ledger.test.ts` | conforms |
