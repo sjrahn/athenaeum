@@ -304,6 +304,7 @@ function copyForm(inst: Instance, name: string, seen = new Set<string>()) {
     lines.push({ pred, val });
   }
   if (GRID.has(name)) lines.push({ pred: "reads", val: name === "table" || name === "definition-list" ? "cells" : "none" });
+  if (name === "list-item") lines.push({ pred: "reads", val: "text" }); // the regression term inherited it from a format root
   if (!lines.length) lines.push({ pred: "definition", val: name.replace(/-/g, " ") });
   inst.add("forms", name, lines);
   for (const l of lines) if (l.pred === "refines") copyForm(inst, String(l.val), seen);
