@@ -64,7 +64,7 @@ This document is normative. The key words MUST, MUST NOT, SHOULD and MAY are use
 | **concept** | a real-world thing with a name, the subject of world claims |
 | **claim** | a ledger line asserting a value of a predicate of a concept, carrying evidence |
 | **evidence entry** | an anchor and quote into an artifact supporting a claim, bound by verify |
-| **ruling** | the owner's final judgment on something the tooling derived: an accepted divergence or a disowned testimony (§13.5) |
+| **ruling** | the owner's steering: what the instance should distrust, accept, seek, defer or decline; never evidence (§13.5) |
 | **plane** | a served view of the instance: public, audience, owner (§16) |
 | **demand** | work the stored lines imply is owed, derived (§14.7) |
 
@@ -110,7 +110,8 @@ A cycle among bases, a base missing at its path or not at its pinned commit, or 
 ├── records/<shard>/<blake3>.jsonl          §8
 ├── concepts/<shard>/<name>.jsonl           §14
 ├── stores/<name>.yaml                      §18.2
-└── policies/<name>.yaml                    §18.6
+├── policies/<name>.yaml                    §18.6
+└── rulings.jsonl                           §13.5
 ```
 
 5.2 **Shards.** `<shard>` is the first *n* hex digits of the BLAKE3 of the file's name — for a record, of its artifact, so the leading digits of the hash itself. `athenaeum.yaml` declares *n* per directory; absent, `records` and `concepts` take 2 and `terms` 0 (flat). Changing it is `instance reshard` (§19.5), which moves files and changes no line.
@@ -134,7 +135,7 @@ Nothing normative depends on host state except the artifacts a store holds.
 
 ### 6.1 Shape
 
-6.1.1 A line is one JSON object on one line. Artifact lines are keyed by `at` (an intrinsic address in the file's artifact, §7.3); ledger and ontology lines by `subject`. Every line carries a `predicate` and the predicate's fields. Every artifact, ruling and ledger line carries exactly one authorship; an ontology line carries none, since the ontology is authored by its instance's history.
+6.1.1 A line is one JSON object on one line. Record lines are keyed by `at` (an intrinsic address in the record's artifact, §7.3); concept, term and ruling lines by `subject`. Every line carries a `predicate` and the predicate's fields. Every record, concept and ruling line carries exactly one authorship; an ontology line carries none, since the ontology is authored by its instance's history.
 
 6.1.2 A line is a triple with provenance — `(subject, predicate, object)` plus its authorship — and maps to one N-Quads statement in the graph of its authorship (§15.3).
 
@@ -152,7 +153,7 @@ Nothing normative depends on host state except the artifacts a store holds.
 
 6.2.2 A `pass` line is itself the authorship of the lines that name it and carries none of its own.
 
-6.2.3 An artifact, ruling or ledger line with no authorship, with both, or with a `pass` that does not resolve in its file MUST be refused at write.
+6.2.3 A record, concept or ruling line with no authorship, with both, or with a `pass` that does not resolve in its file MUST be refused at write.
 
 ### 6.3 Identity
 
@@ -166,7 +167,7 @@ Nothing normative depends on host state except the artifacts a store holds.
 | `in` | (at, predicate) — one placement per scope |
 | `reads_as` | (at, predicate, aspect) — one reading per scope and aspect; a re-read is a new revision at the same identity |
 | `pass` · `complete` | (at, predicate, id) · (at, predicate, pass) |
-| rulings | (at, predicate, rev) for `inspected`; (at, predicate) for `disowned` |
+| a ruling | (subject) — its id, `ath:ruling/<id>` |
 | a ledger claim | (subject, predicate, value or object, qualifiers) — evidence entries accrue on the one line |
 | an ontology line | (subject, predicate) for a single-valued predicate; (subject, predicate, name) for a repeatable one, where the name is the value's `name`, `col`, `selector` or `term`, else the whole value |
 
@@ -309,7 +310,7 @@ A page the document has, a row the parse holds and a cell within such a row are 
 {"at":"whole","predicate":"testimony","value":"ath://1409369e…","by":"ath.ingest@1"}
 ```
 
-9.1.3 A testimony cannot be edited, because its bytes cannot change. A mistaken testimony is answered by a later testimony and, where the owner judges it wrong, by a `disowned` ruling (§13.5).
+9.1.3 A testimony cannot be edited, because its bytes cannot change. A mistaken testimony is answered by a later testimony and, where the owner will not rely on it, by a `distrust` ruling (§13.5).
 
 9.1.4 Testimony is evidence, not knowledge. It holds no claim and has no status. A ledger claim about where or when something was found or published cites the testimony artifact by an ordinary anchor into its bytes, under its own surface; such an entry's kind is `direct`.
 
@@ -355,7 +356,7 @@ with `required` on every field each testimony of that origin MUST carry. A new o
 
 9.6.2 Provenance is shown as a chain — receipt, the container's testimony, the path, the constituent — so a container's uri is never presented as a constituent's. Nothing is copied to a constituent: an artifact first met alone and later inside an export has both origins the moment the export is ingested.
 
-9.6.3 A disowned testimony stays in provenance, marked, with the owner's reason; an evidence entry anchored into it is held (§14.4).
+9.6.3 A distrusted testimony stays in provenance, marked; an evidence entry anchored into it is held (§14.4).
 
 ### 9.7 Removing a copy
 
@@ -595,6 +596,7 @@ The following are functions of stored lines and are computed at read time. Writi
 | demand | §14.7 |
 | staleness of a pass | `pass.ontology` against the current pin, for the scopes a changed term reaches |
 | residence | the host index (§18.4) |
+| relevance | the `seek` rulings an artifact, scope or concept meets, by the same labels policies select on (§13.5, §18.6.2) |
 | complete extent, section closure, paragraph numbers | `in` and `ord` |
 | the export, the remainder, the envelope | §15 |
 | sensitivity | the tier of the instance a line lives in |
@@ -633,20 +635,27 @@ The following are functions of stored lines and are computed at read time. Writi
 
 ### 13.5 Rulings
 
-13.5.1 A **ruling** is the owner's final judgment on something the tooling derived. Rulings are lines in `<blake3>.rulings.jsonl`, written `by: owner` with a `date`. A rulings file holds exactly two predicates:
+13.5.1 A **ruling** is how the owner steers an instance. It never asserts, supports or refutes a claim, is never evidence, and is never served outside the owner plane or projected into the graph (§15.3). It changes only what the instance relies on and what it works on next.
 
-| predicate | at | meaning |
+13.5.2 Rulings are the lines of `rulings.jsonl` at the instance root, each a subject of its own, written `by: owner` with a `date`:
+
+```
+{"subject":"ath:ruling/r7","predicate":"seek","value":{"select":{"term":"vehicle"},"owes":["service_history"],"why":"…"},"by":"owner","date":"2026-01-20"}
+```
+
+| ruling | on | effect |
 |---|---|---|
-| `inspected` | a scope | `{rev, diverges: "accepted", why}` — an accepted L7 divergence, bound to the reading's revision; a re-read lapses it, so L7 converges on re-run |
-| `disowned` | `whole` of a testimony | `{why}` — the owner judges the testimony wrong; it stays in provenance, marked, and evidence anchored into it is held |
+| `distrust` | a testimony (`ath://<blake3>`); an op's output at a scope (`ath://<blake3>?<at>` with the op); a pass (`ath://<blake3>#<pass-id>`) | everything bound through it is held, and becomes demand to re-derive, re-read or re-acquire; a distrusted testimony stays in provenance, marked. It says *do not rely on this*, never *this is false* |
+| `accept` | a finding: an L7 divergence (a scope and the reading's `rev`) or a lint finding | the finding is listed as known and no longer recurs; a re-read lapses an accepted divergence |
+| `seek` | a selection (§18.6.2 labels, a concept, a term), optionally the owed predicates or readings wanted | creates demand for what it names, and makes it **relevant** (§12): every artifact and scope that meets it — at ingest, at harvest — is reported as meeting it |
+| `defer` | a demand item or a selection of them | orders the work after everything not deferred |
+| `decline` | a demand item or a selection of them | removes it from demand: what is declined is not pursued |
 
-13.5.2 A ruling holds in the instance that makes it. An extension's owner MAY rule on a base artifact; the ruling lives in the extension.
+13.5.3 `why` is the owner's note to themself. It is shown to the owner alone and is never evidence, never exported and never served on any other plane.
 
-13.5.3 Revoking a ruling removes its line.
+13.5.4 A ruling lives in the instance that makes it. An extension holds its base's `distrust` and `accept` rulings too — they correct what both rely on — but not its base's `seek`, `defer` and `decline`, which steer only the base's work. An extension's owner MAY rule on its base's artifacts, passes and testimony; the ruling lives in the extension. Revoking a ruling removes its line.
 
-13.5.4 Acquiring artifacts from outside, deleting, removing a copy from a store, moving an artifact between an extension and its base, repinning a base and changing an ontology are owner-gated verbs of the tool (§19), not rulings.
-
-13.5.5 Owner prose has no place in the instance: anything worth saying about an artifact or a concept is a claim with evidence.
+13.5.5 Acquiring artifacts from outside, deleting, removing a copy from a store, moving an artifact between an extension and its base, repinning a base and changing an ontology are owner-gated verbs of the tool (§19), not rulings.
 
 ## 14. The ledger
 
@@ -668,7 +677,6 @@ The following are functions of stored lines and are computed at read time. Writi
 | `supersedes` | an artifact or concept replaces another; anchors carry across as §7.8 says |
 | `challenges` | names a claim by identity key and content hash, with evidence against it |
 | `presence` | `none`: the thing is not attested where it would be |
-| `blocked` | names the demand a claim blocks and why; the only demand that is authored |
 
 ### 14.3 Evidence entries
 
@@ -693,7 +701,7 @@ The following are functions of stored lines and are computed at read time. Writi
 - `line:<predicate>[ <field>]` — a value read off a `manifests` or `properties` line at the anchor;
 - `null` — held.
 
-14.4.2 An entry is **bound** when its anchor resolves to a scope, its binding yields a surface there, and its quote (with prefix and suffix) is in that surface under the normaliser (§13.4.2), plain or squashed. It is **held** when its binding is `null`, when the revision it names no longer exists, or when it is anchored into a disowned testimony. It is **flagged** otherwise, with the reason.
+14.4.2 An entry is **bound** when its anchor resolves to a scope, its binding yields a surface there, and its quote (with prefix and suffix) is in that surface under the normaliser (§13.4.2), plain or squashed. It is **held** when its binding is `null`, when the revision it names no longer exists, or when it relies on a distrusted testimony, op output or pass (§13.5). It is **flagged** otherwise, with the reason.
 
 14.4.3 Three links are checked separately: claim to reading (the quote is in the bound body), reading to bytes (L7), value to quote (the verifier's judgment).
 
@@ -735,7 +743,9 @@ Derived, never stored:
 - an unmet `expects` is a soft finding;
 - an extension's minted term, or its disagreement with a base line, is demand on the base (§4.4).
 
-An absence the bytes print ("–", a missing row) is demand, not a defect. Only `blocked` is authored.
+- a `seek` ruling demands what it names.
+
+The owner orders demand with `defer` and removes it with `decline` (§13.5); nothing else about demand is written. An absence the bytes print ("–", a missing row) is demand, not a defect.
 
 ## 15. Export
 
@@ -743,7 +753,7 @@ An absence the bytes print ("–", a missing row) is demand, not a defect. Only 
 
 15.1.1 The proxy is an output, never a record and never a citation target. It walks the tree in `ord` and emits each scope through its term's `renders` rule, designators re-emitted from fields, every block prefixed by its `at`.
 
-15.1.2 Its header names: the authority (the bytes); every pass and its ontology pin; the inspected divergences; the chrome; and the **remainder** — on an asserted tree, the words outside every scope and chrome; on a derived tree, the characters outside every unit and declared chrome, of the total.
+15.1.2 Its header names: the authority (the bytes); every pass and its ontology pin; the accepted divergences; the chrome; and the **remainder** — on an asserted tree, the words outside every scope and chrome; on a derived tree, the characters outside every unit and declared chrome, of the total.
 
 15.1.3 It is lossless back to the bytes and never breaks on a new term.
 
@@ -753,7 +763,7 @@ An artifact's provenance chain (§9.6) is exported beside the proxy on the owner
 
 ### 15.3 N-Quads
 
-15.3.1 Every stored line maps to one N-Quads statement and back, byte-identical. Subjects are `ath://<blake3>?<at>` and `ath://<name>`; the vocabulary sits under the same scheme without an authority: the predicate `ath:p/<predicate>`, the payload a literal typed `ath:json`, and the graph the line's authorship — `ath://<subject>#<pass-id>` for a pass, `ath:by/<op>` for an op or a harvest, `ath:by/owner` for a ruling, `ath:terms` for a term's lines.
+15.3.1 Every term, record and concept line maps to one N-Quads statement and back, byte-identical; rulings are never projected. Subjects are `ath://<blake3>?<at>` and `ath://<name>`; the vocabulary sits under the same scheme without an authority: the predicate `ath:p/<predicate>`, the payload a literal typed `ath:json`, and the graph the line's authorship — `ath://<subject>#<pass-id>` for a pass, `ath:by/<op>` for an op or a harvest, `ath:terms` for a term's lines.
 
 15.3.2 A term's `aligns` IRIs are asserted as its classes in the projection.
 
@@ -960,8 +970,9 @@ Each host MAY run one custody daemon, `athd`, serving every instance on the host
 | `claims show` · `claims sort` | read · write | a subject's lines across the chain; rewrite a file in canonical order |
 | `pass open` · `stage` · `sign` · `abandon` · `show` | write (show: read) | §13.1–§13.2 |
 | `propose <op> <subject>` | read | a proposal op's candidate lines (§10.5) |
-| `inspect show` · `accept` · `revoke` | read · admin · admin | L7 findings; write or remove an `inspected` ruling, confirmed at a terminal |
-| `disown <testimony> --why <text>` · `disown revoke` | admin | write or remove a `disowned` ruling |
+| `inspect <subject>` | read | L7 findings for an artifact's readings |
+| `rule distrust\|accept\|seek\|defer\|decline <target> [--why <text>]` · `rule revoke <id>` · `rulings` | admin · admin · read | write or remove a ruling, confirmed at a terminal; list the rulings and what each currently affects |
+| `relevant [<subject>]` | read | the `seek` rulings an artifact, scope or concept meets (§12) |
 | `harvest <subject>` | write | mint and update harvested concepts and claims (§14.6) |
 | `verify [<subject>…]` | read | bindings, status, demand, stale passes |
 | `lint [<subject>…] [--all]` | read | §17 |
