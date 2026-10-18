@@ -227,20 +227,26 @@ const TRACKS: Record<string, J> = {
     ],
   },
 };
-/** Admission (§9.5): a delivered testimony must satisfy one of the instance's testimony shapes, else ingest refuses it. Nothing of this is written. */
+/** Admission (§9.6): a delivered testimony follows the contract (§9.4) or matches a testimony shape, and carries what every shape it matches requires; else ingest refuses it. Nothing of this is written. */
 const pointer = (doc: unknown, ptr: string) => ptr.split("/").slice(1).reduce<unknown>((v, k) => (v && typeof v === "object" ? (v as J)[k] : undefined), doc);
+const contract = (doc: J) => /^b3:[0-9a-f]{64}$/.test(String(doc.subject)) && ["/producer/tool", "/producer/version", "/producer/at"].every((p) => pointer(doc, p) !== undefined) && !!doc.source && typeof doc.source === "object" && Object.keys(doc.source as J).length > 0;
 function admit(inst: Instance, bytes: Uint8Array, base?: Instance): J {
   const doc = Bun.YAML.parse(new TextDecoder().decode(bytes)) as J;
+  let admitted = contract(doc);
   for (const i of [inst, base].filter(Boolean) as Instance[])
     for (const [k, ls] of i.terms) {
       if (!k.startsWith("shapes/") || !ls.some((l) => l.pred === "testimony")) continue;
       const m = ls.find((l) => l.pred === "matches")?.val as J | undefined;
       if (!m || pointer(doc, String(m.selector)) === undefined) continue;
       for (const f of ls.filter((l) => l.pred === "field" && (l.val as J).required)) if (pointer(doc, String((f.val as J).from)) === undefined) throw new Error(`testimony lacks ${(f.val as J).name}: ingest refuses it`);
-      return doc;
+      admitted = true;
     }
-  throw new Error("testimony matches no shape: ingest refuses it (§9.5)");
+  if (!admitted) throw new Error("testimony neither follows the contract nor matches a shape: ingest refuses it (§9.6)");
+  return doc;
 }
+/** A capture sidecar in the contract's shape (§9.4). */
+const sidecar = async (bytes: Uint8Array, uri: string, at: string, context: string) =>
+  new TextEncoder().encode(["subject: b3:" + (await blake3Hex(bytes)), "producer:", "  tool: page-capture", '  version: "4.2"', `  at: "${at}"`, "  host: capture-box", "source:", `  uri: ${uri}`, `context: ${context}`, ""].join("\n"));
 
 /** Every `data:` URI in markup is a constituent; its path is the URI's byte span (§10.3). */
 async function dataUris(bytes: Uint8Array) {
@@ -374,12 +380,10 @@ for (const f of ["header", "heading", "cover-page", "label", "paragraph", "defin
   copyForm(ref, f);
 ref.shape(
   "web-capture",
-  { pred: "definition", val: "a page capture's sidecar: the page's address, the capturing tool, why it was captured" },
+  { pred: "definition", val: "a page capture: this instance requires every capture to say why it was made" },
   { pred: "testimony", val: true },
   { pred: "matches", val: { mime: "application/yaml", selector: "/source/uri" } },
-  { pred: "field", val: { name: "source-uri", type: "string", required: true, from: "/source/uri" } },
-  { pred: "field", val: { name: "producer-tool", type: "string", required: true, from: "/producer/tool" } },
-  { pred: "field", val: { name: "context", type: "string", from: "/context" } },
+  { pred: "field", val: { name: "context", type: "string", required: true, from: "/context" } },
 );
 ref.term("value", { pred: "definition", val: "a short value printed apart from running text" }, { pred: "reads", val: "text" });
 ref.shape(
@@ -411,9 +415,7 @@ prop(ref, "legal-name", "string", true);
 
 // the listing: a rendered page, read where the entity cites it and nowhere else — a record at the read stage
 const listingBytes = readFileSync(join(SYN, "cottage-listing.html"));
-const captureSidecar = new TextEncoder().encode(
-  ["source:", "  uri: https://homes.example.invalid/listing/12-quay-street", "producer:", "  tool: page-capture 4.2", "  host: capture-box", "  fetched: 2026-03-19T21:40:00Z", "context: house hunting, Port Ellen", ""].join("\n"),
-);
+const captureSidecar = await sidecar(listingBytes, "https://homes.example.invalid/listing/12-quay-street", "2026-03-19T21:40:00Z", "house hunting, Port Ellen");
 const listing = await ingest(ref, listingBytes, "cottage-listing.html", captureSidecar);
 const L = A(listing.full);
 const listingRead: Record<string, Reading> = {};
@@ -442,9 +444,7 @@ ref.entity(
 
 // the procedure: formed — readings at their addresses, a tree over them, both complete; pages are addresses only
 const procBytes = readFileSync(join(SYN, "procedure.pdf"));
-const procSidecar = new TextEncoder().encode(
-  ["source:", "  uri: https://standards.harbour.example.invalid/hl-02/02.1/procedure.pdf", "producer:", "  tool: page-capture 4.2", "  host: capture-box", "  fetched: 2026-03-19T21:52:00Z", "context: the heat-loss procedure the office publishes", ""].join("\n"),
-);
+const procSidecar = await sidecar(procBytes, "https://standards.harbour.example.invalid/hl-02/02.1/procedure.pdf", "2026-03-19T21:52:00Z", "the heat-loss procedure the office publishes");
 const proc = await ingest(ref, procBytes, "procedure.pdf", procSidecar);
 /** The line boxes pdftotext finds on a page inside a region, in reading order — how this mock gives rows their own addresses. */
 function linesIn(pdf: Uint8Array, page: number, bbox: string) {

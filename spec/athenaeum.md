@@ -50,7 +50,7 @@ This document is normative. The key words MUST, MUST NOT, SHOULD and MAY are use
 | **receipt** | the testimony the tooling writes for every ingest (§9.3) |
 | **record** | the document every ingested artifact has: its projection — `intrinsics`, `receipt` and `origins`, the tooling's caches — and the judgments passes add: its readings and, once formed, its tree (§8) |
 | **origins** | the testimony delivered with an artifact, projected verbatim onto its record (§8.2) |
-| **provenance** | an artifact's receipt and origins together with its containers', as a chain (§9.6) |
+| **provenance** | an artifact's receipt and origins together with its containers', as a chain (§9.7) |
 | **intrinsics** | the key of a record that holds what the artifact's format defines about its bytes (§8.1) |
 | **scope** | a region of an artifact named by an intrinsic address `at` |
 | **term** | an entry of a vocabulary: a **form** or a **shape** (the corpus's), a **kind** or a **property** (the graph's) (§11) |
@@ -291,7 +291,7 @@ A page the document has, a row the parse holds and a cell within such a row are 
 |---|---|
 | `intrinsics` | what the artifact's format defines about its bytes: mime, size, encoding, page count, dimensions, duration, the metadata the format specifies, and a container's constituents with their kind (§10.2, §10.3). Nothing a producer asserts. A cache: `op` names the intrinsics op and its version; a value by an older version than the tool's is **stale** (§12) and the sweep rewrites it |
 | `receipt` | the ingest that first brought the artifact into this instance: `{actor, received, name}` (§9.3) |
-| `origins` | every testimony delivered with the artifact, each its parsed content verbatim — the producer's object, nothing of the instance's in it. What a testimony is admitted as is derived from its content (§9.5, §12) and never written. Extended at every later delivery. Both keys are absent on an asset never ingested on its own, whose provenance is its containers' (§9.6) |
+| `origins` | every testimony delivered with the artifact, each its parsed content verbatim — the producer's object, nothing of the instance's in it. What a testimony is admitted as is derived from its content (§9.6, §12) and never written. Extended at every later delivery. Both keys are absent on an asset never ingested on its own, whose provenance is its containers' (§9.7) |
 | `shape` | a stored choice of the artifact's shape, overriding the one `matches` derives (§11.4.3) |
 | `chrome` | rules for what is chrome in this artifact, each in the grammar of a shape's `chrome` line (§11.2.3); applied together with the shape's (§8.4.6) |
 | `passes` | the passes over the artifact, by id: `{by, verify, vocab, date, over?, attests?, note?, with?}` (§8.5, §13.1) |
@@ -440,7 +440,7 @@ origins:
 
 9.2.1 Testimony arrives with the artifact it describes: beside it as `<file>.testimony.<ext>`, or named explicitly at ingest. It is kept exactly as delivered.
 
-9.2.2 A testimony describing a container describes the container only; its constituents inherit it by derivation (§9.6).
+9.2.2 A testimony describing a container describes the container only; its constituents inherit it by derivation (§9.7).
 
 ### 9.3 The receipt
 
@@ -456,31 +456,52 @@ origins:
 
 9.3.3 A record's `receipt` and `origins` are the projection of the receipt and the testimony delivered for its artifact (§8.2); the originals in the stores, which carry the hashes, are what it is rebuilt from if the repository loses it, and how a testimony is found as an artifact to cite.
 
-### 9.4 Testimony shapes
+### 9.4 The testimony contract
 
-9.4.1 An instance says what testimony it accepts in its corpus. A **testimony shape** (`testimony: true`, §11.2.3) recognises one producer's testimony by `matches` and declares, as `field` lines each read `from` a place in its structure, what that testimony carries — typically where the artifact came from (a uri, a sender, an account), what found or made it (a machine, a tool and its version, a session) and why it was acquired — with `required` on every field each testimony of that producer MUST carry. A new producer, or a new required field, is an edit to the corpus.
+9.4.1 A producer SHOULD emit testimony in one shape, and the tooling's own producers (the scanner, §18.5.2) emit no other:
 
-9.4.2 The tooling knows no producer. Which fields exist, what they are called and which are required is the instance's. Who the producer is and what its acquisitions were are the graph's: claims of entities, evidenced by the testimony.
+```yaml
+subject: b3:5e6e497d934498fc49229ba8c594684114a1213426bc1ad0113718ae72794269   # required: the full hash of what this testifies about
+producer:                                                                       # required
+  tool: page-capture                                                            # required
+  version: "4.2"                                                                # required
+  at: "2026-03-19T21:52:00Z"                                                    # required: when the producer did its work
+  host: capture-box                                                             # optional
+  session: 7c1d…                                                                # optional: the run, job or session that produced it
+source:                                                                         # required, non-empty: where the bytes came from, in the producer's own terms
+  uri: https://standards.harbour.example.invalid/hl-02/02.1/procedure.pdf       # one or more of uri, path, sender, account, device, …
+context: the heat-loss procedure the office publishes                           # optional: why it was acquired
+```
 
-### 9.5 Admission
+`subject`, `producer.tool`, `producer.version`, `producer.at` and a non-empty `source` are required. Every other key — under `source`, under `producer`, or beside them — is the producer's own and is kept as written. A testimony about a container names the container; its constituents inherit it (§9.2.2).
 
-9.5.1 Ingest MUST refuse, before anything is placed in a store, a delivered testimony that matches no testimony shape, or that lacks a field its shape requires.
+9.4.2 A testimony that follows the contract is admitted by every instance without a shape (§9.6). The contract fixes what every testimony says about *itself* — who made it, when, from where; it says nothing about what the artifact is or means, which is the graph's.
 
-9.5.2 The same check runs over the records (§17), over each record's `origins`, so a testimony shape that tightens lists the testimony it no longer admits. Which shape admits a testimony is derived from its content and never written (§12). A testimony admitted once is never removed for failing a later check; it is listed.
+### 9.5 Testimony shapes
 
-### 9.6 Provenance
+9.5.1 An instance says in its corpus what else it accepts, and what more it requires. A **testimony shape** (`testimony: true`, §11.2.3) recognises one producer's testimony by `matches` and declares, as `field` lines each read `from` a place in its structure, what that testimony carries, with `required` on every field each testimony of that producer MUST carry. It serves two ends: admitting a producer that does not follow the contract (an export's own manifest, as the producer leaves it), and tightening the contract for one that does (every drive export must name its account; every capture must say why). A new producer, or a new required field, is an edit to the corpus.
 
-9.6.1 An artifact's **provenance** is its record's `receipt` and `origins` together with the provenance of every container that holds it, at that path, transitively; the chain is derived (§12).
+9.5.2 Beyond the contract the tooling knows no producer. Who the producer is and what its acquisitions were are the graph's: claims of entities, evidenced by the testimony.
 
-9.6.2 Provenance is shown as a chain — the receipt, the container's testimony, the path, the constituent — so a container's uri is never presented as a constituent's. Nothing is copied to a constituent: an artifact first met alone and later inside an export has both origins the moment the export is ingested.
+### 9.6 Admission
 
-9.6.3 A distrusted testimony stays in provenance, marked; evidence anchored into it is held (§14.4).
+9.6.1 Ingest MUST refuse, before anything is placed in a store, a delivered testimony that neither follows the contract (§9.4) nor matches a testimony shape, and one that lacks a field a shape it matches requires.
 
-### 9.7 Removing a copy
+9.6.2 The same check runs over the records (§17), over each record's `origins`, so a testimony shape that tightens lists the testimony it no longer admits. Whether a testimony follows the contract, and which shapes it matches, is derived from its content and never written (§12). A testimony admitted once is never removed for failing a later check; it is listed.
+
+### 9.7 Provenance
+
+9.7.1 An artifact's **provenance** is its record's `receipt` and `origins` together with the provenance of every container that holds it, at that path, transitively; the chain is derived (§12).
+
+9.7.2 Provenance is shown as a chain — the receipt, the container's testimony, the path, the constituent — so a container's uri is never presented as a constituent's. Nothing is copied to a constituent: an artifact first met alone and later inside an export has both origins the moment the export is ingested.
+
+9.7.3 A distrusted testimony stays in provenance, marked; evidence anchored into it is held (§14.4).
+
+### 9.8 Removing a copy
 
 A copy of an artifact MAY be removed from a store once the artifact's policies hold without it, counting every route — a container that holds it is a copy of it (§18.6.3). Its records, claims and testimony stay, since identity is the hash. A container that re-encoded an artifact holds a different artifact; "the same image as" is a claim.
 
-### 9.8 Placement
+### 9.9 Placement
 
 A testimony belongs to the instance its receipt names. An extension MAY hold testimony about its base's artifacts; it MAY be more private than its subject — a document in a public base, a private extension's record of the machine that fetched it.
 
@@ -678,7 +699,7 @@ Everything in this section is knowledge of a format's own specification. None of
 | `spine` | `{form}`: the order a package declares, each entry a top-level route scope of `form` |
 | `chrome` | what is chrome: `{"selector": …}`, or `{"repeats": {"pages": <n>, "share": <fraction>}, "mask": "digits", "box": <decimals>, "roles": {"page-number": "<masked pattern>"}}` — a run is chrome when its masked text and its box at the declared precision recur on at least *n* pages and that share of them; role by pattern, else `running-header` or `running-footer` by position |
 | `surface` | `{form, op}`: scopes of `form` in this family read their surface from `op`, `<op>@<version>[ <argument>]`, not the format's own; structured artifacts only (§11.6) |
-| `testimony` | `true`: the shape is a producer's testimony (§9.4) |
+| `testimony` | `true`: the shape is a producer's testimony (§9.5) |
 | `field` | on a testimony shape: `{name, type, required?, from}` — a value the testimony carries, read `from` a place in its structure (a pointer, a column) |
 
 11.2.4 A **kind** carries `owes`: the properties an entity of this kind should have. An unmet `owes` is demand (§14.6).
@@ -782,8 +803,8 @@ The following are computed at read time. Writing any of them to a file is a chec
 | containers of an artifact | the constituents of the containers the instance holds |
 | what an instance holds | its records (§5.7) |
 | a table's grid | its rows' readings in order (§8.4.7) |
-| what a testimony is admitted as | `matches` over its content in `origins` (§9.5) |
-| the provenance chain | the record's `receipt` and `origins` and its containers' (§9.6) |
+| what a testimony is admitted as | the contract, and `matches`, over its content in `origins` (§9.6) |
+| the provenance chain | the record's `receipt` and `origins` and its containers' (§9.7) |
 | testimony admitted | whether a testimony matches a testimony shape and carries the fields it requires |
 | stale intrinsics | an `intrinsics` value by an older op version than the tool's for its mime |
 | a reading's revision | the BLAKE3 of its body (§6.5) |
@@ -957,7 +978,7 @@ The owner orders demand with `defer` and removes it with `decline` (§13.5); not
 
 ### 15.2 Provenance
 
-An artifact's provenance chain (§9.6) is exported beside the proxy on the owner plane, and on another plane only where its testimony belongs to an instance that plane serves.
+An artifact's provenance chain (§9.7) is exported beside the proxy on the owner plane, and on another plane only where its testimony belongs to an instance that plane serves.
 
 ### 15.3 The graph
 
@@ -1067,7 +1088,7 @@ evict: { above: 90% }          # only on a store that may shed copies (§18.6.3)
 
 18.5.1 An observed tree is inventoried by the **scanner**, run on the host where the tree's filesystem is local, so that hashing runs at disk speed and only the manifest crosses the network. Its identity model — `(dev, ino) → (size, mtime) → BLAKE3` — re-hashes nothing whose stat is unchanged; a rename is a new path on a known identity; hard links collapse to one hash; an interrupted scan resumes per file. The manifest is published by temp-then-rename at each generation, so a reader sees only whole generations. Its format is the scanner's own versioned contract.
 
-18.5.2 For every file the scanner records what was observed — host, path, size, mtime, birth time, generation. That record is testimony the scanner prepares in advance; it enters the instance only when the file is ingested.
+18.5.2 For every file the scanner records what was observed — the host, the path, the size, the mtime and birth time, the generation — as testimony in the contract's shape (§9.4): the file's hash as `subject`, the scanner as `producer`, the host and path under `source`. The scanner prepares it in advance; it enters the instance only when the file is ingested.
 
 18.5.3 Ingesting a file from an observed tree writes its receipt and keeps the scanner's record as a testimony of it, and places the artifact in a managed store: by the first of the tree's `links` methods the filesystem supports, else by copy. A **reflink** is an independent copy-on-write clone. A **hardlink** shares the observed file's inode, so an edit made in place to the observed file changes the managed copy; verification then finds it corrupt and reconcile restores it from another copy. A linked copy shares physical storage with its source and is counted as one copy.
 
@@ -1170,7 +1191,7 @@ Each host MAY run one custody daemon, `athd`, serving every instance on the host
 | `resolve <anchor> [--trace]` | read | the artifact, the surface or the reading at an address; `--trace` reports the route (§18.8.2) |
 | `tree <subject>` | read | the tree, derived or stored; a designated or positional address to its intrinsic `at` |
 | `record <subject>` | read | the record's stage, its passes with what each covers and attests, and what the next stage needs (§8.5) |
-| `provenance <subject>` | read | the provenance chain (§9.6) |
+| `provenance <subject>` | read | the provenance chain (§9.7) |
 | `show <subject>` · `sort <subject>` | read · write | a subject's lines or document across the chain; rewrite a file in canonical order or style |
 | `pass open` · `stage` · `sign` · `abandon` · `show` | write (show: read) | §13.1–§13.2 |
 | `propose <subject> [<at>]` | read | the hints at an address: the text a hint op guesses, and the tree the artifact's shape would mint (§10.6, §11.7.5) |
@@ -1188,5 +1209,5 @@ Each host MAY run one custody daemon, `athd`, serving every instance on the host
 | `custody status` · `custody plan` | read | findings; the actions that would resolve them (§18.7) |
 | `custody reconcile` | write | perform the plan: copy, verify, evict (§18.7) |
 | `custody where <blake3>` · `custody report <store>` | read | every known residence of a hash, whether or not the instance holds it; an observed tree's report (§18.5.4) |
-| `custody remove <blake3> --from <store>` | admin | remove one copy, refused unless the policies hold without it, verified at that moment (§9.7) |
+| `custody remove <blake3> --from <store>` | admin | remove one copy, refused unless the policies hold without it, verified at that moment (§9.8) |
 | `log` · `whoami` | read | the history; the caller's profile, actor and instance root |
