@@ -289,7 +289,7 @@ A page the document has, a row the parse holds and a cell within such a row are 
 | key | holds |
 |---|---|
 | `intrinsics` | what the artifact's format defines about its bytes: mime, size, encoding, page count, dimensions, duration, the metadata the format specifies, and a container's constituents with their kind (§10.2, §10.3). Nothing a producer asserts. A cache: `op` names the intrinsics op and its version; a value by an older version than the tool's is **stale** (§12) and the sweep rewrites it |
-| `provenance` | what the testimony naming the artifact says of it, as the instance's testimony shapes read it: per receipt `{receipt, actor, received, name}`, per delivered testimony `{testimony, shape, <the shape's fields>}`, hashes in full (§9). A cache written at every ingest of the artifact; a testimony shape newer than it makes it **stale** (§12) and the sweep rewrites it. Absent on an asset never ingested on its own, whose provenance is its containers' (§9.6) |
+| `provenance` | the testimony naming the artifact, and what the instance read from it: per receipt `{receipt, actor, received, name}` — the receipt's own fields, since the receipt is the tooling's; per delivered testimony `{testimony: <hash>, <shape>: {<the fields that shape read>}}` — the testimony is the hash and nothing else; the fields under the shape's name are the instance's reading of it, as `intrinsics` is the op's reading of the bytes (§9). A cache written at every ingest of the artifact; a testimony shape newer than it makes it **stale** (§12) and the sweep rewrites it. Absent on an asset never ingested on its own, whose provenance is its containers' (§9.6) |
 | `shape` | a stored choice of the artifact's shape, overriding the one `matches` derives (§11.4.3) |
 | `chrome` | rules for what is chrome in this artifact, each in the grammar of a shape's `chrome` line (§11.2.3); applied together with the shape's (§8.4.6) |
 | `passes` | the passes over the artifact, by id: `{by, verify, vocab, date, over?, attests?, note?, with?}` (§8.5, §13.1) |
@@ -418,7 +418,7 @@ scopes:
 intrinsics: {op: zip.intrinsics@1, mime: application/zip, bytes: 184211, constituents: [{path: Harbour plans/Mooring plan 2026.pdf, blake3: 0c4efa13…, kind: asset}, {path: Harbour plans/Berth list.csv, blake3: 7a3e0c11…, kind: asset}]}
 provenance:
   - {receipt: d391e53a…, actor: reader-a, received: "2026-01-12T09:14:03Z", name: drive-folder.zip}
-  - {testimony: 277a7574…, shape: drive-export, account: ada.abbott@example.invalid, exported-at: "2026-03-18T16:00:00Z"}
+  - {testimony: 277a7574…, drive-export: {account: ada.abbott@example.invalid, exported-at: "2026-03-18T16:00:00Z"}}
 ```
 
 ## 9. Testimony

@@ -240,7 +240,7 @@ function testimonyFields(inst: Instance, bytes: Uint8Array, base?: Instance): J 
         const v = pointer(doc, String((f.val as J).from));
         if (v !== undefined) fields[String((f.val as J).name)] = v;
       }
-      return { shape: k.slice(7), ...fields };
+      return { [k.slice(7)]: fields }; // the testimony is its hash; this is what the instance read from it, under the shape that read it
     }
   throw new Error("testimony matches no shape: ingest refuses it (§9.5)");
 }
