@@ -28,7 +28,7 @@ gaps still owed.
   publisher for attached locations (spec §18.5). Its manifest format is its
   own versioned contract (`scanner/MANIFEST-SCHEMA.md`).
 - `testdata/` — the regression library: `ontology/` (the regression ontology a
-  foundation starts from, a root term per mime), `exemplars.yaml` (one artifact
+  standalone instance starts from, a root term per mime), `exemplars.yaml` (one artifact
   per mime: file, blake3, mime, root) + `seed.ts` (a gitignored scratch layer),
   `synthetic/` (committed fixtures and their generators: a twin of every byte
   shape in the owner's corpus, inventoried in `synthetic/gen/COVERAGE.md`) and

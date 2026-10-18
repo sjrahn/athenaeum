@@ -39,8 +39,7 @@ This document is normative. The key words MUST, MUST NOT, SHOULD and MAY are use
 
 | term | meaning |
 |---|---|
-| **instance** | a chain of layers (§4) with its custody configuration (§18) |
-| **layer** | one repository of trees: a **foundation** (public) or an **extension** (carrying a tier) |
+| **instance** | one repository of trees, rulings and custody (§4): **standalone**, or an **extension** of a **base** instance it builds on |
 | **artifact** | bytes, identified by their BLAKE3; the subject `corpus://<blake3>` |
 | **container** | an artifact whose format holds whole files of its own |
 | **constituent** | an artifact held whole inside a container; its own subject |
@@ -66,40 +65,64 @@ This document is normative. The key words MUST, MUST NOT, SHOULD and MAY are use
 | **plane** | a served view of the instance: public, audience, owner (§16) |
 | **demand** | work the stored lines imply is owed, derived (§14.7) |
 
-## 4. Layers
+## 4. Instances and extension
 
-4.1 An instance is a **chain of layers**. Each layer extends at most one other. The bottom layer is a foundation. A foundation MAY extend another foundation; an extension extends a foundation or another extension. Only the top layer of a chain is written; every layer below it is read-only from above.
+### 4.1 Standalone and extending instances
 
-4.2 A layer's root holds `athenaeum.yaml`:
+4.1.1 An instance is one repository holding the trees of §5, its rulings and its custody declaration. It is either **standalone** — complete in itself: its own ontology (carrying the terms §11.9 names), corpus, ledger and custody — or an **extension**: it builds on exactly one existing instance, its **base**, sees everything the base holds, and adds to it. The base never sees its extensions. A base may itself be an extension; an extension then builds on everything its base builds on.
+
+4.1.2 An instance's root holds `athenaeum.yaml`:
 
 ```yaml
-name: owner-instance          # the layer's name
-layer: extension              # foundation | extension
-extends: ../foundation        # the layer below, by path, pinned by commit
-pin: 3f1c0e9a…                # the commit of the layer below this one was written against
-tier: private                 # an extension's tier; a foundation has none
+name: household               # the instance's name
+extends:                      # absent on a standalone instance
+  path: ../reference          # where the base is checked out
+  commit: 3f1c0e9a…           # the base commit this instance is built against
+tier: private                 # who may read this instance: public, or a named tier
 audiences:                    # named audiences and the tiers each is granted (§16)
   family: [private]
 ```
 
-A foundation MUST NOT declare `tier`. An extension MUST declare `tier`. A chain with a cycle, a missing layer or an unparseable file is a configuration error.
+A cycle among bases, a base missing at its path, a base checkout not at the pinned commit, or an unparseable file is a configuration error.
 
-4.3 **Tenancy is layer.** Everything in a foundation is public. Everything in an extension carries that extension's tier. No line declares its own visibility.
+4.1.3 **Visibility is per instance.** Every line an instance holds carries its tier; no line declares its own. An extension MUST NOT be `public` unless its base is: what it adds cites what the base holds.
 
-4.4 **Resolution** is content-addressed and unscoped: a hash or slug resolves in the top layer first, then down the chain. The view of a subject is the line-set union of its files across the chain.
+### 4.2 What extending means for management
 
-4.5 **Shadowing.** In the corpus, an extension MUST NOT write at an identity (§6.3) a lower layer holds with different content; a disagreement with a lower layer's line is demand upward (§14.7). The same line already present below is not written again. In the ledger, an extension's line wins over a lower layer's at the same identity.
+4.2.1 **The base is read-only.** Every write an extension makes lands in the extension. Nothing the extension does changes a file of its base, and the base's owner manages the base as a standalone owner would.
 
-4.6 **The ontology belongs to the foundation.** An extension MAY add terms and add lines to existing terms; it MUST NOT write at a lower layer's existing ontology identity. A term an extension mints is a proposal, listed as demand upward.
+4.2.2 **The base is pinned.** An extension is built against one commit of its base and reads the base at that commit. Moving the pin is an owner-gated verb (`instance repin`, §19.4). After a repin everything that depends on the base is re-derived: the ontology pin (§11.8) changes wherever the base's terms changed, so the extension's passes over affected scopes become stale; bindings, status and lints are recomputed against the new base; an anchor into an artifact the base no longer holds is flagged. Nothing the base does reaches the extension before a repin.
 
-4.7 **Publication is the foundation.** Serving an extension serves the chain on the owner plane and the foundation on the public plane (§16).
+4.2.3 **Resolution** is content-addressed: a hash or slug resolves in the extension first, then in its base, and so on down. The view of a subject is the line-set union of its files across the instances.
+
+4.2.4 **The corpus is shared, never overwritten.** An extension MUST NOT write an artifact line at an identity (§6.3) its base holds with different content. Bytes the base already holds are the same subject: ingesting them in the extension writes their receipt and any testimony delivered with them in the extension, and nothing on the subject. A disagreement with a base line is demand on the base (§14.7).
+
+4.2.5 **The ledger may be overridden.** An extension's ledger line wins over its base's at the same identity, within the extension's view only.
+
+4.2.6 **The ontology is extended, never redefined.** An extension MAY add terms and add lines to the base's terms; it MUST NOT write at an identity the base's ontology holds. A term an extension mints is a proposal to the base, listed as demand on the base.
+
+4.2.7 **Rulings belong to the instance that makes them.** An extension's owner MAY rule on a base artifact (an accepted divergence, a disowned testimony); the ruling lives in the extension's rulings file and holds in the extension's view only.
+
+4.2.8 **Demand flows to the base and stops there.** What an extension cannot fix — a disagreement with a base line, a proposed term, a base reading it judges wrong — is listed as demand for the base's owner. The base acts on it, or does not, in its own history; the extension sees the outcome at its next repin.
+
+4.2.9 **Reproducibility** names every instance in the chain: each one's commit and the ontology pin.
+
+### 4.3 What extending means for the tooling
+
+4.3.1 **One tool reads the whole chain.** It loads every instance from the extension down to the standalone one, at their pinned commits, and writes only the extension. It takes the extension's locks; a base is read without them.
+
+4.3.2 **The combined ontology is the ontology.** Classification, derivation, lints and the pin (§11.8) run over the base's terms and the extension's together, as loaded.
+
+4.3.3 **The tool must serve the whole chain.** It MUST register every op the combined ontology names (§11.6), and for every mime a properties op at least as new as any `properties` line anywhere in the chain. A tool that falls short refuses to load the extension (configuration error) and names what it lacks; it never writes `properties` older than a line already stored.
+
+4.3.4 **Bytes resolve through every custody declaration in the chain.** A base artifact's bytes resolve through the extension's own custody first and then through its base's declaration, read-only. A copy the extension holds counts toward the extension's floors (§18.6.5).
 
 ## 5. Trees and files
 
-5.1 A layer holds three trees and its private working state:
+5.1 An instance holds three trees and its private working state:
 
 ```
-<layer>/
+<instance>/
 ├── athenaeum.yaml
 ├── ontology/<term>.claims.jsonl        terms — what a kind of thing expects
 ├── corpus/<blake3>.claims.jsonl        artifacts — what the bytes are and manifest; testimony links
@@ -124,7 +147,7 @@ A foundation MUST NOT declare `tier`. An extension MUST declare `tier`. A chain 
 
 ### 6.1 Shape
 
-6.1.1 A line is one JSON object on one line. Artifact lines are keyed by `at` (an intrinsic address in the file's artifact, §7.3); ledger and ontology lines by `subject`. Every line carries a `predicate` and the predicate's fields. Every artifact, ruling and ledger line carries exactly one authorship; an ontology line carries none, since the ontology is authored by its layer's history.
+6.1.1 A line is one JSON object on one line. Artifact lines are keyed by `at` (an intrinsic address in the file's artifact, §7.3); ledger and ontology lines by `subject`. Every line carries a `predicate` and the predicate's fields. Every artifact, ruling and ledger line carries exactly one authorship; an ontology line carries none, since the ontology is authored by its instance's history.
 
 6.1.2 A line is a triple with provenance — `(subject, predicate, object)` plus its authorship — and maps to one N-Quads statement in the graph of its authorship (§15.3).
 
@@ -164,7 +187,7 @@ A foundation MUST NOT declare `tier`. An extension MUST declare `tier`. A chain 
 
 ### 6.4 Files and canonical form
 
-6.4.1 One line per claim. A file is sorted by identity key. Nothing depends on line order: reading order is `ord` (§8.1), never position. A layer union and a merge are line-set unions.
+6.4.1 One line per claim. A file is sorted by identity key. Nothing depends on line order: reading order is `ord` (§8.1), never position. The union of an extension with its base and a merge are line-set unions.
 
 6.4.2 The canonical serialisation of a line is compact JSON, LF-terminated, non-ASCII characters unescaped, with its keys in a fixed order: `at` or `subject` first, then `predicate`, then every other key in code-point order; every nested object's keys in code-point order; arrays in their stored order. Two lines are the same content when their canonical serialisations are equal. Every hash this document defines over JSON — a revision, the pin — is taken over this form.
 
@@ -174,7 +197,7 @@ A foundation MUST NOT declare `tier`. An extension MUST declare `tier`. A chain 
 
 6.5.1 A reading's `rev` is `b3:` followed by the first 16 hex digits of the BLAKE3 of its body: a string as UTF-8, an array as its canonical JSON (§6.4.2).
 
-6.5.2 A body MAY be inline (`body`) or stored out of line under `strings/` by its `rev`. A body is retained while any layer references its `rev`. A foundation never compacts its strings on an extension's authority.
+6.5.2 A body MAY be inline (`body`) or stored out of line under `strings/` by its `rev`. A body is retained while the instance references its `rev`; an extension's references never keep or remove a body in its base.
 
 ### 6.6 Corrections and lineage
 
@@ -321,7 +344,7 @@ A page the document has, a row the parse holds and a cell within such a row are 
 
 — who handed the bytes in, the instant, the name they arrived under, and the testimony delivered with them. The receipt covers the bytes and every testimony it lists. Testimony is not itself receipted, so every artifact has at least one testimony and the chain stops at one.
 
-9.3.2 The receipt is the only testimony shape the tooling prescribes. The foundation carries its term, `receipt`, refining `testimony`.
+9.3.2 The receipt is the only testimony shape the tooling prescribes. Every standalone instance carries its term, `receipt`, refining `testimony`.
 
 ### 9.4 Origin terms
 
@@ -355,7 +378,7 @@ Once another route resolves the same bytes — a container's constituent, a loca
 
 ### 9.8 Placement
 
-A testimony is placed in a layer like any artifact. It MAY sit in a more private layer than its subject — a public document, a private record of the machine that fetched it — and an extension MAY hold testimony about a lower layer's artifact.
+A testimony is held in an instance like any artifact. It MAY sit in a more private instance than its subject — a document in a public base, a private extension's record of the machine that fetched it: an extension MAY hold testimony about its base's artifacts.
 
 ## 10. Formats
 
@@ -566,7 +589,7 @@ A pattern is a prefix, or a glob where `*` stands for any run of characters, anc
 
 ### 11.9 What the tooling prescribes
 
-The tooling relies on exactly these terms, which every foundation carries: `unit`, `document`, `lossy`, `image`, `media`, `data`, `container`, `testimony` and `receipt`. Every other term is the instance's.
+The tooling relies on exactly these terms, which every standalone instance carries: `unit`, `document`, `lossy`, `image`, `media`, `data`, `container`, `testimony` and `receipt`. Every other term is the instance's.
 
 ## 12. Derived, never stored
 
@@ -588,7 +611,7 @@ The following are functions of stored lines and are computed at read time. Writi
 | staleness of a pass | `pass.ontology` against the current pin, for the scopes a changed term reaches |
 | complete extent, section closure, paragraph numbers | `in` and `ord` |
 | the export, the remainder, the envelope | §15 |
-| sensitivity | the layer a line lives in |
+| sensitivity | the tier of the instance a line lives in |
 
 ## 13. Passes and the owner
 
@@ -633,7 +656,7 @@ The following are functions of stored lines and are computed at read time. Writi
 
 13.5.2 Revoking a ruling removes its line with a lineage row.
 
-13.5.3 Acquiring bytes from outside, deleting, retiring a standalone copy, moving an artifact between layers and changing a foundation's ontology are owner-gated verbs of the tool (§19), not rulings.
+13.5.3 Acquiring bytes from outside, deleting, retiring a standalone copy, moving an artifact between an extension and its base, repinning a base and changing an ontology are owner-gated verbs of the tool (§19), not rulings.
 
 13.5.4 Owner prose has no place in the instance: anything worth saying about an artifact or a concept is a claim with evidence.
 
@@ -722,7 +745,7 @@ Derived, never stored:
 - an unsupported claim is an acquisition;
 - a stale pass is a re-run;
 - an unmet `expects` is a soft finding;
-- an extension's minted term, or its disagreement with a lower layer's line, is demand upward.
+- an extension's minted term, or its disagreement with a base line, is demand on the base (§4.2.8).
 
 An absence the bytes print ("–", a missing row) is demand, not a defect. Only `blocked` is authored.
 
@@ -738,7 +761,7 @@ An absence the bytes print ("–", a missing row) is demand, not a defect. Only 
 
 ### 15.2 Provenance view
 
-An artifact's provenance chain (§9.6) is exported beside the proxy on the owner plane, never on the public plane unless its testimony lies in the foundation.
+An artifact's provenance chain (§9.6) is exported beside the proxy on the owner plane, never on the public plane unless its testimony lies in a public instance.
 
 ### 15.3 N-Quads
 
@@ -748,11 +771,11 @@ An artifact's provenance chain (§9.6) is exported beside the proxy on the owner
 
 ## 16. Planes and publication
 
-16.1 The **public plane** serves the foundation, and the claims whose derived status is `confirmed`. An **audience plane** serves the foundation plus every extension whose tier the audience's grant names, under the same status filter unless the grant names another. The **owner plane** serves the whole chain, every status, the rulings, provenance, demand and every finding.
+16.1 Serving an instance serves the instance and everything it builds on, filtered by plane. The **public plane** serves the `public` instances of the chain, and the claims whose derived status is `confirmed`. An **audience plane** serves those plus every instance whose tier the audience's grant names, under the same status filter unless the grant names another. The **owner plane** serves every instance of the chain, every status, the rulings, provenance, demand and every finding.
 
-16.2 Read-only is normative. A consumer reads `ledger://`, materialises `corpus://` only for what the ledger asserts, never cites a generated view, and pins the reproducibility tuple — each layer's commit and the ontology pin — when it freezes a build.
+16.2 Read-only is normative. A consumer reads `ledger://`, materialises `corpus://` only for what the ledger asserts, never cites a generated view, and pins the reproducibility tuple — the commit of every instance in the chain and the ontology pin — when it freezes a build.
 
-16.3 A server re-reads the layers per request and holds no state of its own.
+16.3 A server re-reads the instances per request and holds no state of its own.
 
 ## 17. Lints
 
@@ -785,7 +808,7 @@ A term's `lint` lines are declarative checks over its scopes, composed from:
 
 ### 17.4 Ontology lints
 
-`ontology lint` refuses: a `reads` value outside the four; a `derivation` that does not parse, names an unregistered op or carries an argument the op refuses; a selector the root family's language rejects; a `concept` map naming a selector; a `matches` without `mime`; a write at a lower layer's ontology identity; a `refines` cycle.
+`ontology lint` refuses: a `reads` value outside the four; a `derivation` that does not parse, names an unregistered op or carries an argument the op refuses; a selector the root family's language rejects; a `concept` map naming a selector; a `matches` without `mime`; a write at an ontology identity a base holds; a `refines` cycle.
 
 ## 18. Custody
 
@@ -802,7 +825,7 @@ Custody is where bytes live and how a BLAKE3 finds them. The trees are tracked t
 
 An id resolves through five classes of route, in this order; a declared cost (§18.3.4) reorders within a class, never across classes:
 
-1. **the co-located store** — `corpus/bytes/<b2>/<blake3>` in some layer of the chain;
+1. **the co-located store** — `corpus/bytes/<b2>/<blake3>` in the instance, then in each base (§4.3.4);
 2. **other store locations** — content-addressed trees the tool writes, declared in the custody file;
 3. **attached locations** — trees whose files stay in place, resolved through the location index (§18.4);
 4. **the constituent route** — bytes streamed out of a container through its constituent list; a constituent may have no standalone copy at all;
@@ -810,7 +833,7 @@ An id resolves through five classes of route, in this order; a declared cost (§
 
 ### 18.3 Locations
 
-18.3.1 A layer's custody is declared in `custody.yaml` at its root, untracked:
+18.3.1 An instance's custody is declared in `custody.yaml` at its root, untracked:
 
 ```yaml
 locations:
@@ -860,7 +883,7 @@ The location index maps a BLAKE3 to `(location, relpath, size, mtime)` with the 
 
 18.6.4 **Retire** removes a standalone copy once another route resolves the same bytes, the full hash verified through that route first (§9.7). Testimony bytes are never retired.
 
-18.6.5 **Floors.** `floors` names, per root or origin term, how many distinct locations should hold a route to an artifact's bytes — a standalone copy in a store, a container residence, a remote object and an attached file each count once. Across layers the highest floor wins. Below-floor artifacts are a health finding; a removal that would break a floor names it. Nothing enforces a floor at write.
+18.6.5 **Floors.** `floors` names, per root or origin term, how many distinct locations should hold a route to an artifact's bytes — a standalone copy in a store, a container residence, a remote object and an attached file each count once. Across an extension and its base the highest floor wins. Below-floor artifacts are a health finding; a removal that would break a floor names it. Nothing enforces a floor at write.
 
 18.6.6 **Caches.** A cache sweep never removes the location index or any index whose rebuild needs bytes.
 
@@ -874,7 +897,7 @@ The location index maps a BLAKE3 to `(location, relpath, size, mtime)` with the 
 
 ### 19.2 Writes
 
-19.2.1 Every write is atomic. Bytes are written under a temporary name, verified against their BLAKE3 and renamed into place; a line file is rewritten under a temporary name and renamed. A verb that is interrupted leaves the layer as it was, or with every write it completed whole. Delivered files are copied, or for a file on an attached location left in place (§18.3.3), and never removed by the tool.
+19.2.1 Every write is atomic. Bytes are written under a temporary name, verified against their BLAKE3 and renamed into place; a line file is rewritten under a temporary name and renamed. A verb that is interrupted leaves the instance as it was, or with every write it completed whole. Delivered files are copied, or for a file on an attached location left in place (§18.3.3), and never removed by the tool.
 
 19.2.2 Mutating verbs take named locks under `.ath/locks/`; a held lock is `busy`. Every mutating verb appends its actor, arguments and outcome to the history under `.ath/`.
 
@@ -887,19 +910,20 @@ The location index maps a BLAKE3 to `(location, relpath, size, mtime)` with the 
 | 0 | ok |
 | 1 | a verdict: the verb ran and its answer is no |
 | 64 | usage |
-| 66 | not found: a subject, file or layer that does not exist |
+| 66 | not found: a subject, file or instance that does not exist |
 | 70 | internal: an unexpected failure |
 | 71 | external: a tool outside the tooling failed |
 | 73 | conflict: a write the contract refuses — identity, shadowing, an undeclared field, an unadmitted testimony |
 | 75 | busy: a lock is held |
 | 77 | denied: the caller's profile or actor may not run this |
-| 78 | config: the layer file, the chain, the custody file or the ontology is broken |
+| 78 | config: `athenaeum.yaml`, a base, the custody file or the ontology is broken, or the tool cannot serve the chain (§4.3.3) |
 
 ### 19.4 Verbs
 
 | verb | tier | contract |
 |---|---|---|
-| `layer init` · `layer show` · `layer check` | write · read · read | init writes `athenaeum.yaml`, the empty trees and the foundation terms §11.9 names; show prints the chain; check verifies the chain, its pins and its configuration |
+| `instance init [--extends <path>]` · `instance show` · `instance check` | write · read · read | init writes `athenaeum.yaml` and the empty trees — for a standalone instance with the terms §11.9 names, for an extension pinned to its base's current commit; show prints the instance and what it builds on; check verifies the chain, its pins and its configuration |
+| `instance repin` | admin | moves the base pin to the base's current commit and reports what the move makes stale (§4.2.2) |
 | `ingest <file…> [--testimony <file>…] [--in-place]` | write | sniffs, records `properties`, makes subjects of constituents one level deep, admits or refuses testimony before any byte is placed, writes the receipt; the same bytes again add testimony only |
 | `properties sweep [--stale]` | write | writes superseding `properties` lines where the op version is older than the tool's |
 | `resolve <anchor>` | read | the bytes, the surface or the reading at an address, through routes |

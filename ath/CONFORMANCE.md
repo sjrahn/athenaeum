@@ -8,7 +8,7 @@ with the test that pins it.
 
 | § | requirement | tests | state |
 |---|---|---|---|
-| 4 | layers, chain, tenancy, shadowing | `ath/test/corpus.ingest.test.ts`, `ath/test/serve.test.ts` | gap: a foundation may extend a foundation (refused today); `pin` key; `successor: true` marker to drop |
+| 4 | instances: standalone or extending one base; pinned, read-only base; the tool serves the chain | `ath/test/corpus.ingest.test.ts`, `ath/test/serve.test.ts` | gap: the code models foundation/extension *layers* (`layer:` key, foundation public, `layer init`); needs `extends: {path, commit}`, per-instance `tier`, `instance init/show/check/repin`, pin verification, tool-coverage check (§4.3.3), custody through the base (§4.3.4) |
 | 5 | trees and files, one writer | — | conforms (no dedicated test) |
 | 6.2 | authorship | `ath/test/lint.test.ts` | conforms |
 | 6.3 | identity | `ath/test/model.line.test.ts`, `ath/test/ontology.test.ts` | gap: `properties`/`testimony` identities replace `attests`/`captured_from`; owner `disowned` |

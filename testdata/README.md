@@ -7,7 +7,7 @@ no private byte is in the set and nothing waits on a placement.
 
 Tracked here: this README, `exemplars.yaml` (the manifest — file, blake3, mime, root term, shape
 and a neutral technical note, no personal content), `seed.ts` (the seeder), `ontology/` (the
-regression ontology a foundation starts from), `passes/` (the generated pass of the asserted-tree PDF) and `synthetic/`.
+regression ontology a standalone instance starts from), `passes/` (the generated pass of the asserted-tree PDF) and `synthetic/`.
 **`instance/` is never tracked** — the scratch layer `seed.ts` builds is gitignored at the repo root
 (`/testdata/instance/`), as is `/testdata/regression/`, where private bytes once sat; nothing reads it.
 
@@ -39,8 +39,8 @@ in the test, on purpose.
 
 ### The regression ontology
 
-`ontology/` is the ontology every test foundation copies in (`ath/test/layers.ts`): the
-methodological-tool terms, the XenForo and Amazon expression roots, and a root term per mime. Edit it here; `ath ontology lint` over a fresh foundation is the gate.
+`ontology/` is the ontology every test instance copies in (`ath/test/layers.ts`): the
+methodological-tool terms, the XenForo and Amazon expression roots, and a root term per mime. Edit it here; `ath ontology lint` over a fresh standalone instance is the gate.
 
 ## Seeding a scratch instance
 
