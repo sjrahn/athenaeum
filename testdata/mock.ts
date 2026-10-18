@@ -415,17 +415,16 @@ for (const raw of readFileSync(join(HERE, "passes", passFile), "utf8").split("\n
     sc.ord = Number((value as J).ord);
   } else if (predicate === "reads_as") (sc.body ??= {})[String(aspect)] = body;
 }
-// readings: every transcribed region, a leading designator rejoined to its body (§8.3.4); a table's rows fold into its grid;
-// the forming pass then adopts each into the scope at its address (§8.4.3), so none is written under `readings`
+// readings: every transcribed region, its leading designator lifted into the scope's field (§8.4.4); a table's rows fold into
+// its grid; the forming pass adopts each into the scope at its address (§8.4.3), so none is written under `readings`
 const procRead: Record<string, Reading> = {};
 const kids = (parent: string) => [...old.values()].filter((o) => o.in === parent).sort((a, b) => a.ord! - b.ord!);
 for (const o of old.values()) {
   if (!o.body) continue;
   const parent = o.in && old.get(o.in);
   if (parent && GRID.has(parent.forms[0]!) && Array.isArray(o.body.cells) && !Array.isArray(o.body.cells[0])) continue;
-  const lead = typeof o.num === "string" && o.forms.some((f) => ["heading", "paragraph", "list-item"].includes(f)) ? `${o.num} ` : typeof o.mark === "string" ? `${o.mark} ` : "";
   const r: Reading = {};
-  if (typeof o.body.text === "string") r.text = lead + o.body.text;
+  if (typeof o.body.text === "string") r.text = o.body.text;
   if (typeof o.body.tex === "string") r.tex = o.body.tex;
   if (Array.isArray(o.body.cells)) r.cells = o.body.cells as string[][];
   procRead[o.at] = r;
@@ -447,7 +446,7 @@ const scopeOf = (o: Old): Scope => {
 const top = [...old.values()].filter((o) => o.forms.length && (o.in === "whole" || (o.in?.startsWith("page=") && !o.in.includes("&") && !old.get(o.in)?.forms.length)));
 const procTree = top.sort((a, b) => a.ord! - b.ord!).map(scopeOf);
 for (const at of Object.keys(procRead)) if (!adopted.has(at)) throw new Error(`reading no scope adopted: ${at}`);
-const read = (body: string) => Object.entries(procRead).find(([, r]) => r.text === body || r.text?.endsWith(` ${body}`))!;
+const read = (body: string) => Object.entries(procRead).find(([, r]) => r.text === body)!;
 const procIntrinsics = (await intrinsics(procBytes, "procedure.pdf")).val;
 ref.record(proc.full, {
   intrinsics: procIntrinsics,

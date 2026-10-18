@@ -305,7 +305,7 @@ A record holds `readings` or `scopes`, never both.
 
 8.3.3 **Readings are written on demand.** A reader transcribes the region a claim needs and no more, and the record is created by the first. Nothing requires an artifact be read further than anyone has needed; a receipt photograph that was read for its total is a complete piece of work.
 
-8.3.4 **Faithful to the rendering.** A reading transcribes what the rendering shows — the page as drawn, the web page as a browser lays it out, the pixels, the speech — typo included, and with everything printed in the region: a leading "5.", a bullet, a footnote mark. The bytes are consulted only through the rendering and the hints the tooling offers (§10.6); a reading is never a copy of a hint. A correction of the source is a claim with `mode: inferred` or a `challenges`, never a silent fix.
+8.3.4 **Faithful to the rendering.** A reading transcribes what the rendering shows — the page as drawn, the web page as a browser lays it out, the pixels, the speech — typo included, and with everything printed in the region: a leading "5.", a bullet, a footnote mark; a formless reader does not know a designator from a word. The bytes are consulted only through the rendering and the hints the tooling offers (§10.6); a reading is never a copy of a hint. A correction of the source is a claim with `mode: inferred` or a `challenges`, never a silent fix.
 
 8.3.5 **Nothing lossy.** A reading is never a summary, a description, a paraphrase or a characterisation. A region with no lossless transcription — a photograph of a harbour — has no reading; anything said about what it shows is a claim anchored at its address with no quote and `mode: inferred`. Where such a region carries print or speech, the reader reads the sub-regions that carry it.
 
@@ -325,9 +325,9 @@ A record holds `readings` or `scopes`, never both.
 
 8.4.2 **Physical regions are addresses, never scopes.** A page, a column, a row of a sheet is an axis of `at`; the tree holds logical scopes only. A cover page is a `cover-page` at `page=1` with its labels beneath it; the page itself is nowhere in the tree.
 
-8.4.3 **Scopes adopt readings.** Forming moves every reading into the scope at its address: a scope whose form `reads` an aspect carries, under that aspect, the reading that was at its `at`, and that reading's identity and revision are unchanged, so every anchor bound to it survives. A scope whose form reads `none` carries no reading; its text is its descendants' in order. Nothing is read twice: a finer reading of what another reading already covers (one line of a paragraph, left from the read stage) is retired at forming; a scope's descendants read their own units — a section's paragraphs under its heading, a caption beside its table's grid. A reading no scope sits at is a coverage failure (§17.1): the forming pass mints a scope for it or retires it. Re-forming lifts the readings out of the old tree and adopts them under the new one; no body changes.
+8.4.3 **Scopes adopt readings.** Forming moves every reading into the scope at its address: a scope whose form `reads` an aspect carries, under that aspect, the reading that was at its `at`. Its identity is unchanged, and its body too, except where a designator is lifted out of it (§8.4.4), so every anchor bound to it survives. A scope whose form reads `none` carries no reading; its text is its descendants' in order. Nothing is read twice: a finer reading of what another reading already covers (one line of a paragraph, left from the read stage) is retired at forming; a scope's descendants read their own units — a section's paragraphs under its heading, a caption beside its table's grid. A reading no scope sits at is a coverage failure (§17.1): the forming pass mints a scope for it or retires it. Re-forming lifts the readings out of the old tree and adopts them under the new one; no body changes.
 
-8.4.4 **Designators are structure.** A leading "5.", a right-margin "Equation (1)", a "#4" on a post are fields the forming pass fills verbatim as printed. A designator its form places `leading` or `trailing` is part of the reading and is removed from its head or tail wherever the scope is rendered or compared; one placed in the `margin` or in a descendant form lies outside the reading's body. Deciding that "2." is a number and not a sentence is a judgment, written by the pass that forms the scope.
+8.4.4 **Designators are structure.** A leading "5.", a right-margin "Equation (1)", a "#4" on a post are fields the forming pass fills verbatim as printed, and the scope's reading is the text without them. A designator its form places `leading` or `trailing` is **lifted** out of the adopted reading at forming — the only change forming ever makes to a body; an anchor whose quote is still in the body re-binds, and one whose quote was the designator moves to `field:<name>` (§14.4.1). A designator in the `margin` or in a descendant form was never in the body. Deciding that "2." is a number and not a sentence is a judgment, written by the pass that forms the scope.
 
 8.4.5 **A field the address determines is derived.** A field a form declares `derived` (a page's number) is never stored.
 
@@ -393,7 +393,7 @@ scopes:
     at: page=3&bbox=0.1192,0.6933,0.4851,0.019
     level: 1
     num: "5."
-    text: 5. Baseline emissions
+    text: Baseline emissions
     scopes:
       - form: paragraph
         at: page=3&bbox=0.1192,0.6102,0.7612,0.071
@@ -809,7 +809,7 @@ The following are computed at read time. Writing any of them to a file is a chec
 
 13.4.2 **One normaliser** serves the reading check and binding (§14.4): Unicode NFKC; typographic quotes and dashes folded to ASCII; no-break space to space; whitespace runs collapsed. A second, **squashed** comparison removes whitespace and hyphens. Punctuation is content: a dropped period diverges.
 
-13.4.3 **text.** Designator fields placed `leading` or `trailing` are removed from both bodies' head or tail; footnote marks and bullets are treated as the scope's conventions declare; the bodies are compared token by token (longest common subsequence), then squashed.
+13.4.3 **text.** A formed scope's designator fields are removed from the hint's head or tail; footnote marks and bullets are treated as the scope's conventions declare; the bodies are compared token by token (longest common subsequence), then squashed.
 
 13.4.4 **cells.** Each cell of a row must occur as a contiguous run in the hint's column-aware words for that row.
 
