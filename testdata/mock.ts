@@ -62,7 +62,7 @@ const rev = async (body: unknown) => `b3:${(await blake3Hex(typeof body === "str
 // ── records (§8.2): one document, keys in a fixed order, written in one style ────────────────────────────────────
 type Reading = { text?: string; cells?: string[][]; tex?: string };
 type Scope = Reading & { form: string | string[]; at: string; scopes?: Scope[]; [field: string]: unknown };
-type Rec = { intrinsics: J; shape?: string; chrome?: J[]; passes: Record<string, J>; readings?: Record<string, Reading>; scopes?: Scope[] };
+type Rec = { intrinsics: J; provenance: J[]; shape?: string; chrome?: J[]; passes?: Record<string, J>; readings?: Record<string, Reading>; scopes?: Scope[] };
 const ASPECTS = ["cells", "tex", "text"];
 const WORDS = /^(true|false|yes|no|null|on|off|y|n|~)$/i;
 const plainOk = (v: string, flow: boolean) => /^[A-Za-z][^\n]*$/.test(v) && !/: | #/.test(v) && !/[\s:]$/.test(v) && !WORDS.test(v) && !(flow && /[,[\]{}]/.test(v));
@@ -94,9 +94,10 @@ const byAddr = (a: string, b: string) => {
 };
 function recordYaml(r: Rec): string {
   let out = `intrinsics: ${flow(r.intrinsics)}\n`;
+  if (r.provenance.length) out += `provenance:\n${r.provenance.map((e) => `  - ${flow(e)}\n`).join("")}`; // an asset's is its container's (§9.6)
   if (r.shape) out += `shape: ${scalar(r.shape)}\n`;
   if (r.chrome) out += `chrome:\n${r.chrome.map((c) => `  - ${flow(c)}\n`).join("")}`;
-  out += `passes:\n${Object.entries(r.passes).map(([id, pass]) => `  ${id}: ${flow(pass)}\n`).join("")}`;
+  if (r.passes) out += `passes:\n${Object.entries(r.passes).map(([id, pass]) => `  ${id}: ${flow(pass)}\n`).join("")}`;
   if (r.readings) {
     out += "readings:\n";
     for (const at of Object.keys(r.readings).sort(byAddr)) out += `  ${scalar(at)}:\n${block(Object.fromEntries(Object.entries(r.readings[at]!).sort()), "    ")}`;
@@ -132,7 +133,6 @@ class Instance {
   rulings: J[] = [];
   stores = new Map<string, J>();
   policies = new Map<string, J>();
-  holdings: J[] = [];
   constructor(
     readonly dir: string,
     readonly config: J,
@@ -155,8 +155,11 @@ class Instance {
     const text = [...all.keys()].sort().map((n) => `${n}\n${jsonl(all.get(n)!)}`).join("");
     return `b3:${(await blake3Hex(text)).slice(0, 16)}`;
   }
-  record(full: string, doc: Rec) {
-    this.records.set(full, doc);
+  /** A pass's judgments laid over the projection ingest wrote (§8.1). */
+  judge(full: string, doc: Omit<Rec, "intrinsics" | "provenance">) {
+    const have = this.records.get(full);
+    if (!have) throw new Error(`no record for ${full.slice(0, 8)}: not ingested here`);
+    this.records.set(full, { ...have, ...doc });
   }
   entity(name: string, ...lines: J[]) {
     this.entities.set(name, [...(this.entities.get(name) ?? []), ...lines]);
@@ -193,9 +196,7 @@ class Instance {
     for (const [n, s] of this.stores) write(join(this.dir, "stores", `${n}.yaml`), yaml(s));
     for (const [n, p] of this.policies) write(join(this.dir, "policies", `${n}.yaml`), yaml(p));
     if (this.rulings.length) write(join(this.dir, "rulings.jsonl"), jsonl(this.rulings));
-    const state = join(HOST, "state/athenaeum/instances", String(this.config.id));
-    write(join(state, "holdings.jsonl"), jsonl(this.holdings));
-    mkdirSync(join(state, "passes"), { recursive: true });
+    mkdirSync(join(HOST, "state/athenaeum/instances", String(this.config.id), "passes"), { recursive: true });
   }
 }
 
@@ -205,13 +206,43 @@ async function intrinsics(bytes: Uint8Array, name: string) {
   const mime = sniffed === "text/plain" && /\.ya?ml$/.test(name) ? "application/yaml" : sniffed;
   const r = mime === "application/yaml" ? null : await attesterFor(mime)?.(bytes, mime);
   const val: J = { ...(r?.value ?? { mime, bytes: bytes.length, encoding: "utf-8" }) };
-  for (const k of ["sha256", "md5", "members"]) delete val[k];
+  for (const k of ["sha256", "md5", "members", ...(/^(image|audio|video)\//.test(mime) ? ["encoding"] : [])]) delete val[k];
   const parts: { path: string; blake3: string; bytes: Uint8Array }[] = [];
   for (const m of r?.members ?? []) parts.push({ path: m.path, blake3: m.blake3 ?? (await blake3Hex(m.bytes)), bytes: m.bytes });
   if (mime === "text/html") parts.push(...(await dataUris(bytes)));
-  if (parts.length) val.constituents = parts.map((p) => ({ path: p.path, blake3: p.blake3 }));
+  if (parts.length) val.constituents = parts.map((p) => ({ path: p.path, blake3: p.blake3, kind: "asset" }));
+  if (mime === "video/quicktime") Object.assign(val, TRACKS[name] ?? {});
   const family = mime.split("/")[1]!.replace(/^x-/, "").split("+")[0]!;
   return { val: { op: `${family}.intrinsics@1`, ...val }, parts };
+}
+
+/** What the recording fixture's tracks are (ffprobe); the tooling's quicktime op reports them, this mock states them (§10.3). */
+const TRACKS: Record<string, J> = {
+  "harbour-clip.mov": {
+    duration: 1,
+    constituents: [
+      { path: "0", kind: "part", codec: "h264", width: 160, height: 120, frame_rate: "15/1", duration: 1 },
+      { path: "1", kind: "part", codec: "aac", duration: 1 },
+    ],
+  },
+};
+/** A testimony's fields, read through the instance's testimony shapes (§9.4): the first shape whose `matches` pointer resolves. */
+const pointer = (doc: unknown, ptr: string) => ptr.split("/").slice(1).reduce<unknown>((v, k) => (v && typeof v === "object" ? (v as J)[k] : undefined), doc);
+function testimonyFields(inst: Instance, bytes: Uint8Array, base?: Instance): J {
+  const doc = Bun.YAML.parse(new TextDecoder().decode(bytes));
+  for (const i of [inst, base].filter(Boolean) as Instance[])
+    for (const [k, ls] of i.terms) {
+      if (!k.startsWith("shapes/") || !ls.some((l) => l.pred === "testimony")) continue;
+      const m = ls.find((l) => l.pred === "matches")?.val as J | undefined;
+      if (!m || pointer(doc, String(m.selector)) === undefined) continue;
+      const fields: J = {};
+      for (const f of ls.filter((l) => l.pred === "field")) {
+        const v = pointer(doc, String((f.val as J).from));
+        if (v !== undefined) fields[String((f.val as J).name)] = v;
+      }
+      return { shape: k.slice(7), ...fields };
+    }
+  throw new Error("testimony matches no shape: ingest refuses it (§9.5)");
 }
 
 /** Every `data:` URI in markup is a constituent; its path is the URI's byte span (§10.3). */
@@ -232,6 +263,19 @@ function htmlSpan(bytes: Uint8Array, open: string, tag: string) {
   if (a < 0) throw new Error(`no ${open}`);
   return `bytes=${a},${text.indexOf(`</${tag}>`, a) + tag.length + 3}`;
 }
+/** The span of the JSON object that holds a given key/value — the message, not the value (§11.7.1). */
+function jsonObjectSpan(bytes: Uint8Array, key: string, value: string) {
+  const buf = Buffer.from(bytes);
+  const at = buf.indexOf(Buffer.from(`"${key}": ${JSON.stringify(value)}`));
+  if (at < 0) throw new Error(`no ${key}: ${value}`);
+  const a = buf.lastIndexOf(Buffer.from("{"), at);
+  let depth = 0;
+  for (let i = a; i < buf.length; i++) {
+    if (buf[i] === 0x7b) depth++;
+    else if (buf[i] === 0x7d && --depth === 0) return `bytes=${a},${i + 1}`;
+  }
+  throw new Error("unterminated object");
+}
 function jsonSpan(bytes: Uint8Array, key: string, value: string) {
   const buf = Buffer.from(bytes);
   const needle = Buffer.from(`"${key}": ${JSON.stringify(value)}`);
@@ -241,26 +285,29 @@ function jsonSpan(bytes: Uint8Array, key: string, value: string) {
   return `bytes=${a},${a + Buffer.byteLength(JSON.stringify(value))}`;
 }
 
-/** Ingest (§19.5): the artifact and its testimony into the local store, the receipt, the holdings — no repository write. */
+/** Ingest (§19.5): the artifact and its testimony into the local store, the receipt, and the record's projection — nothing judged. */
 let clock = 0;
-async function ingest(inst: Instance, bytes: Uint8Array, name: string, testimony: Uint8Array | null, actor = "reader-a") {
+async function ingest(inst: Instance, bytes: Uint8Array, name: string, testimony: Uint8Array | null, actor = "reader-a", base?: Instance) {
   const full = await blake3Hex(bytes);
   keep("artifacts", full, bytes);
   const delivered: { hash: string; name: string }[] = [];
+  const provenance: J[] = [];
   if (testimony) {
     const t = await blake3Hex(testimony);
     keep("testimony", t, testimony);
     delivered.push({ hash: t, name: `${name}.testimony.yaml` });
+    provenance.push({ testimony: t, ...testimonyFields(inst, testimony, base) });
+    idOf(t);
   }
   const received = new Date(Date.parse(`${DATE}T09:00:00Z`) + 60_000 * clock++).toISOString().replace(".000", "");
   const receipt = new TextEncoder().encode(`${JSON.stringify(sortKeys({ actor, artifact: full, instance: inst.config.id, name, received, testimony: delivered }))}\n`);
   const r = await blake3Hex(receipt);
   keep("testimony", r, receipt);
-  inst.holdings.push({ artifact: full, receipt: r, testimony: delivered });
   idOf(full);
-  const { parts } = await intrinsics(bytes, name);
+  const { val, parts } = await intrinsics(bytes, name);
   for (const p of parts) idOf(p.blake3);
-  return { full, parts };
+  inst.records.set(full, { intrinsics: val, provenance: [{ receipt: r, actor, received, name }, ...provenance] });
+  return { full, parts, testimony: delivered[0]?.hash };
 }
 
 /** Copy a regression term and what it refines, in the specification's line shape (§6.1, §11.2). */
@@ -269,8 +316,8 @@ const DROP = new Set(["concept", "keys", "cells", "sentinel", "owes", "functiona
 const FORMATS = new Set(["unit", "document", "data", "container", "lossy", "image", "media", "html", "xhtml", "pdf", "json", "ndjson", "csv", "tsv", "zip", "png", "jpeg", "gif", "markdown", "yaml", "rfc822", "plain-text"]);
 /** Forms that named meaning, not structure (§11.1.2), and the structural form each scope really is. */
 const STRUCTURE: Record<string, string | null> = { "methodological-tool": null, regulation: null, "parameter-table": "table", "revision-history": "table", toc: "table", metadata: "definition-list", price: "value", "listing-fact": "list-item", "listing-page": null };
-/** A table and a definition list read their grid as one `cells` reading (§8.3.1); their rows and definitions are structure only. */
-const GRID = new Set(["table", "definition-list", "row", "header", "definition"]);
+/** A table is its rows (§8.4.7): a row reads `cells`, the table and the list nothing. */
+const GRID = new Set(["table", "definition-list"]);
 const OWN_SURFACE = new Set(["html.text@1", "pdf.words@1", "csv.parse@1", "eml.text@1", "json.text@1", "yaml.text@1", "markdown.text@1"]);
 function copyForm(inst: Instance, name: string, seen = new Set<string>()) {
   if (FORMATS.has(name) || name in STRUCTURE || seen.has(name) || inst.terms.has(`forms/${name}`)) return;
@@ -304,7 +351,7 @@ function copyForm(inst: Instance, name: string, seen = new Set<string>()) {
     }
     lines.push({ pred, val });
   }
-  if (GRID.has(name)) lines.push({ pred: "reads", val: name === "table" || name === "definition-list" ? "cells" : "none" });
+  if (GRID.has(name)) lines.push({ pred: "reads", val: "none" });
   if (name === "list-item") lines.push({ pred: "reads", val: "text" }); // the regression term inherited it from a format root
   if (!lines.length) lines.push({ pred: "definition", val: name.replace(/-/g, " ") });
   inst.add("forms", name, lines);
@@ -347,6 +394,7 @@ ref.shape(
   { pred: "select", val: { selector: "ul.facts li", form: "list-item" } },
   { pred: "select", val: { selector: ".description > p", form: "paragraph" } },
   { pred: "select", val: { selector: ".rooms li.room", form: "list-item" } },
+  { pred: "select", val: { selector: ".photos img", form: "figure" } },
   { pred: "select", val: { selector: ".photos img", form: "figure", field: "alt", attr: "alt" } },
   { pred: "chrome", val: { selector: ".site-header, .site-footer, script, .agent" } },
 );
@@ -384,7 +432,7 @@ const [addrAt, priceAt, bedsAt, tenureAt] = [
   span('<li class="beds">', "li", "2 bedrooms"),
   span('<li class="tenure">', "li", "Freehold"),
 ];
-ref.record(listing.full, { intrinsics: (await intrinsics(listingBytes, "cottage-listing.html")).val, passes: { p1: { ...recordPass, over: Object.keys(listingRead) } }, readings: listingRead });
+ref.judge(listing.full, { passes: { p1: { ...recordPass, over: Object.keys(listingRead) } }, readings: listingRead });
 ref.entity(
   "12-quay-street-port-ellen",
   entityPass,
@@ -397,7 +445,30 @@ ref.entity(
 
 // the procedure: formed — readings at their addresses, a tree over them, both complete; pages are addresses only
 const procBytes = readFileSync(join(SYN, "procedure.pdf"));
-const proc = await ingest(ref, procBytes, "procedure.pdf", null);
+const procSidecar = new TextEncoder().encode(
+  ["source:", "  uri: https://standards.harbour.example.invalid/hl-02/02.1/procedure.pdf", "producer:", "  tool: page-capture 4.2", "  host: capture-box", "  fetched: 2026-03-19T21:52:00Z", "context: the heat-loss procedure the office publishes", ""].join("\n"),
+);
+const proc = await ingest(ref, procBytes, "procedure.pdf", procSidecar);
+/** The line boxes pdftotext finds on a page inside a region, in reading order — how this mock gives rows their own addresses. */
+function linesIn(pdf: Uint8Array, page: number, bbox: string) {
+  const tmp = mkdtempSync(join(process.env.TMPDIR ?? tmpdir(), "mock-"));
+  writeFileSync(join(tmp, "p.pdf"), pdf);
+  const xml = spawnSync("pdftotext", ["-bbox-layout", "-f", String(page), "-l", String(page), join(tmp, "p.pdf"), "-"], { encoding: "utf8" }).stdout;
+  rmSync(tmp, { recursive: true, force: true });
+  const [, W, H] = /<page width="([\d.]+)" height="([\d.]+)"/.exec(xml)!.map(Number);
+  const [x, y, w, h] = bbox.split(",").map(Number);
+  const r4 = (n: number) => Math.round(n * 1e4) / 1e4;
+  const rows: number[][] = [];
+  for (const m of xml.matchAll(/<line xMin="([\d.]+)" yMin="([\d.]+)" xMax="([\d.]+)" yMax="([\d.]+)">/g)) {
+    const [x0, y0, x1, y1] = [m[1], m[2], m[3], m[4]].map((v) => Number(v));
+    const [lx, ly, lw, lh] = [x0! / W!, y0! / H!, (x1! - x0!) / W!, (y1! - y0!) / H!];
+    if (!(lx >= x! - 0.005 && ly >= y! - 0.005 && lx + lw <= x! + w! + 0.005 && ly + lh <= y! + h! + 0.005)) continue;
+    const last = rows.at(-1);
+    if (last && Math.abs(last[1]! - ly) < 0.004) last[2] = Math.max(last[0]! + last[2]!, lx + lw) - last[0]!; // a key and its value on one baseline are one row
+    else rows.push([lx, ly, lw, lh]);
+  }
+  return rows.map(([lx, ly, lw, lh]) => `page=${page}&bbox=${r4(lx!)},${r4(ly!)},${r4(lw!)},${r4(lh!)}`);
+}
 const passFile = readdirSync(join(HERE, "passes")).find((f) => f.startsWith(proc.full))!;
 type Old = { at: string; forms: string[]; in?: string; ord?: number; body?: Record<string, unknown>; [field: string]: unknown };
 const old = new Map<string, Old>();
@@ -415,25 +486,30 @@ for (const raw of readFileSync(join(HERE, "passes", passFile), "utf8").split("\n
     sc.ord = Number((value as J).ord);
   } else if (predicate === "reads_as") (sc.body ??= {})[String(aspect)] = body;
 }
-// readings: every transcribed region, its leading designator lifted into the scope's field (§8.4.4); a table's rows fold into
-// its grid; the forming pass adopts each into the scope at its address (§8.4.3), so none is written under `readings`
+// readings: every transcribed region, its leading designator lifted into the scope's field (§8.4.4); a table is its rows
+// (§8.4.7), so a grid or a key-value block read whole is split into row scopes at the lines' own boxes; the forming pass
+// adopts each reading into the scope at its address (§8.4.3), so none is written under `readings`
 const procRead: Record<string, Reading> = {};
 const kids = (parent: string) => [...old.values()].filter((o) => o.in === parent).sort((a, b) => a.ord! - b.ord!);
-for (const o of old.values()) {
+for (const o of [...old.values()]) {
   if (!o.body) continue;
-  const parent = o.in && old.get(o.in);
-  if (parent && GRID.has(parent.forms[0]!) && Array.isArray(o.body.cells) && !Array.isArray(o.body.cells[0])) continue;
+  if (GRID.has(o.forms[0]!)) {
+    const rows = Array.isArray(o.body.cells) ? (o.body.cells as string[][]) : String(o.body.text).split("\n").map((l) => l.split(/: (.*)/s).filter(Boolean));
+    const [, page, box] = /^page=(\d+)&bbox=(.*)$/.exec(o.at)!;
+    const lines = linesIn(procBytes, Number(page), box!);
+    if (lines.length !== rows.length) throw new Error(`${o.at}: ${rows.length} rows, ${lines.length} lines`);
+    rows.forEach((cells, i) => {
+      const caption = o.forms[0] === "table" && cells.slice(1).every((c) => c === ""); // a title row is the table's caption, not a row
+      old.set(lines[i]!, { at: lines[i]!, forms: [caption ? "caption" : o.forms[0] === "table" ? "row" : "definition"], in: o.at, ord: i });
+      procRead[lines[i]!] = caption ? { text: cells[0]! } : { cells };
+    });
+    continue;
+  }
   const r: Reading = {};
   if (typeof o.body.text === "string") r.text = o.body.text;
   if (typeof o.body.tex === "string") r.tex = o.body.tex;
   if (Array.isArray(o.body.cells)) r.cells = o.body.cells as string[][];
   procRead[o.at] = r;
-}
-for (const o of old.values()) {
-  if (!GRID.has(o.forms[0]!) || o.forms[0] === "row" || o.forms[0] === "definition") continue;
-  const rows = kids(o.at).filter((k) => Array.isArray(k.body?.cells)).map((k) => k.body!.cells as string[]);
-  if (rows.length) procRead[o.at] = { cells: rows };
-  if (o.forms[0] === "definition-list" && typeof o.body?.text === "string") procRead[o.at] = { cells: o.body.text.split("\n").map((l) => l.split(/: (.*)/s).filter(Boolean)) };
 }
 // the tree: a page is nowhere in it; what sat `in` a page hangs from the scope at that page, else from the root
 const adopted = new Set<string>();
@@ -448,14 +524,19 @@ const procTree = top.sort((a, b) => a.ord! - b.ord!).map(scopeOf);
 for (const at of Object.keys(procRead)) if (!adopted.has(at)) throw new Error(`reading no scope adopted: ${at}`);
 const read = (body: string) => Object.entries(procRead).find(([, r]) => r.text === body)!;
 const procIntrinsics = (await intrinsics(procBytes, "procedure.pdf")).val;
-ref.record(proc.full, {
-  intrinsics: procIntrinsics,
+ref.judge(proc.full, {
   chrome: [{ repeats: { pages: Number(procIntrinsics.page_count), share: 1 }, mask: "digits", box: 2, roles: { "page-number": "Page # of #" } }],
   passes: { p1: { ...recordPass, attests: ["readings", "structure"] } },
   scopes: procTree,
 });
 const P = A(proc.full);
 const lbl = (body: string) => `${P}?${read(body)[0]}&text`;
+const procTestimony = A(proc.testimony!);
+const uriSpan = (() => {
+  const text = new TextDecoder().decode(procSidecar);
+  const a = text.indexOf("https://");
+  return `bytes=${a},${text.indexOf("\n", a)}`;
+})();
 ref.entity(
   "hl-02",
   entityPass,
@@ -463,6 +544,8 @@ ref.entity(
   { pred: "title", val: "Procedure to estimate heat loss from insulated pipework over a reporting period", ev: [ev(lbl("Procedure to estimate heat loss from insulated pipework over a reporting period"), "Procedure to estimate heat loss from insulated pipework over a reporting period", await rev(read("Procedure to estimate heat loss from insulated pipework over a reporting period")[1].text))], pass: "p1" },
   { pred: "version", val: "02.1", ev: [ev(lbl("Version 02.1"), "Version 02.1", await rev(read("Version 02.1")[1].text))], pass: "p1" },
   { pred: "source", val: P, ev: [ev(lbl("HL-02"), "HL-02", await rev(read("HL-02")[1].text), { mode: "inferred", reason: "the document prints the standard's designation on its cover, issued by the office" })], pass: "p1" },
+  { pred: "pass", val: { by: "reader-b", date: DATE, id: "p2", verify: "reader-a", vocab: "@graph" } },
+  { pred: "source", val: P, ev: [ev(`${procTestimony}?${uriSpan}&text`, "https://standards.harbour.example.invalid/hl-02/02.1/procedure.pdf", "derived:yaml.text@1", { prefix: "uri: " })], pass: "p2" },
   { pred: "issued-by", val: "ath://harbour-standards-office", qual: { as: "HARBOUR STANDARDS OFFICE" }, ev: [ev(lbl("HARBOUR STANDARDS OFFICE"), "HARBOUR STANDARDS OFFICE", await rev(read("HARBOUR STANDARDS OFFICE")[1].text))], pass: "p1" },
 );
 ref.entity(
@@ -509,12 +592,17 @@ home.shape(
   { pred: "matches", val: { mime: "application/json", selector: "/participants" } },
   { pred: "matches", val: { mime: "application/json", selector: "/messages/*/sender_name" } },
   { pred: "select", val: { selector: "/messages/*", form: "message" } },
-  { pred: "select", val: { selector: "/messages/*/sender_name", form: "field", in: "message" } },
-  { pred: "select", val: { selector: "/messages/*/content", form: "body", in: "message" } },
+  { pred: "select", val: { selector: "/messages/*/sender_name", form: "message", field: "sender" } },
+  { pred: "select", val: { selector: "/messages/*/timestamp_ms", form: "message", field: "sent" } },
+  { pred: "select", val: { selector: "/messages/*/content", form: "message", reads: "text" } },
 );
-home.term("message", { pred: "definition", val: "one message of a conversation" }, { pred: "reads", val: "none" });
-home.term("field", { pred: "definition", val: "one named value of a structured record" }, { pred: "reads", val: "text" });
-home.term("body", { pred: "definition", val: "the running text of a message" }, { pred: "reads", val: "text" });
+home.term(
+  "message",
+  { pred: "definition", val: "one message of a conversation: who sent it, when, and its text" },
+  { pred: "reads", val: "text" },
+  { pred: "field", val: { name: "sender", type: "string", required: true } },
+  { pred: "field", val: { name: "sent", type: "datetime" } },
+);
 kind(home, "berth", ["occupant"], "a mooring place in a harbour");
 kind(home, "vessel", ["display-name", "length"], "a boat");
 kind(home, "person", ["display-name"], "a human being");
@@ -523,7 +611,9 @@ prop(home, "display-name", "string", true);
 prop(home, "length", "decimal", true);
 
 const zipBytes = readFileSync(join(SYN, "drive-folder.zip"));
-const drive = await ingest(home, zipBytes, "drive-folder.zip", readFileSync(join(SYN, "drive-folder.zip.capture.yaml")));
+const drive = await ingest(home, zipBytes, "drive-folder.zip", readFileSync(join(SYN, "drive-folder.zip.capture.yaml")), "reader-a", ref);
+// a recording: one record, its video and audio tracks listed as parts with their intrinsics; nothing said yet
+await ingest(home, readFileSync(join(SYN, "harbour-clip.mov")), "harbour-clip.mov", null);
 const part = (suffix: string) => drive.parts.find((p) => p.path.endsWith(suffix))!;
 
 // the plan inside the zip was read for its title: that constituent alone has a record, at the read stage
@@ -538,13 +628,13 @@ const [W, H] = [Number(pg[1]), Number(pg[2])];
 const [x0, y0, x1, y1] = [1, 2, 3, 4].map((i) => Number(ln[i]));
 const r4 = (n: number) => Math.round(n * 1e4) / 1e4;
 const headAt = `page=1&bbox=${r4(x0! / W)},${r4(y0! / H)},${r4((x1! - x0!) / W)},${r4((y1! - y0!) / H)}`;
-home.record(plan.blake3, { intrinsics: (await intrinsics(plan.bytes, "Mooring plan 2026.pdf")).val, passes: { p1: { ...recordPass, over: [headAt] } }, readings: { [headAt]: { text: "Mooring plan 2026" } } });
+home.records.set(plan.blake3, { intrinsics: (await intrinsics(plan.bytes, "Mooring plan 2026.pdf")).val, provenance: [] }); // an asset's projection: derived from its container's until something is said
+home.judge(plan.blake3, { passes: { p1: { ...recordPass, over: [headAt] } }, readings: { [headAt]: { text: "Mooring plan 2026" } } });
 
 // a photograph of a sign, read in full: transcribed, never formed — three readings and the attestation
 const signBytes = readFileSync(join(SYN, "sign.jpg"));
 const sign = await ingest(home, signBytes, "sign.jpg", null);
-home.record(sign.full, {
-  intrinsics: (await intrinsics(signBytes, "sign.jpg")).val,
+home.judge(sign.full, {
   passes: { p1: { ...recordPass, attests: ["readings"] } },
   readings: {
     "bbox=0.0667,0.1786,0.6022,0.1548": { text: "RETURNS ONLY" },
@@ -575,7 +665,7 @@ for (const [row, berth, vessel, len] of [
   );
 }
 
-// a conversation: structure by pointer selects, a person cited at a JSON value's span
+// a conversation: structure by pointer selects; a person cited through the first message's `sender` field
 const threadBytes = readFileSync(join(SYN, "facebook-thread.json"));
 const thread = await ingest(home, threadBytes, "facebook-thread.json", null);
 const T = A(thread.full);
@@ -584,7 +674,7 @@ home.entity(
   first.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
   entityPass,
   { pred: "is", val: "person", pass: "p1" },
-  { pred: "display-name", val: first, ev: [ev(`${T}?${jsonSpan(threadBytes, "sender_name", first)}&text`, first, "derived:json.text@1")], pass: "p1" },
+  { pred: "display-name", val: first, ev: [ev(`${T}?${jsonObjectSpan(threadBytes, "sender_name", first)}`, first, "field:sender")], pass: "p1" },
 );
 
 home.stores.set("nas", { id: "6b1f0c52-5d0e-4a8e-9c1e-2f0d6f9b2a71", driver: "rclone", role: "managed", tags: ["hdd", "online", "country:ca", "city:winnipeg"], encryption: "none", capacity: "8TB" });

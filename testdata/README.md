@@ -47,9 +47,10 @@ methodological-tool terms, the XenForo and Amazon expression roots, and a root t
 `bun testdata/mock.ts` writes `testdata/mock/` (gitignored): a public standalone instance `reference`, a private
 extension `household` built on it, and the host state they share (`host/`: the local store, store access, each
 instance's state directory), all in the specification's layout and generated from the synthetic fixtures. It writes
-the files by hand to show the layout; it is not the tool. Its records show the stages (spec §8.5): the procedure
-PDF is formed (readings and a tree, both complete), the listing page and the mooring plan are read where an entity
-cites them, the sign photograph is transcribed, and the sheet and the thread are structured and have no record.
+the files by hand to show the layout; it is not the tool. Every ingested artifact has a record with its projection
+(spec §8.1); the records show the stages (§8.5): the procedure PDF is formed (readings and a tree, both complete), the
+listing page and the mooring plan are read where an entity cites them, the sign photograph is transcribed, the sheet
+and the thread are structured and stay at their projection, and the clip lists its tracks as parts.
 
 ## Seeding a scratch instance
 
