@@ -21,7 +21,7 @@ const OUT = join(HERE, "mock");
 const DATE = "2026-03-20";
 type J = Record<string, unknown>;
 
-// ── canonical form (§6.4.2): id|at, pred, every other key in code-point order, authorship last ───────────────────
+// ── canonical form (§6.4.2): id|at, pred, every other key in code-point order, then ev, authorship last ─────────
 const AUTH = ["by", "pass"];
 const sortKeys = (v: unknown): unknown =>
   Array.isArray(v)
@@ -35,7 +35,7 @@ const sortKeys = (v: unknown): unknown =>
       : v;
 const canon = (line: J): string => {
   const head = ["id", "at", "pred"].filter((k) => k in line);
-  const tail = AUTH.filter((k) => k in line);
+  const tail = ["ev", ...AUTH].filter((k) => k in line);
   const mid = Object.keys(line)
     .filter((k) => !head.includes(k) && !tail.includes(k))
     .sort();
@@ -75,8 +75,10 @@ const HOST = join(OUT, "host");
 const keep = (tree: "artifacts" | "testimony", full: string, bytes: Uint8Array) =>
   write(join(HOST, "data/athenaeum", tree, full.slice(0, 2), full), bytes);
 
+type Vocab = "forms" | "kinds" | "properties";
 class Instance {
   terms = new Map<string, J[]>();
+  sort = new Map<string, Vocab>();
   records = new Map<string, J[]>();
   entities = new Map<string, J[]>();
   rulings: J[] = [];
@@ -89,6 +91,15 @@ class Instance {
   ) {}
   term(name: string, ...lines: J[]) {
     this.terms.set(name, [...(this.terms.get(name) ?? []), ...lines]);
+    if (!this.sort.has(name)) this.sort.set(name, "forms");
+  }
+  /** The pin of one vocabulary (§11.8): term files in name order, each preceded by its name, lines sorted. */
+  async pin(vocab: "corpus" | "graph", base?: Instance) {
+    const want = (v: Vocab) => (vocab === "corpus" ? v === "forms" : v !== "forms");
+    const all = new Map<string, J[]>();
+    for (const inst of [base, this].filter(Boolean) as Instance[]) for (const [n, ls] of inst.terms) if (want(inst.sort.get(n)!)) all.set(n, [...(all.get(n) ?? []), ...ls]);
+    const text = [...all.keys()].sort().map((n) => `${n}\n${jsonl(all.get(n)!)}`).join("");
+    return `b3:${(await blake3Hex(text)).slice(0, 16)}`;
   }
   record(full: string, ...lines: J[]) {
     this.records.set(full, [...(this.records.get(full) ?? []), ...lines]);
@@ -96,14 +107,19 @@ class Instance {
   entity(name: string, ...lines: J[]) {
     this.entities.set(name, [...(this.entities.get(name) ?? []), ...lines]);
   }
-  flush() {
+  async flush(base?: Instance) {
+    const pins = { "@corpus": await this.pin("corpus", base), "@graph": await this.pin("graph", base) };
+    const pinned = (ls: J[]) => JSON.parse(JSON.stringify(ls).replace(/"@(corpus|graph)"/g, (m) => JSON.stringify(pins[m.slice(1, -1) as keyof typeof pins]))) as J[];
     write(join(this.dir, "athenaeum.yaml"), yaml(this.config));
-    for (const [t, ls] of this.terms) write(join(this.dir, "terms", `${t}.jsonl`), jsonl(ls));
+    for (const [t, ls] of this.terms) {
+      const dir = { forms: "corpus/forms", kinds: "graph/kinds", properties: "graph/properties" }[this.sort.get(t)!];
+      write(join(this.dir, dir, `${t}.jsonl`), jsonl(ls));
+    }
     for (const [full, ls] of this.records) {
       const id = idOf(full);
-      write(join(this.dir, "records", id.slice(0, 2), `${id}.jsonl`), jsonl(ls));
+      write(join(this.dir, "corpus/records", id.slice(0, 2), `${id}.jsonl`), jsonl(pinned(ls)));
     }
-    for (const [n, ls] of this.entities) write(join(this.dir, "entities", n.slice(0, 2), `${n}.jsonl`), jsonl(ls));
+    for (const [n, ls] of this.entities) write(join(this.dir, "graph/entities", n.slice(0, 2), `${n}.jsonl`), jsonl(pinned(ls)));
     for (const [n, s] of this.stores) write(join(this.dir, "stores", `${n}.yaml`), yaml(s));
     for (const [n, p] of this.policies) write(join(this.dir, "policies", `${n}.yaml`), yaml(p));
     if (this.rulings.length) write(join(this.dir, "rulings.jsonl"), jsonl(this.rulings));
@@ -207,24 +223,28 @@ function copyForm(inst: Instance, name: string, seen = new Set<string>()) {
     }
     lines.push({ pred, val });
   }
-  if (!lines.some((l) => l.pred === "refines")) lines.push({ pred: "refines", val: "form" });
   inst.terms.set(name, lines);
+  inst.sort.set(name, "forms");
   for (const l of lines) if (l.pred === "refines") copyForm(inst, String(l.val), seen);
   for (const l of lines) if (l.pred === "select") copyForm(inst, String((l.val as J).form), seen);
   for (const l of lines) if (l.pred === "expects") for (const f of l.val as string[]) copyForm(inst, f, seen);
   for (const l of lines) if (l.pred === "shape" && (l.val as J).form) copyForm(inst, String((l.val as J).form), seen);
 }
-const kind = (inst: Instance, name: string, owes: string[], definition: string) =>
-  inst.term(name, { pred: "refines", val: "kind" }, { pred: "definition", val: definition }, { pred: "owes", val: owes });
-const prop = (inst: Instance, name: string, range: string, functional = false) =>
-  inst.term(name, { pred: "refines", val: "property" }, { pred: "range", val: range }, ...(functional ? [{ pred: "functional", val: true }] : []));
-const pass = (by: string, verify: string, vocab: string) => ({ pred: "pass", val: { by, date: DATE, id: "p1", verify, vocab } });
-const ev = (anchor: string, quote: string, reading: string, extra: J = {}) => ({ anchor, grade: "authoritative", mode: "stated", quote, reading, ...extra });
+function kind(inst: Instance, name: string, owes: string[], definition: string, evidencedBy: string[] = []) {
+  inst.sort.set(name, "kinds");
+  inst.term(name, { pred: "definition", val: definition }, { pred: "owes", val: owes }, ...(evidencedBy.length ? [{ pred: "evidenced_by", val: evidencedBy }] : []));
+}
+function prop(inst: Instance, name: string, range: string, functional = false, authority = false) {
+  inst.sort.set(name, "properties");
+  inst.term(name, { pred: "range", val: range }, ...(functional ? [{ pred: "functional", val: true }] : []), ...(authority ? [{ pred: "authority", val: true }] : []));
+}
+const recordPass = { pred: "pass", val: { by: "reader-a", date: DATE, id: "p1", verify: "reader-b", vocab: "@corpus" } };
+const entityPass = { pred: "pass", val: { by: "reader-a", date: DATE, id: "p1", verify: "reader-b", vocab: "@graph" } };
+const ev = (anchor: string, quote: string, reading: string, extra: J = {}) => ({ anchor, mode: "stated", quote, reading, ...extra });
 
 // ══ reference — public, standalone ════════════════════════════════════════════════════════════════════════════════
 rmSync(OUT, { recursive: true, force: true });
 const ref = new Instance(join(OUT, "reference"), { id: "3b8f1d2e-9a4c-4f6b-8e2d-5c7a1b9e0f43", name: "reference", tier: "public", shard: { records: 2, entities: 2 } });
-for (const root of ["form", "kind", "property"]) ref.term(root, { pred: "definition", val: `the root of every ${root}` });
 for (const f of ["header", "unit", "document", "data", "container", "lossy", "image", "media", "html", "pdf", "json", "csv", "zip", "png", "markdown", "listing-page", "methodological-tool"])
   copyForm(ref, f);
 for (const f of ["page", "cover-page", "label", "paragraph", "definition", "definition-list", "row", "caption", "list", "list-item", "parameter-table", "equation", "figure", "toc", "table-of-contents", "table", "revision-history", "metadata", "footnote", "end-mark"])
@@ -251,13 +271,12 @@ ref.term(
 );
 ref.term("source", { pred: "refines", val: "unit" }, { pred: "reads", val: "none" });
 ref.term("producer", { pred: "refines", val: "unit" }, { pred: "reads", val: "none" });
-ref.term("listing-page", { pred: "evidences", val: ["residence"] });
-ref.term("methodological-tool", { pred: "evidences", val: ["standard", "organization"] });
-kind(ref, "residence", ["address", "asking-price", "bedrooms", "tenure"], "a dwelling offered or held");
-kind(ref, "standard", ["title", "version", "issued-by"], "a published method others follow");
+kind(ref, "residence", ["address", "price", "bedrooms", "tenure"], "a dwelling offered or held", ["listing-page"]);
+kind(ref, "standard", ["title", "version", "issued-by", "source"], "a published method others follow", ["methodological-tool"]);
 kind(ref, "organization", ["legal-name"], "a body that acts in its own name");
 prop(ref, "address", "string", true);
-prop(ref, "asking-price", "amount", true);
+prop(ref, "price", "amount", true);
+prop(ref, "source", "artifact", false, true);
 prop(ref, "bedrooms", "int", true);
 prop(ref, "tenure", "string", true);
 prop(ref, "council-tax-band", "string", true);
@@ -273,13 +292,12 @@ const captureSidecar = new TextEncoder().encode(
 );
 const listing = await ingest(ref, listingBytes, "cottage-listing.html", captureSidecar);
 const L = A(listing.full);
-const vocab = "b3:5c1e0a9d77f3b210";
 ref.entity(
   "12-quay-street-port-ellen",
-  pass("reader-a", "reader-b", vocab),
+  entityPass,
   { pred: "is", val: "residence", pass: "p1" },
   { pred: "address", val: "12 Quay Street, Port Ellen", ev: [ev(`${L}?${htmlSpan(listingBytes, '<h1 class="listing-title">', "h1")}&text`, "12 Quay Street, Port Ellen", "derived:html.text@1")], pass: "p1" },
-  { pred: "asking-price", val: "£313,000", ev: [ev(`${L}?${htmlSpan(listingBytes, '<span class="amount">', "span")}&text`, "£313,000", "derived:html.text@1")], pass: "p1" },
+  { pred: "price", val: "£313,000", ev: [ev(`${L}?${htmlSpan(listingBytes, '<span class="amount">', "span")}&text`, "£313,000", "derived:html.text@1")], pass: "p1" },
   { pred: "bedrooms", val: "2", ev: [ev(`${L}?${htmlSpan(listingBytes, '<li class="beds">', "li")}&text`, "2 bedrooms", "derived:html.text@1")], pass: "p1" },
   { pred: "tenure", val: "Freehold", ev: [ev(`${L}?${htmlSpan(listingBytes, '<li class="tenure">', "li")}&text`, "Freehold", "derived:html.text@1")], pass: "p1" },
 );
@@ -297,7 +315,7 @@ const read = (body: string) => procLines.find((l) => l.pred === "reads_as" && l.
 ref.record(
   proc.full,
   (await intrinsics(procBytes, "procedure.pdf")).line,
-  { at: "whole", ...pass("reader-a", "reader-b", vocab) },
+  { at: "whole", ...recordPass },
   ...procLines,
   { at: "whole", pred: "complete", pass: "p1" },
 );
@@ -305,15 +323,16 @@ const P = A(proc.full);
 const lbl = (body: string) => `${P}?${read(body).at}&text`;
 ref.entity(
   "hl-02",
-  pass("reader-a", "reader-b", vocab),
+  entityPass,
   { pred: "is", val: "standard", pass: "p1" },
   { pred: "title", val: "Procedure to estimate heat loss from insulated pipework over a reporting period", ev: [ev(lbl("Procedure to estimate heat loss from insulated pipework over a reporting period"), "Procedure to estimate heat loss from insulated pipework over a reporting period", read("Procedure to estimate heat loss from insulated pipework over a reporting period").rev as string)], pass: "p1" },
   { pred: "version", val: "02.1", ev: [ev(lbl("Version 02.1"), "Version 02.1", read("Version 02.1").rev as string)], pass: "p1" },
+  { pred: "source", val: P, ev: [ev(lbl("HL-02"), "HL-02", read("HL-02").rev as string, { mode: "inferred", reason: "the document prints the standard's designation on its cover, issued by the office" })], pass: "p1" },
   { pred: "issued-by", val: "ath://harbour-standards-office", qual: { as: "HARBOUR STANDARDS OFFICE" }, ev: [ev(lbl("HARBOUR STANDARDS OFFICE"), "HARBOUR STANDARDS OFFICE", read("HARBOUR STANDARDS OFFICE").rev as string)], pass: "p1" },
 );
 ref.entity(
   "harbour-standards-office",
-  pass("reader-a", "reader-b", vocab),
+  entityPass,
   { pred: "is", val: "organization", pass: "p1" },
   { pred: "legal-name", val: "HARBOUR STANDARDS OFFICE", ev: [ev(lbl("HARBOUR STANDARDS OFFICE"), "HARBOUR STANDARDS OFFICE", read("HARBOUR STANDARDS OFFICE").rev as string)], pass: "p1" },
 );
@@ -349,10 +368,9 @@ home.term(
   { pred: "matches", val: { mime: "text/csv", first_row: ["Berth", "Vessel", "Length (m)"] } },
   { pred: "shape", val: { header: 0, form: "header" } },
   { pred: "shape", val: { rows: "berth-row" } },
-  { pred: "evidences", val: ["berth", "vessel"] },
 );
 home.term("berth-row", { pred: "refines", val: "unit" }, { pred: "reads", val: "cells" });
-home.term("mooring-plan", { pred: "refines", val: "pdf" }, { pred: "definition", val: "a harbour's plan of berths for a season" }, { pred: "evidences", val: ["berth"] });
+home.term("mooring-plan", { pred: "refines", val: "pdf" }, { pred: "definition", val: "a harbour's plan of berths for a season" });
 home.term(
   "chat-thread",
   { pred: "refines", val: "json" },
@@ -362,12 +380,11 @@ home.term(
   { pred: "select", val: { selector: "/messages/*", form: "message" } },
   { pred: "select", val: { selector: "/messages/*/sender_name", form: "author", in: "message" } },
   { pred: "select", val: { selector: "/messages/*/content", form: "bubble", in: "message" } },
-  { pred: "evidences", val: ["person"] },
 );
 for (const f of ["message", "author", "bubble"]) home.term(f, { pred: "refines", val: "unit" }, { pred: "reads", val: f === "message" ? "none" : "text" });
-kind(home, "berth", ["occupant"], "a mooring place in a harbour");
-kind(home, "vessel", ["display-name", "length"], "a boat");
-kind(home, "person", ["display-name"], "a human being");
+kind(home, "berth", ["occupant"], "a mooring place in a harbour", ["berth-list", "mooring-plan"]);
+kind(home, "vessel", ["display-name", "length"], "a boat", ["berth-list"]);
+kind(home, "person", ["display-name"], "a human being", ["chat-thread"]);
 prop(home, "occupant", "vessel", true);
 prop(home, "display-name", "string", true);
 prop(home, "length", "decimal", true);
@@ -391,7 +408,7 @@ const headAt = `page=1&bbox=${r4(x0! / W)},${r4(y0! / H)},${r4((x1! - x0!) / W)}
 home.record(
   plan.blake3,
   (await intrinsics(plan.bytes, "Mooring plan 2026.pdf")).line,
-  { at: "whole", ...pass("reader-a", "reader-b", vocab) },
+  { at: "whole", ...recordPass },
   { at: "whole", pred: "manifests", form: "mooring-plan", pass: "p1" },
   { at: headAt, pred: "manifests", form: "heading", level: 0, pass: "p1" },
   { at: headAt, pred: "in", val: { at: "whole", ord: 0 }, pass: "p1" },
@@ -407,13 +424,13 @@ for (const [row, berth, vessel, len] of [
   const v = vessel.toLowerCase();
   home.entity(
     `berth-${berth.toLowerCase()}`,
-    pass("reader-a", "reader-b", vocab),
+    entityPass,
     { pred: "is", val: "berth", pass: "p1" },
     { pred: "occupant", val: `ath://${v}`, qual: { as: vessel }, ev: [ev(`${C}?row=${row}&col=1`, vessel, "derived:csv.parse@1")], pass: "p1" },
   );
   home.entity(
     v,
-    pass("reader-a", "reader-b", vocab),
+    entityPass,
     { pred: "is", val: "vessel", pass: "p1" },
     { pred: "display-name", val: vessel, ev: [ev(`${C}?row=${row}&col=1`, vessel, "derived:csv.parse@1")], pass: "p1" },
     { pred: "length", val: len, ev: [ev(`${C}?row=${row}&col=2`, len, "derived:csv.parse@1")], pass: "p1" },
@@ -427,7 +444,7 @@ const T = A(thread.full);
 const first = (JSON.parse(threadBytes.toString()) as { messages: { sender_name: string }[] }).messages[0]!.sender_name;
 home.entity(
   first.toLowerCase().replace(/[^a-z0-9]+/g, "-"),
-  pass("reader-a", "reader-b", vocab),
+  entityPass,
   { pred: "is", val: "person", pass: "p1" },
   { pred: "display-name", val: first, ev: [ev(`${T}?${jsonSpan(threadBytes, "sender_name", first)}&text`, first, "derived:json.text@1")], pass: "p1" },
 );
@@ -442,8 +459,8 @@ home.rulings.push(
   { id: "r2", pred: "decline", val: { on: A(part("Quay photo.png").blake3), demand: "reading", why: "a harbour snapshot, nothing to read" }, date: DATE, by: "owner" },
 );
 
-ref.flush();
-home.flush();
+await ref.flush();
+await home.flush(ref);
 write(
   join(HOST, "config/athenaeum/access.yaml"),
   [

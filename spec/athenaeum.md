@@ -39,7 +39,9 @@ This document is normative. The key words MUST, MUST NOT, SHOULD and MAY are use
 
 | term | meaning |
 |---|---|
-| **instance** | one repository with its vocabulary, records, entities, store and policy declarations and rulings (§4): **standalone**, or an **extension** of a **base** it builds on |
+| **instance** | one repository — its corpus, its graph, its store and policy declarations and its rulings (§4): **standalone**, or an **extension** of a **base** it builds on |
+| **corpus** | an instance's forms and records: what its artifacts are |
+| **graph** | an instance's kinds, properties and entities: what its artifacts show about the world |
 | **artifact** | bytes, identified by their BLAKE3; the subject `ath://<id>` (§7.1) |
 | **id** | an artifact's short identifier: the first 8 hex digits of its BLAKE3, 16 where 8 collide (§7.1) |
 | **container** | an artifact whose format holds whole files of its own |
@@ -49,7 +51,7 @@ This document is normative. The key words MUST, MUST NOT, SHOULD and MAY are use
 | **record** | the file of judgments about one artifact, written once something is said about it (§8) |
 | **intrinsics** | the line of a record that holds what the artifact's format defines about its bytes (§8.1) |
 | **scope** | a region of an artifact named by an intrinsic address `at` |
-| **term** | an entry of the vocabulary: a **form**, a **kind** or a **property** (§11) |
+| **term** | an entry of a vocabulary: a **form** (the corpus's), a **kind** or a **property** (the graph's) (§11) |
 | **form** | what a scope is: a photograph, a receipt, a heading, a table, a page capture |
 | **kind** | what an entity is: a transaction, a residence, a person, a vessel |
 | **property** | what can be said of an entity: a total, an address, a vessel's name |
@@ -58,9 +60,9 @@ This document is normative. The key words MUST, MUST NOT, SHOULD and MAY are use
 | **reading** | an author's transcription of a unit under one aspect, stored with its revision |
 | **surface** | the text an op decodes at a scope; what a quote is checked against |
 | **entity** | a particular thing in the world, of one or more kinds, the subject of claims (§14) |
-| **name** | the identifier of a term or an entity; one name space for both (§5.3) |
+| **name** | the identifier of a term or an entity (§5.3) |
 | **claim** | a line asserting the value of a property of an entity, carrying evidence |
-| **evidence** | an anchor and a quote into an artifact supporting a claim, bound by verify |
+| **evidence** | an anchor and a quote into an artifact supporting a claim, bound by verify; its standing is derived (§14.4.4) |
 | **op** | a versioned, deterministic function of bytes, registered in the tooling as `<name>@<version>` |
 | **family** | the format an op parses (html, csv, pdf, rfc822, json, …); one parse per family per artifact |
 | **pass** | one author and one verifier over one artifact or one entity: the graph every judgment they sign belongs to |
@@ -109,21 +111,25 @@ A cycle among bases, a base missing at its path or not at its pinned commit, or 
 ```
 <instance>/
 ├── athenaeum.yaml
-├── terms/<name>.jsonl                 the vocabulary (§11)
-├── records/<shard>/<id>.jsonl         judgments about artifacts (§8)
-├── entities/<shard>/<name>.jsonl      entities and their claims (§14)
+├── corpus/
+│   ├── forms/<name>.jsonl             what a scope is (§11)
+│   └── records/<shard>/<id>.jsonl     judgments about artifacts (§8)
+├── graph/
+│   ├── kinds/<name>.jsonl             what an entity is (§11)
+│   ├── properties/<name>.jsonl        what can be said of one (§11)
+│   └── entities/<shard>/<name>.jsonl  entities and their claims (§14)
 ├── stores/<name>.yaml                 §18.2
 ├── policies/<name>.yaml               §18.6
 └── rulings.jsonl                      §13.5
 ```
 
-5.2 **Shards.** A record's `<shard>` is the first *n* hex digits of its artifact's id; an entity's is the first *n* characters of its name. `athenaeum.yaml` declares *n* per directory; absent, both take 2. Terms are never sharded. Changing a width is `instance reshard` (§19.5), which moves files and changes no line.
+5.2 **Shards.** A record's `<shard>` is the first *n* hex digits of its artifact's id; an entity's is the first *n* characters of its name. `athenaeum.yaml` declares *n* per directory; absent, both take 2. Forms, kinds and properties are never sharded. Changing a width is `instance reshard` (§19.5), which moves files and changes no line.
 
-5.3 **Names.** Terms and entities are named by a **name**: lowercase letters, digits and hyphens, starting with a letter or digit, never consisting of hex digits alone. Terms and entities share one name space: no name names both. Every subject is therefore `ath://<id>` or `ath://<name>`, and resolves to exactly one file.
+5.3 **Names.** A term or an entity is named by a **name**: lowercase letters, digits and hyphens, starting with a letter or digit, never consisting of hex digits alone. A name is unique within its directory. Entities and kinds — the things a consumer asks the graph about — share one name space and are the subjects `ath://<name>`; artifacts are `ath://<id>`. Forms and properties are named within their own vocabularies and referred to by bare name (`"form":"receipt"`, `"pred":"total"`); the graph projection gives them IRIs of their own (§15.3).
 
-5.4 **The file is the subject.** A line in `terms/<name>.jsonl` or `entities/<shard>/<name>.jsonl` is about that name, and a line in `records/<shard>/<id>.jsonl` is about that artifact; no line repeats its subject.
+5.4 **The file is the subject.** A line in a term's or an entity's file is about that name, and a line in a record is about its artifact; no line repeats its subject.
 
-5.5 **One-way reference.** A record never names an entity, a testimony or a container: those relations are derived (§12). Entities cite records freely. Terms are read by both and name neither.
+5.5 **One-way reference.** The graph cites the corpus; the corpus never names the graph. A record never names an entity, a testimony or a container: those relations are derived (§12). A form never names a kind or a property.
 
 5.6 **Host state.** What belongs to one machine lives outside every repository, under the XDG base directories:
 
@@ -156,14 +162,14 @@ Predicates add their own keys (`form`, `aspect`, `body`, `rev`, `ev`, …). A ru
 6.1.3 A line is a triple with provenance — the file's subject (and `at`), `pred`, `val` — plus its authorship, and maps to one N-Quads statement (§15.3).
 
 ```
-// records/9f/9f2c1a3b.jsonl
+// corpus/records/9f/9f2c1a3b.jsonl
 {"at":"page=3&bbox=0.1192,0.6933,0.4851,0.019","pred":"in","val":{"at":"whole","ord":11},"pass":"p1"}
 {"at":"page=3&bbox=0.1192,0.6933,0.4851,0.019","pred":"manifests","form":"heading","num":"5.","level":1,"pass":"p1"}
 {"at":"page=3&bbox=0.1192,0.6933,0.4851,0.019","pred":"reads_as","aspect":"text","body":"Baseline emissions","rev":"b3:9f86d081884c7d65","pass":"p1"}
-// terms/heading.jsonl
+// corpus/forms/heading.jsonl
 {"pred":"reads","val":"text"}
-// entities/ti/tide-table-02.jsonl
-{"pred":"version","val":"02.1","ev":[{"anchor":"ath://5e6e497d?page=1&bbox=0.1429,0.6906,0.0901,0.0087&text","quote":"Version 02.1","grade":"authoritative","mode":"stated","reading":"b3:aae7b6bb9c216abb"}],"pass":"p1"}
+// graph/entities/ti/tide-table-02.jsonl
+{"pred":"version","val":"02.1","ev":[{"anchor":"ath://5e6e497d?page=1&bbox=0.1429,0.6906,0.0901,0.0087&text","mode":"stated","quote":"Version 02.1","reading":"b3:aae7b6bb9c216abb"}],"pass":"p1"}
 ```
 
 ### 6.2 Authorship
@@ -198,7 +204,7 @@ Predicates add their own keys (`form`, `aspect`, `body`, `rev`, `ev`, …). A ru
 
 6.4.1 One line per assertion. A file is sorted by identity. Nothing depends on line order: reading order is `ord` (§8.1), never position. The union of an extension with its base, and a merge, are line-set unions.
 
-6.4.2 The canonical serialisation of a line is compact JSON, LF-terminated, non-ASCII characters unescaped, with its keys in a fixed order: `id` or `at` first, then `pred`, then every other key in code-point order, then the authorship (`by` or `pass`) last; every nested object's keys in code-point order; arrays in their stored order. Two lines are the same content when their canonical serialisations are equal. Every hash this document defines over JSON — a revision, the pin — is taken over this form.
+6.4.2 The canonical serialisation of a line is compact JSON, LF-terminated, non-ASCII characters unescaped, with its keys in a fixed order: `id` or `at` first, then `pred`, then every other key in code-point order, then `ev`, then the authorship (`by` or `pass`) last; every nested object's keys in code-point order; arrays in their stored order. Two lines are the same content when their canonical serialisations are equal. Every hash this document defines over JSON — a revision, the pin — is taken over this form.
 
 6.4.3 The packed `val` is the unit of judgment: `in` packs its parent and `ord` because they are verified together.
 
@@ -212,7 +218,7 @@ A reading's body is always on its line. Its `rev` is `b3:` followed by the first
 
 7.1.1 An artifact's identity is the BLAKE3 of its bytes and nothing else: no URL, name, path or producer key takes part in it. New bytes are a new artifact. The same bytes met again are the same artifact; the encounter adds testimony (§9) and nothing else.
 
-7.1.2 Within an instance an artifact is written by its **id**: the first 8 hex digits of its BLAKE3. Its subject is `ath://<id>`; its record, when it has one, is `records/<shard>/<id>.jsonl`. Testimony and the format's constituent lists carry full hashes; everything tracked in the repository carries ids.
+7.1.2 Within an instance an artifact is written by its **id**: the first 8 hex digits of its BLAKE3. Its subject is `ath://<id>`; its record, when it has one, is `corpus/records/<shard>/<id>.jsonl`. Testimony and the format's constituent lists carry full hashes; everything tracked in the repository carries ids.
 
 7.1.3 Where two artifacts the instance holds share their first 8 digits, the one received first (by its receipt, §9.3; a constituent by its container's) keeps the 8-digit id and every later one is written with 16. An extension defers to its base: if a repin brings a base artifact onto an 8-digit id the extension already uses for another artifact, the repin rewrites the extension's lines to give its own artifact 16 digits. Should 16 digits collide, the full hash is the id.
 
@@ -309,14 +315,14 @@ A page the document has, a row the parse holds and a cell within such a row are 
 8.2.8 **A field the address determines is derived.** A field a form declares `derived` (a page's number) is never stored.
 
 ```
-// records/a4/a48bf844.jsonl — the photograph of a receipt on a table, read by p1
+// corpus/records/a4/a48bf844.jsonl — the photograph of a receipt on a table, read by p1
 {"at":"whole","pred":"intrinsics","val":{"bytes":2310455,"height":3024,"mime":"image/jpeg","width":4032},"by":"jpeg.intrinsics@1"}
 {"at":"whole","pred":"pass","val":{"by":"reader-a","date":"2026-01-12","id":"p1","verify":"reader-b","vocab":"b3:5c1e0a9d77f3b210"}}
 {"at":"whole","pred":"manifests","form":"photograph","pass":"p1"}
 {"at":"bbox=0.31,0.12,0.38,0.71","pred":"in","val":{"at":"whole","ord":0},"pass":"p1"}
 {"at":"bbox=0.31,0.12,0.38,0.71","pred":"manifests","form":"receipt","pass":"p1"}
 {"at":"bbox=0.36,0.69,0.27,0.03","pred":"in","val":{"at":"bbox=0.31,0.12,0.38,0.71","ord":4},"pass":"p1"}
-{"at":"bbox=0.36,0.69,0.27,0.03","pred":"manifests","form":"total-line","pass":"p1"}
+{"at":"bbox=0.36,0.69,0.27,0.03","pred":"manifests","form":"total","pass":"p1"}
 {"at":"bbox=0.36,0.69,0.27,0.03","pred":"reads_as","aspect":"text","body":"TOTAL 42.10","rev":"b3:0de3a1c94b7e5f21","pass":"p1"}
 ```
 
@@ -332,7 +338,7 @@ A page the document has, a row the parse holds and a cell within such a row are 
 
 9.1.4 A testimony cannot be edited, because its bytes cannot change. A mistaken testimony is answered by a later one and, where the owner will not rely on it, by a `distrust` ruling (§13.5).
 
-9.1.5 Testimony is evidence, not knowledge. It holds no claim and has no status. A claim about where or when something was found or published cites the testimony by an ordinary anchor into its bytes; such evidence is graded `direct`.
+9.1.5 Testimony is evidence, not knowledge. It holds no claim and has no status. A claim about where or when something was found or published cites the testimony by an ordinary anchor into its bytes; its standing, like any evidence's, is derived (§14.4.4).
 
 ### 9.2 Delivery
 
@@ -502,21 +508,21 @@ Everything in this section is knowledge of a format's own specification. None of
 
 ## 11. The vocabulary
 
-### 11.1 Three sorts of term
+### 11.1 Two vocabularies
 
-11.1.1 The vocabulary is the instance's terms, one file each under `terms/`. A term is of exactly one sort, fixed by the root its `refines` chain reaches:
+11.1.1 An instance has two vocabularies, and the directory a term's file sits in fixes what it is:
 
-| sort | root | what it names | used by |
+| | directory | names | used by |
 |---|---|---|---|
-| **form** | `form` | what a scope of an artifact is: photograph, receipt, heading, table, page capture, testimony | `manifests` on records |
-| **kind** | `kind` | what an entity is: transaction, residence, person, vessel | `is` on entities |
-| **property** | `property` | what can be said of an entity: total, address, vessel name | the `pred` of a claim |
+| **forms** | `corpus/forms/` | what a scope of an artifact is: photograph, receipt, heading, table, page capture, testimony | `manifests` on records, and nothing else |
+| **kinds** | `graph/kinds/` | what an entity is: transaction, residence, person, vessel | `is` on entities |
+| **properties** | `graph/properties/` | what can be said of an entity: total, address, vessel name | the `pred` of a claim |
 
-11.1.2 A scope manifests only forms; an entity is only of kinds; a claim's predicate is only a property. A receipt is a form — what a region of a photograph shows; the purchase it records is an entity of kind `transaction`, and the receipt is evidence for the transaction's claims.
+11.1.2 A receipt is a form — what a region of a photograph shows; the purchase it records is an entity of kind `transaction`, and the receipt is evidence for the transaction's claims. Forms belong to the corpus and never appear in the graph; kinds and properties belong to the graph and never appear on a record. The graph refers to forms (§11.2.3); the corpus never refers to the graph.
 
 ### 11.2 Term predicates
 
-11.2.1 Every term MAY carry `refines` (its single parent), `definition` (one sentence: the contract for the word) and `aligns` (the IRI of a class or property in a published vocabulary the graph projection asserts it under).
+11.2.1 Every term MAY carry `refines` (its single parent, of the same vocabulary: a form refines a form, a kind a kind, a property a property), `definition` (one sentence: the contract for the word) and `aligns` (the IRI of a class or property in a published vocabulary the graph projection asserts it under).
 
 11.2.2 A **form** carries:
 
@@ -530,7 +536,6 @@ Everything in this section is knowledge of a format's own specification. None of
 | `reads` | the aspect a scope of this form is read under: exactly one of `text`, `cells`, `tex`, `none` |
 | `field` | a field on `manifests`: `{name, type, required?, derived?, options?, where?, pattern?, address?}`; `type` is one of `int`, `enum`, `datetime`, `string`, `col`, `designator`, `list`. A **designator** is a verbatim sub-reading with `where` (`leading`, `trailing`, or a descendant form), `pattern` and the derived-address key it feeds (`address`) |
 | `expects` | child forms a scope of this form normally contains; satisfied by a scope manifesting the form or a refinement of it |
-| `evidences` | the kinds an entity this form records is usually of (`receipt` → `transaction`); it steers authors and mints nothing |
 | `convention` | reading conventions inherited down the `in` chain, from a closed set the reading check applies (§13.4): `{"footnotes": "[^n]"}`, `{"hyphens": "rejoin"}`, `{"scripts": "flatten-outside-math"}`, `{"bullets": "drop"}` |
 | `renders` | the markdown form of a scope: `{"md": "<template>"}` over `{body}`, a field's name, and `{level+1}` |
 | `select` | `{selector, form, in?, field?, attr?, ord?, level?}` — derived structure (§11.7) |
@@ -539,24 +544,22 @@ Everything in this section is knowledge of a format's own specification. None of
 | `chrome` | what is chrome: `{"selector": …}`, or `{"repeats": {"pages": <n>, "share": <fraction>}, "mask": "digits", "box": <decimals>, "roles": {"page-number": "<masked pattern>"}}` — a run is chrome when its masked text and its box at the declared precision recur on at least *n* pages and that share of them; role by pattern, else `running-header` or `running-footer` by position |
 | `check` | a declarative check over scopes of the form (§17.3) |
 
-11.2.3 A **kind** carries `owes`: the properties an entity of this kind should have. An unmet `owes` is demand (§14.6).
+11.2.3 A **kind** carries `owes` — the properties an entity of this kind should have; an unmet `owes` is demand (§14.6) — and MAY carry `evidenced_by`: the forms that usually record an entity of this kind (`transaction` → `receipt`, `bank-statement-row`). It steers authors and mints nothing.
 
-11.2.4 A **property** carries `range` — the type of its values (`string`, `int`, `decimal`, `amount`, `date`, `datetime`, `uri`, `bool`), or a kind, when its value is another entity — and MAY carry `functional`: an entity has at most one value of it.
+11.2.4 A **property** carries `range` — the type of its values (`string`, `int`, `decimal`, `amount`, `date`, `datetime`, `uri`, `bool`), a kind, when its value is another entity, or `artifact`, when its value is an artifact — and MAY carry `functional` (an entity has at most one value of it) and `authority` (§14.4.4).
 
 ```
-// terms/receipt.jsonl                                  // terms/transaction.jsonl
-{"pred":"refines","val":"document"}                     {"pred":"refines","val":"kind"}
-{"pred":"definition","val":"a printed record of a sale"} {"pred":"owes","val":["total","date","merchant"]}
-{"pred":"expects","val":["line-item","total-line"]}
-{"pred":"evidences","val":["transaction"]}              // terms/merchant.jsonl
-                                                        {"pred":"refines","val":"property"}
-// terms/total.jsonl                                    {"pred":"range","val":"organization"}
-{"pred":"refines","val":"property"}                     {"pred":"functional","val":true}
-{"pred":"range","val":"amount"}
-{"pred":"functional","val":true}
+// corpus/forms/receipt.jsonl                  // graph/kinds/transaction.jsonl
+{"pred":"refines","val":"document"}            {"pred":"owes","val":["total","date","merchant"]}
+{"pred":"definition","val":"a printed record of a sale"}
+{"pred":"expects","val":["line-item","total"]} {"pred":"evidenced_by","val":["receipt"]}
+
+// graph/properties/total.jsonl                // graph/properties/merchant.jsonl
+{"pred":"range","val":"amount"}                {"pred":"range","val":"organization"}
+{"pred":"functional","val":true}               {"pred":"functional","val":true}
 ```
 
-A form and a property may not share a name (§5.3): the scope that shows a total manifests the form `total-line`, and the transaction's `total` is the property.
+The form `total` (the line of a receipt that prints it) and the property `total` (the transaction's) are different terms in different vocabularies.
 
 ### 11.3 The effective rules of a scope
 
@@ -621,13 +624,13 @@ A pattern is a prefix, or a glob where `*` stands for any run of characters, anc
 
 ### 11.8 The pin
 
-11.8.1 A pass pins the vocabulary it read against (`vocab`): `b3:` followed by the first 16 hex digits of the BLAKE3 of the vocabulary as loaded, an extension's terms together with its base's — the term files in name order, each preceded by its name and its lines sorted by identity, each line in canonical form (§6.4.2).
+11.8.1 A pass pins the vocabulary it read against (`vocab`): a pass over a record pins the corpus's forms, a pass over an entity the graph's kinds and properties. A pin is `b3:` followed by the first 16 hex digits of the BLAKE3 of that vocabulary as loaded, an extension's terms together with its base's — the term files in name order, each preceded by its name and its lines sorted by identity, each line in canonical form (§6.4.2).
 
-11.8.2 A change to a term makes every pass pinned at an older hash **stale** for the scopes and entities it reaches: derived, listed, re-run. Nobody edits a recipe.
+11.8.2 A change to a form makes every record pass pinned at an older hash **stale** for the scopes it reaches; a change to a kind or a property, every entity pass for the entities it reaches: derived, listed, re-run. Nobody edits a recipe.
 
 ### 11.9 What the tooling prescribes
 
-The tooling relies on exactly these terms, which every standalone instance carries: the roots `form`, `kind` and `property`; the forms `unit`, `document`, `lossy`, `image`, `media`, `data`, `container`, `testimony` and `receipt`. Every other term is the instance's.
+The tooling relies on exactly these forms, which every standalone instance carries: `unit`, `document`, `lossy`, `image`, `media`, `data`, `container`, `testimony` and `receipt`; and on the property `source`, with range `artifact` and `authority: true` (§14.4.4). Every other term is the instance's.
 
 ## 12. Derived, never stored
 
@@ -646,7 +649,8 @@ The following are computed at read time. Writing any of them to a file is a chec
 | testimony admitted | whether a testimony's root is an origin form and it carries the fields that form requires |
 | stale intrinsics | a `intrinsics` line by an older op version than the tool's for its mime |
 | binding state | an evidence entry's binding against the current readings and surfaces (§14.4) |
-| status | bound evidence, grades, modes and standing challenges (§14.5) |
+| standing of evidence | authority claims (§14.4.4) |
+| status | bound evidence, its standing, modes and standing challenges (§14.5) |
 | demand | §14.6 |
 | staleness of a pass | `pass.vocab` against the current pin, for what a changed term reaches |
 | residence | the host index (§18.4) |
@@ -715,16 +719,16 @@ The following are computed at read time. Writing any of them to a file is a chec
 
 ### 14.1 Entities
 
-14.1.1 An **entity** is a particular thing in the world — a purchase, a house, a person, a boat — named by a name (§5.3), its file `entities/<shard>/<name>.jsonl`. It is of one or more kinds (`is`), and carries one line per claim. Artifacts are evidence for an entity, never its identity.
+14.1.1 An **entity** is a particular thing in the world — a purchase, a house, a person, a boat — named by a name (§5.3), its file `graph/entities/<shard>/<name>.jsonl`. It is of one or more kinds (`is`), and carries one line per claim. Artifacts are evidence for an entity, never its identity.
 
 14.1.2 An entity's file holds its passes as `pass` lines and every claim carries `pass`: every line in it was authored and verified.
 
 ```
-// entities/tx/txn-corner-shop-48213.jsonl
+// graph/entities/tx/txn-corner-shop-48213.jsonl
 {"pred":"pass","val":{"by":"reader-a","date":"2026-01-12","id":"p1","verify":"reader-b","vocab":"b3:5c1e0a9d77f3b210"}}
 {"pred":"is","val":"transaction","pass":"p1"}
-{"pred":"total","val":"42.10","ev":[{"anchor":"ath://a48bf844?bbox=0.36,0.69,0.27,0.03&text","grade":"authoritative","mode":"stated","quote":"42.10","reading":"b3:0de3a1c94b7e5f21"}],"pass":"p1"}
-{"pred":"merchant","val":"ath://corner-shop","ev":[{"anchor":"ath://a48bf844?bbox=0.34,0.13,0.31,0.04&text","grade":"authoritative","mode":"stated","quote":"CORNER SHOP","reading":"b3:7a19c4e0d2b65f83"}],"qual":{"as":"CORNER SHOP"},"pass":"p1"}
+{"pred":"total","val":"42.10","ev":[{"anchor":"ath://a48bf844?bbox=0.36,0.69,0.27,0.03&text","mode":"stated","quote":"42.10","reading":"b3:0de3a1c94b7e5f21"}],"pass":"p1"}
+{"pred":"merchant","val":"ath://corner-shop","ev":[{"anchor":"ath://a48bf844?bbox=0.34,0.13,0.31,0.04&text","mode":"stated","quote":"CORNER SHOP","reading":"b3:7a19c4e0d2b65f83"}],"qual":{"as":"CORNER SHOP"},"pass":"p1"}
 ```
 
 14.1.3 Splitting an entity, merging two or renaming one is a verb (`entity split|merge|rename`, §19.5) that rewrites every reference in the instance at once. An extension cannot rename its base's entities; on a repin it is told of the base's.
@@ -751,13 +755,14 @@ The following are computed at read time. Writing any of them to a file is a chec
 |---|---|
 | `anchor` | `ath://<id>?<at>[&<aspect>]` — tight: the smallest scope the quote lies in, one cell of a table, never a region; a route through a container canonicalises to the constituent |
 | `quote` | verbatim from the reading or surface the binding names; an elided composite (`…`) or a typographic re-take is refused; `prefix` and `suffix` disambiguate a repeated string and extend a long one |
-| `grade` | the source's standing: `authoritative`, `direct`, `incidental` |
 | `mode` | how the entry supports the value: `stated`, `inferred`, `reported`; `reason` is required when it is not `stated` |
 | `reading` | the binding, stamped by verify (§14.4) |
 
-14.3.2 A `stated` entry supports a string value only where the value is within its quote after normalisation; otherwise the claim is `inferred` with a `reason`.
+14.3.2 An entry says nothing about the standing of its source; standing is derived (§14.4.4).
 
-### 14.4 Binding
+14.3.3 A `stated` entry supports a string value only where the value is within its quote after normalisation; otherwise the claim is `inferred` with a `reason`.
+
+### 14.4 Binding and standing
 
 14.4.1 `reading` is one of:
 
@@ -770,11 +775,13 @@ The following are computed at read time. Writing any of them to a file is a chec
 
 14.4.3 Three links are checked separately: claim to reading (the quote is in the bound body), reading to bytes (the reading check), value to quote (the verifier's judgment).
 
+14.4.4 **Standing is derived, never written.** A property the graph declares `authority: true` — with range `artifact` — names an artifact as an authoritative source for the entity that carries it (`hl-02` `source` `ath://5e6e497d`). A bound entry anchored in artifact A and supporting a claim of entity X is **authoritative** while X carries a `confirmed` authority claim naming A; otherwise it is **independent**. An authority claim's own status is computed without the authority it would confer: A cannot vouch for itself.
+
 ### 14.5 Status, derived
 
 | status | when |
 |---|---|
-| `confirmed` | a bound `authoritative` entry, or two bound `direct` entries from distinct artifacts, and no standing challenge |
+| `confirmed` | a bound authoritative entry, or bound entries from two distinct artifacts, and no standing challenge |
 | `provisional` · `inferred` · `reported` | the bar is not met; the mode of the best bound entry decides — `stated` gives `provisional` |
 | `disputed` | a challenge stands |
 | `conflicting` | a bound sibling claim disagrees on a `functional` property |
@@ -811,7 +818,7 @@ An artifact's provenance chain (§9.6) is exported beside the proxy on the owner
 
 ### 15.3 The graph
 
-15.3.1 Every term, record and entity line maps to one N-Quads statement and back, byte-identical; rulings are never projected. Subjects are `ath://<id>?<at>`, `ath://<id>` and `ath://<name>`; the vocabulary of the projection sits under the same scheme without an authority: the predicate `ath:p/<pred>`, the line's payload a literal typed `ath:json`, and the graph its authorship — `ath://<subject>#<pass-id>` for a pass, `ath:by/<op>` for an op, `ath:terms` for a term's lines.
+15.3.1 Every term, record and entity line maps to one N-Quads statement and back, byte-identical; rulings are never projected. Artifacts and their scopes are `ath://<id>` and `ath://<id>?<at>`; entities and kinds are `ath://<name>`; forms are `ath:form/<name>` and properties `ath:p/<name>`. The line's own predicate is `ath:p/<pred>` for a claim and `ath:pred/<pred>` otherwise, its payload a literal typed `ath:json`, and its graph its authorship — `ath://<subject>#<pass-id>` for a pass, `ath:by/<op>` for an op, `ath:vocab` for a term's lines.
 
 15.3.2 A term's `aligns` IRIs are asserted as its class or property in the projection; `is` projects as `rdf:type`.
 
@@ -841,6 +848,7 @@ A failing record check blocks a pass from signing.
 | check | holds when |
 |---|---|
 | **sorts** | `manifests` names a form; `is` names a kind; a claim's `pred` is a property, and its `val` fits the property's range |
+| **standing** | no evidence entry carries a standing; an authority claim names an artifact the instance holds |
 | **per form** | `reads` is satisfied; required fields are present; designators match the surface under `where` and `pattern`; `expects` is met (soft); the form's `check` lines hold; the reading check per aspect; `matches` agrees with a stored root |
 | **per testimony** | its root is a form refining `testimony`; it carries every field its origin form requires |
 | **per file** | no undeclared field; no derivable value stored; no aspect outside `text`, `cells`, `tex`; sorted; pass references resolve; every pin known; `intrinsics` only by an op; no stale `intrinsics` (soft); every id and name resolves to one subject |
@@ -855,7 +863,7 @@ A form's `check` lines are declarative checks over its scopes, composed from:
 
 ### 17.4 Vocabulary checks
 
-The vocabulary check refuses: a term whose `refines` chain reaches no root, or more than one; a predicate the term's sort does not carry; a `reads` value outside the four; a `derivation` that does not parse, names an unregistered op or carries an argument the op refuses; a selector the root family's language rejects; a `matches` without `mime`; an `owes` naming no property; a `range` naming neither a type nor a kind; a name shared by a term and an entity; a write at an identity a base's vocabulary holds; a `refines` cycle.
+The vocabulary check refuses: a term that refines a term of another vocabulary; a predicate its vocabulary does not carry; a `reads` value outside the four; a `derivation` that does not parse, names an unregistered op or carries an argument the op refuses; a selector the root family's language rejects; a `matches` without `mime`; an `owes` naming no property; a `range` naming neither a type, `artifact` nor a kind; a name shared by an entity and a kind; an `evidenced_by` naming no form; a write at an identity a base's vocabulary holds; a `refines` cycle.
 
 ## 18. Custody
 
@@ -1027,7 +1035,7 @@ Each host MAY run one custody daemon, `athd`, serving every instance on the host
 | `entity split` · `merge` · `rename` | write | §14.1.3 |
 | `verify [<subject>…]` | read | bindings, status, demand, stale passes |
 | `check [<subject>…] [--all]` | read | §17 |
-| `vocab list` · `show` · `rules` · `pin` · `check` | read | the terms, a term's lines, a scope's effective rules, the pin, §17.4 |
+| `vocab list` · `show` · `rules` · `pin` · `check` | read | the forms, kinds and properties; a term's lines; a scope's effective rules; the two pins; §17.4 |
 | `export markdown <subject>` · `export graph [<subject>]` | read | §15 |
 | `serve` | read | the planes over HTTP (§16) |
 | `store add <name>` · `store list` | write · read | declare a store and write its id into it; the stores and their state |
