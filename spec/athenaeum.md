@@ -22,7 +22,7 @@ This document is normative. The key words MUST, MUST NOT, SHOULD and MAY are use
 
 1.2 A conforming tool implements every MUST of this document for the formats it registers (§10). A conforming instance holds only what this document allows to be stored.
 
-1.3 The tooling performs no network access. Bytes and testimony are acquired by producers outside the tooling and handed to it from disk.
+1.3 The tooling acquires nothing. Bytes and testimony are acquired by producers outside the tooling and handed to it from disk; the tooling never fetches them. The only network traffic it may cause is a custody transport a deployment declares (§18.2), moving bytes the instance already holds.
 
 ## 2. Principles
 
@@ -44,6 +44,7 @@ This document is normative. The key words MUST, MUST NOT, SHOULD and MAY are use
 | **artifact** | bytes, identified by their BLAKE3; the subject `corpus://<blake3>` |
 | **container** | an artifact whose format holds whole files of its own |
 | **constituent** | an artifact held whole inside a container; its own subject |
+| **record** | an artifact's file: its properties and the judgments over its scopes (§8) |
 | **properties** | what the format defines about an artifact's bytes, recorded by an op (§8.1) |
 | **testimony** | an artifact a producer emitted about other artifacts — where, when, by what, why they were found (§9) |
 | **receipt** | the testimony the tooling writes for every ingest (§9.3) |
@@ -123,7 +124,7 @@ A foundation MUST NOT declare `tier`. An extension MUST declare `tier`. A chain 
 
 ### 6.1 Shape
 
-6.1.1 A line is one JSON object on one line. Artifact lines are keyed by `at` (an intrinsic address in the file's artifact, §7.3); ledger and ontology lines by `subject`. Every line carries a `predicate`, the predicate's fields, and exactly one authorship.
+6.1.1 A line is one JSON object on one line. Artifact lines are keyed by `at` (an intrinsic address in the file's artifact, §7.3); ledger and ontology lines by `subject`. Every line carries a `predicate` and the predicate's fields. Every artifact, owner and ledger line carries exactly one authorship; an ontology line carries none, since the ontology is authored by its layer's history.
 
 6.1.2 A line is a triple with provenance — `(subject, predicate, object)` plus its authorship — and maps to one N-Quads statement in the graph of its authorship (§15.3).
 
@@ -141,7 +142,7 @@ A foundation MUST NOT declare `tier`. An extension MUST declare `tier`. A chain 
 
 6.2.2 A `pass` line is itself the authorship of the lines that name it and carries none of its own.
 
-6.2.3 A line with no authorship, with both, or with a `pass` that does not resolve in its file MUST be refused at write.
+6.2.3 An artifact, owner or ledger line with no authorship, with both, or with a `pass` that does not resolve in its file MUST be refused at write.
 
 ### 6.3 Identity
 
@@ -165,13 +166,13 @@ A foundation MUST NOT declare `tier`. An extension MUST declare `tier`. A chain 
 
 6.4.1 One line per claim. A file is sorted by identity key. Nothing depends on line order: reading order is `ord` (§8.1), never position. A layer union and a merge are line-set unions.
 
-6.4.2 The canonical serialisation of a line is compact JSON with object keys in the order written by the tool, non-ASCII characters unescaped, LF-terminated. Two lines are the same content when their canonical serialisations are equal.
+6.4.2 The canonical serialisation of a line is compact JSON, LF-terminated, non-ASCII characters unescaped, with its keys in a fixed order: `at` or `subject` first, then `predicate`, then every other key in code-point order; every nested object's keys in code-point order; arrays in their stored order. Two lines are the same content when their canonical serialisations are equal. Every hash this document defines over JSON — a revision, the pin — is taken over this form.
 
 6.4.3 The packed `value` is the unit of judgment: `in` packs its parent and `ord` because they are verified together.
 
 ### 6.5 Strings and revisions
 
-6.5.1 A reading's `rev` is `b3:` followed by the first 16 hex digits of the BLAKE3 of its body: a string as UTF-8, an array as its canonical JSON.
+6.5.1 A reading's `rev` is `b3:` followed by the first 16 hex digits of the BLAKE3 of its body: a string as UTF-8, an array as its canonical JSON (§6.4.2).
 
 6.5.2 A body MAY be inline (`body`) or stored out of line under `strings/` by its `rev`. A body is retained while any layer references its `rev`. A foundation never compacts its strings on an extension's authority.
 
@@ -284,7 +285,7 @@ A page the document has, a row the parse holds and a cell within such a row are 
 // a CSV export: the whole file, one line
 {"at":"whole","predicate":"properties","value":{"mime":"text/csv","bytes":151157,"rows":275,"cols":29,"encoding":"utf-8"},"by":"csv.properties@1"}
 // derived, not stored: whole manifests retailer-order-history (by matches); row=0 manifests header (by the term's shape);
-// row=N manifests record, in whole, ord N; col=3 manifests currency-code …
+// row=N manifests order-line (by its rows line), in whole, ord N; col=3 manifests currency-code …
 ```
 
 ## 9. Testimony
@@ -440,7 +441,7 @@ Everything in this section is knowledge of a format's own specification. None of
 
 ### 10.5 Proposal ops
 
-A **proposal op** — optical character recognition over a raster, layout analysis over a page, transcription of a stream — prints candidate lines a pass MAY stage, accept or correct (§13.1). Its output is never stored under its own `by` and never bound as a surface. `image.words@1` proposes one `label` scope per recognised line of a raster, with a text reading; its engine and version ride in the pass's note.
+A **proposal op** — optical character recognition over a raster, layout analysis over a page, transcription of a stream — prints candidate lines a pass MAY stage, accept or correct (§13.1). Its output is never stored under its own `by` and never bound as a surface. `image.words@1` proposes one box per recognised line of a raster, in reading order, with its text; the term each box manifests is named by the pass that stages it (or given to the verb). The engine and its version ride in the pass's note.
 
 ### 10.6 Selector languages
 
@@ -487,8 +488,8 @@ A term is a subject whose expectations are lines in `ontology/<term>.claims.json
 | `convention` | reading conventions inherited down the `in` chain, from a closed set the comparator applies (§13.4): `{"footnotes": "[^n]"}`, `{"hyphens": "rejoin"}`, `{"scripts": "flatten-outside-math"}`, `{"bullets": "drop"}` |
 | `renders` | the markdown form of a scope: `{"md": "<template>"}` over `{body}`, a field's name, and `{level+1}` |
 | `select` | `{selector, term, in?, field?, attr?, ord?, level?}` — derived structure (§11.7) |
-| `shape` | `{col, term, scheme?, pattern?, required?}` maps a column to a term; `{header: <row> \| null}` declares which row, if any, is the header |
-| `spine` | the order a container's package declares, placed `in whole` |
+| `shape` | `{col, term, scheme?, pattern?, required?}` maps a column to a term; `{header: <row>, term}` declares which row, if any, is the header and the term it manifests; `{rows: <term>}` names the term every other row manifests |
+| `spine` | `{term}`: the order a container's package declares, each entry a route scope manifesting `term`, placed `in whole` |
 | `sentinel` | values that derive to null in harvest ("Not Available") |
 | `keys` | the key column of a key-value table |
 | `cells` | names for cell positions of a row's `cells` reading |
@@ -520,7 +521,7 @@ A scope's rules are the union of its terms' `refines` chains and its ancestors' 
 | condition | holds when |
 |---|---|
 | `mime` | the artifact's mime is the value; required on every `matches` |
-| `header` | a tabular artifact's first row begins with the listed cells |
+| `first_row` | a tabular artifact's first physical row begins with the listed cells, whatever row the shape declares the header |
 | `selector` | the selector, in the root family's language (§10.6), selects something |
 | `magic` | the bytes begin with the value |
 | `container` | some container holding the artifact has this root term |
@@ -551,9 +552,9 @@ A pattern is a prefix, or a glob where `*` stands for any run of characters, anc
 - a `field` is filled from `attr` (§10.6.4); a designator field from the text `where` names;
 - `level` sets a heading's level.
 
-11.7.2 A tabular tree: the declared header row is `in whole, ord 0`; every other row is a `record`, `in whole`, ordered by row number; each shaped column is a scope at `col=M` manifesting its term, with `name` from the header, and contains its cells.
+11.7.2 A tabular tree: the declared header row manifests its `shape` term and is `in whole, ord 0`; every other row manifests the `rows` term, `in whole`, ordered by row number; each shaped column is a scope at `col=M` manifesting its term, with `name` from the header, and contains its cells. Without a `rows` line, rows are addressable (§7.7) and manifest nothing.
 
-11.7.3 A container's tree: one route scope per constituent a `select` path pattern names, or per spine entry in spine order, `in whole`.
+11.7.3 A container's tree: one route scope per constituent a `select` path pattern names, manifesting that line's `term`; or one per spine entry in spine order, manifesting the `spine` line's `term`; each `in whole`.
 
 11.7.4 A derived reading lives in the scope table and binds as `derived:<op>@<version>[ <argument>]` (§14.4). It is never stored.
 
@@ -702,7 +703,7 @@ The following are functions of stored lines and are computed at read time. Writi
 
 14.6.2 A map names scopes by **term** (`author`), a field as `term.field` or `properties.field`, a field source of the scope's own node as `@<source>` (§10.6), an edge as `term → concept-term`, a cell by index, or `*` for every row. A selector is never a map value or key.
 
-14.6.3 **Keys.** A concept line without `key` augments the concept the enclosing document manifests. With a key, harvest mints one concept per holder of the key under each scope of the owning term: every scope of the key's term, every record row for a column key, the owner scope itself for a field source or a `properties` key. A claim resolves within the holder, then within its parent — never in `whole`.
+14.6.3 **Keys.** A concept line without `key` augments the concept the enclosing document manifests. With a key, harvest mints one concept per holder of the key under each scope of the owning term: every scope of the key's term, every row the `rows` term manifests for a column key, the owner scope itself for a field source or a `properties` key. A claim resolves within the holder, then within its parent — never in `whole`.
 
 14.6.4 **Slugs.** `slug` is a template over `{term}`, `{key}` and `{1}` (the first group of `extract` applied to the key), default `{term}-{key}`; every non-alphanumeric run becomes `-`; lowercase unless `case: keep`.
 
@@ -741,7 +742,7 @@ An artifact's provenance chain (§9.6) is exported beside the proxy on the owner
 
 ### 15.3 N-Quads
 
-15.3.1 Every stored line maps to one N-Quads statement and back, byte-identical: the subject `corpus://<blake3>?<at>`, `ledger://<slug>` or `ontology://<term>`; the predicate `urn:athenaeum:ns:<predicate>`; the line's payload as a literal typed `urn:athenaeum:ns:json`; the graph its authorship — `pass://<subject>#<id>`, or `op://<name>@<version>`.
+15.3.1 Every stored line maps to one N-Quads statement and back, byte-identical: the subject `corpus://<blake3>?<at>`, `ledger://<slug>` or `ontology://<term>`; the predicate `urn:athenaeum:ns:<predicate>`; the line's payload as a literal typed `urn:athenaeum:ns:json`; the graph its authorship — `pass://<subject>#<id>` for a pass, `op://<name>@<version>` for an op or a harvest, `owner://<subject>` for an owner act; an ontology line's graph is `ontology://<term>`.
 
 15.3.2 A term's `aligns` IRIs are asserted as its classes in the projection.
 
@@ -833,7 +834,7 @@ floors:
 
 18.3.2 **Store locations.** A store location is a `<b2>/<blake3>` tree at another root. Placement directs new bytes there: an `origins` claim (the origin term the delivered testimony classifies to) beats a `mimes` claim, which beats a location declared `default: true`, which beats the co-located store; within one kind of claim, declaration order breaks ties.
 
-18.3.3 **Attached locations.** An attached location is a tree the tool reads and never rewrites: files keep their names and paths. Attesting it streams and hashes the tree — or reads its presented manifest — and writes the location index; from then on its files resolve by bare id. Ingesting an attached file writes its subject without copying its bytes, the full BLAKE3 verified at ingest. An index row pins `size` and `mtime`; a mismatch makes the row stale, and the route reports the bytes unresolvable rather than serving bytes that may no longer match their id.
+18.3.3 **Attached locations.** An attached location is a tree the tool reads and never rewrites: files keep their names and paths. Attesting it streams and hashes the tree — or reads its presented manifest — and writes the location index; from then on its files resolve by bare id. Ingesting an attached file in place (`ingest --in-place`) writes its subject without copying its bytes, the full BLAKE3 verified at ingest. An index row pins `size` and `mtime`; a mismatch makes the row stale, and the route reports the bytes unresolvable rather than serving bytes that may no longer match their id.
 
 18.3.4 **Cost.** A location MAY declare `cost`, a non-negative integer, lower being nearer. Undeclared, cost follows the route order. When bytes must move, the resolver takes the cheapest residence whose pins verify, falling through on staleness.
 
@@ -873,7 +874,7 @@ The location index maps a BLAKE3 to `(location, relpath, size, mtime)` with the 
 
 ### 19.2 Writes
 
-19.2.1 Every write is atomic. Bytes are written under a temporary name, verified against their BLAKE3 and renamed into place; a line file is rewritten under a temporary name and renamed. A verb that is interrupted leaves the layer as it was, or with every write it completed whole. Delivered files are copied and never removed by the tool.
+19.2.1 Every write is atomic. Bytes are written under a temporary name, verified against their BLAKE3 and renamed into place; a line file is rewritten under a temporary name and renamed. A verb that is interrupted leaves the layer as it was, or with every write it completed whole. Delivered files are copied, or for a file on an attached location left in place (§18.3.3), and never removed by the tool.
 
 19.2.2 Mutating verbs take named locks under `.ath/locks/`; a held lock is `busy`. Every mutating verb appends its actor, arguments and outcome to the history under `.ath/`.
 
@@ -899,7 +900,7 @@ The location index maps a BLAKE3 to `(location, relpath, size, mtime)` with the 
 | verb | tier | contract |
 |---|---|---|
 | `layer init` · `layer show` · `layer check` | write · read · read | init writes `athenaeum.yaml`, the empty trees and the foundation terms §11.9 names; show prints the chain; check verifies the chain, its pins and its configuration |
-| `ingest <file…> [--testimony <file>…]` | write | sniffs, records `properties`, makes subjects of constituents one level deep, admits or refuses testimony before any byte is placed, writes the receipt; the same bytes again add testimony only |
+| `ingest <file…> [--testimony <file>…] [--in-place]` | write | sniffs, records `properties`, makes subjects of constituents one level deep, admits or refuses testimony before any byte is placed, writes the receipt; the same bytes again add testimony only |
 | `properties sweep [--stale]` | write | writes superseding `properties` lines where the op version is older than the tool's |
 | `resolve <anchor>` | read | the bytes, the surface or the reading at an address, through routes |
 | `tree <subject>` | read | the scope table in `ord`; a designated or positional address to its intrinsic `at` |
