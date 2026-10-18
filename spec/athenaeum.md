@@ -31,7 +31,7 @@ This document is normative. The key words MUST, MUST NOT, SHOULD and MAY are use
 3. **Authors judge; the tooling assists.** Every structure, reading and claim that can be wrong is written by an author and verified by a second. The tooling addresses, decodes, selects, checks and reports; it never writes a claim of its own.
 4. **Nothing is written until something is said.** Ingesting an artifact places it and its testimony in custody and writes nothing to the repository. An artifact's record comes into being with the first judgment about it; an entity's file with the first claim.
 5. **Addresses are intrinsic.** A scope is named by coordinates in the bytes — page and box, byte range, row and column, time, constituent path — never by a transform, a parser's tree or an identifier.
-6. **The vocabulary is the recipe.** A scope manifests forms; what a form expects — fields, reading aspect, children, render form, the op that yields its surface — rides on the form. What an entity owes rides on its kind. An author pins the vocabulary it read against by hash; nobody chooses a recipe.
+6. **The vocabulary is the recipe.** Forms are structure and kinds are meaning. A scope manifests forms; what a form expects — fields, reading aspect, children, render form, the op that yields its surface — rides on the form. What an entity owes rides on its kind. An author pins the vocabulary it read against by hash; nobody chooses a recipe.
 7. **Derived, never stored.** Class, status, demand, binding state, chrome, staleness, provenance, holdings, every non-intrinsic address and the export are computed at read time (§12). A stored copy of a derivable thing is a defect.
 8. **Nothing lossy enters a record.** A reading is a transcription checkable against the bytes — never a summary, a description, a paraphrase or a characterisation. Where a scope has no lossless transcription, the record marks its address and stops. What a scope shows about the world is a claim about an entity, cited to the scope. Where an artifact came from is testimony, never a line of its record. A record contains nothing unfalsifiable against its own bytes.
 
@@ -40,7 +40,7 @@ This document is normative. The key words MUST, MUST NOT, SHOULD and MAY are use
 | term | meaning |
 |---|---|
 | **instance** | one repository — its corpus, its graph, its store and policy declarations and its rulings (§4): **standalone**, or an **extension** of a **base** it builds on |
-| **corpus** | an instance's forms and records: what its artifacts are |
+| **corpus** | an instance's forms and records: how its artifacts are organised and what they say |
 | **graph** | an instance's kinds, properties and entities: what its artifacts show about the world |
 | **artifact** | bytes, identified by their BLAKE3; the subject `ath://<id>` (§7.1) |
 | **id** | an artifact's short identifier: the first 8 hex digits of its BLAKE3, 16 where 8 collide (§7.1) |
@@ -52,7 +52,7 @@ This document is normative. The key words MUST, MUST NOT, SHOULD and MAY are use
 | **intrinsics** | the line of a record that holds what the artifact's format defines about its bytes (§8.1) |
 | **scope** | a region of an artifact named by an intrinsic address `at` |
 | **term** | an entry of a vocabulary: a **form** (the corpus's), a **kind** or a **property** (the graph's) (§11) |
-| **form** | what a scope is: a photograph, a receipt, a heading, a table, a page capture |
+| **form** | a structural unit — a page, a heading, a paragraph, a table, a row, a line, a message — or a layout naming one family's structure; never what content means |
 | **kind** | what an entity is: a transaction, a residence, a person, a vessel |
 | **property** | what can be said of an entity: a total, an address, a vessel's name |
 | **manifests** | the relation of a scope to a form it is |
@@ -125,7 +125,7 @@ A cycle among bases, a base missing at its path or not at its pinned commit, or 
 
 5.2 **Shards.** A record's `<shard>` is the first *n* hex digits of its artifact's id; an entity's is the first *n* characters of its name. `athenaeum.yaml` declares *n* per directory; absent, both take 2. Forms, kinds and properties are never sharded. Changing a width is `instance reshard` (§19.5), which moves files and changes no line.
 
-5.3 **Names.** A term or an entity is named by a **name**: lowercase letters, digits and hyphens, starting with a letter or digit, never consisting of hex digits alone. A name is unique within its directory. Entities and kinds — the things a consumer asks the graph about — share one name space and are the subjects `ath://<name>`; artifacts are `ath://<id>`. Forms and properties are named within their own vocabularies and referred to by bare name (`"form":"receipt"`, `"pred":"total"`); the graph projection gives them IRIs of their own (§15.3).
+5.3 **Names.** A term or an entity is named by a **name**: lowercase letters, digits and hyphens, starting with a letter or digit, never consisting of hex digits alone. A name is unique within its directory. Entities and kinds — the things a consumer asks the graph about — share one name space and are the subjects `ath://<name>`; artifacts are `ath://<id>`. Forms and properties are named within their own vocabularies and referred to by bare name (`"form":"heading"`, `"pred":"total"`); the graph projection gives them IRIs of their own (§15.3).
 
 5.4 **The file is the subject.** A line in a term's or an entity's file is about that name, and a line in a record is about its artifact; no line repeats its subject.
 
@@ -315,15 +315,15 @@ A page the document has, a row the parse holds and a cell within such a row are 
 8.2.8 **A field the address determines is derived.** A field a form declares `derived` (a page's number) is never stored.
 
 ```
-// corpus/records/a4/a48bf844.jsonl — the photograph of a receipt on a table, read by p1
+// corpus/records/a4/a48bf844.jsonl — a photograph with a printed slip in it, read by p1
 {"at":"whole","pred":"intrinsics","val":{"bytes":2310455,"height":3024,"mime":"image/jpeg","width":4032},"by":"jpeg.intrinsics@1"}
 {"at":"whole","pred":"pass","val":{"by":"reader-a","date":"2026-01-12","id":"p1","verify":"reader-b","vocab":"b3:5c1e0a9d77f3b210"}}
-{"at":"whole","pred":"manifests","form":"photograph","pass":"p1"}
 {"at":"bbox=0.31,0.12,0.38,0.71","pred":"in","val":{"at":"whole","ord":0},"pass":"p1"}
-{"at":"bbox=0.31,0.12,0.38,0.71","pred":"manifests","form":"receipt","pass":"p1"}
+{"at":"bbox=0.31,0.12,0.38,0.71","pred":"manifests","form":"block","pass":"p1"}
 {"at":"bbox=0.36,0.69,0.27,0.03","pred":"in","val":{"at":"bbox=0.31,0.12,0.38,0.71","ord":4},"pass":"p1"}
-{"at":"bbox=0.36,0.69,0.27,0.03","pred":"manifests","form":"total","pass":"p1"}
+{"at":"bbox=0.36,0.69,0.27,0.03","pred":"manifests","form":"line","pass":"p1"}
 {"at":"bbox=0.36,0.69,0.27,0.03","pred":"reads_as","aspect":"text","body":"TOTAL 42.10","rev":"b3:0de3a1c94b7e5f21","pass":"p1"}
+// that the slip is a receipt, and that 42.10 was the purchase's total, are claims of an entity (§14.1)
 ```
 
 ## 9. Testimony
@@ -362,15 +362,9 @@ A page the document has, a row the parse holds and a cell within such a row are 
 
 ### 9.4 Origin forms
 
-9.4.1 An instance says what testimony it accepts in its vocabulary. An **origin form** refines `testimony`. It `matches` a producer's shape over the testimony's mime (§11.5), and declares its facets as `select` and `field` lines:
+9.4.1 An instance says what testimony it accepts in its corpus. An **origin form** refines `testimony` and describes one producer's testimony by its structure: it `matches` the producer's shape over the testimony's mime (§11.5), and declares as `field` lines, each read `from` a place in the testimony (§11.2.2), what that testimony carries — typically where the artifact came from (a uri, a sender, an account), what found or made it (a machine, a tool and its version, a session) and why it was acquired — with `required` on every field each testimony of that origin MUST carry. A new origin, or a new required field, is an edit to the corpus.
 
-- the **source** — where the artifact came from: a uri, a sender, an account;
-- the **producer** — what found or made it: the machine, the tool and its version, the session;
-- the **context** — why it was acquired;
-
-with `required` on every field each testimony of that origin MUST carry. A new origin, or a new required field, is a vocabulary edit.
-
-9.4.2 The tooling knows no origin. Which facets exist, what they are called and which are required is the instance's.
+9.4.2 The tooling knows no origin. Which fields exist, what they are called and which are required is the instance's.
 
 ### 9.5 Admission
 
@@ -531,11 +525,15 @@ Everything in this section is knowledge of a format's own specification. None of
 
 | | directory | names | used by |
 |---|---|---|---|
-| **forms** | `corpus/forms/` | what a scope of an artifact is: photograph, receipt, heading, table, page capture, testimony | `manifests` on records, and nothing else |
+| **forms** | `corpus/forms/` | how an artifact is organised: page, heading, paragraph, table, row, line, message; the layouts of artifact families; the structure of testimony | `manifests` on records, and nothing else |
 | **kinds** | `graph/kinds/` | what an entity is: transaction, residence, person, vessel | `is` on entities |
 | **properties** | `graph/properties/` | what can be said of an entity: total, address, vessel name | the `pred` of a claim |
 
-11.1.2 A receipt is a form — what a region of a photograph shows; the purchase it records is an entity of kind `transaction`, and the receipt is evidence for the transaction's claims. Forms belong to the corpus and never appear in the graph; kinds and properties belong to the graph and never appear on a record. The graph refers to forms (§11.2.3); the corpus never refers to the graph.
+11.1.2 **Forms are structure, never meaning.** A form names how bytes are organised — a heading, a paragraph, a table and its rows, a line of print, a message and its fields — and never what content is, is for or is about: not a receipt, a regulation, a price, an author or a listing. A photograph with a printed slip in it has a `block` and its `line`s; that the slip is a receipt of a purchase, and that one line prints its total, are claims of an entity of kind `transaction`, cited to those scopes.
+
+11.1.3 A **layout** is a form that names the structure one family of artifacts shares — one site's pages, one tool's exports — by `matches`, and maps it onto structural forms with `select`, `shape` and `spine`. Its name identifies the family; its lines say only where structure lies.
+
+11.1.4 Forms belong to the corpus and never appear in the graph; kinds and properties belong to the graph and never appear on a record. The graph cites the corpus; the corpus never names the graph.
 
 ### 11.2 Term predicates
 
@@ -548,7 +546,7 @@ Everything in this section is knowledge of a format's own specification. None of
 | `matches` | a classification condition (§11.5); repeatable, every line must hold |
 | `derivation` | a surface op other than the format's own, `<op>@<version>[ <argument>]`, for scopes of this form (§11.6) |
 | `reads` | the aspect a scope of this form is read under: exactly one of `text`, `cells`, `tex`, `none` |
-| `field` | a field on `manifests`: `{name, type, required?, derived?, options?, where?, pattern?, address?}`; `type` is one of `int`, `enum`, `datetime`, `string`, `col`, `designator`, `list`. A **designator** is a verbatim sub-reading with `where` (`leading`, `trailing`, or a descendant form), `pattern` and the derived-address key it feeds (`address`) |
+| `field` | a field on `manifests`: `{name, type, required?, derived?, options?, where?, pattern?, address?, from?}` — `from`, on a form that matches a whole artifact, is the place in its structure the field is read from (a pointer, a column); `type` is one of `int`, `enum`, `datetime`, `string`, `col`, `designator`, `list`. A **designator** is a verbatim sub-reading with `where` (`leading`, `trailing`, or a descendant form), `pattern` and the derived-address key it feeds (`address`) |
 | `expects` | child forms a scope of this form normally contains; satisfied by a scope manifesting the form or a refinement of it |
 | `convention` | reading conventions inherited down the `in` chain, from a closed set the reading check applies (§13.4): `{"footnotes": "[^n]"}`, `{"hyphens": "rejoin"}`, `{"scripts": "flatten-outside-math"}`, `{"bullets": "drop"}` |
 | `renders` | the markdown form of a scope: `{"md": "<template>"}` over `{body}`, a field's name, and `{level+1}` |
@@ -558,21 +556,21 @@ Everything in this section is knowledge of a format's own specification. None of
 | `chrome` | what is chrome: `{"selector": …}`, or `{"repeats": {"pages": <n>, "share": <fraction>}, "mask": "digits", "box": <decimals>, "roles": {"page-number": "<masked pattern>"}}` — a run is chrome when its masked text and its box at the declared precision recur on at least *n* pages and that share of them; role by pattern, else `running-header` or `running-footer` by position |
 | `check` | a declarative check over scopes of the form (§17.3) |
 
-11.2.3 A **kind** carries `owes` — the properties an entity of this kind should have; an unmet `owes` is demand (§14.6) — and MAY carry `evidenced_by`: the forms that usually record an entity of this kind (`transaction` → `receipt`, `bank-statement-row`). It steers authors and mints nothing.
+11.2.3 A **kind** carries `owes`: the properties an entity of this kind should have. An unmet `owes` is demand (§14.6).
 
 11.2.4 A **property** carries `range` — the type of its values (`string`, `int`, `decimal`, `amount`, `date`, `datetime`, `uri`, `bool`), a kind, when its value is another entity, or `artifact`, when its value is an artifact — and MAY carry `functional` (an entity has at most one value of it) and `authority` (§14.4.4).
 
 ```
-// corpus/forms/receipt.jsonl                  // graph/kinds/transaction.jsonl
-{"pred":"definition","val":"a printed record of a sale"}  {"pred":"owes","val":["total","date","merchant"]}
-{"pred":"expects","val":["line-item","total"]} {"pred":"evidenced_by","val":["receipt"]}
+// corpus/forms/line.jsonl                     // graph/kinds/transaction.jsonl
+{"pred":"definition","val":"one line of print"}  {"pred":"owes","val":["total","date","merchant"]}
+{"pred":"reads","val":"text"}
 
 // graph/properties/total.jsonl                // graph/properties/merchant.jsonl
 {"pred":"range","val":"amount"}                {"pred":"range","val":"organization"}
 {"pred":"functional","val":true}               {"pred":"functional","val":true}
 ```
 
-The form `total` (the line of a receipt that prints it) and the property `total` (the transaction's) are different terms in different vocabularies.
+A line of print is structure; that it states a transaction's total is a claim.
 
 ### 11.3 The effective rules of a scope
 
@@ -580,11 +578,11 @@ A scope's rules are the union of its forms' `refines` chains and its ancestors' 
 
 ### 11.4 Roots
 
-11.4.1 Forms say what artifacts and scopes are, never what format they are in: the format is the tooling's (§10), and a form that only restated a mime would say nothing. An artifact's **root** is the most specific form that matches it (§11.5). An artifact no form matches has no root; it is held, addressable and resolvable, and listed as unclassified.
+11.4.1 Forms say how artifacts and scopes are organised, never what format they are in: the format is the tooling's (§10), and a form that only restated a mime would say nothing. An artifact's **root** is the most specific form that matches it (§11.5). An artifact no form matches has no root; it is held, addressable and resolvable, and listed as unclassified.
 
 11.4.2 Structure is **derived** where a `select`, `shape` or `spine` line along the root's chain mints it from the parse, and **asserted** where a pass writes it. One artifact may have both: a pass adds to or disagrees with derived structure (§8.2.4).
 
-11.4.3 One stored `manifests` at `whole` overrides the derived root (a PDF of photographs manifests `scan-album`); where two forms match an artifact, the most specific `matches` decides and a stored override settles the rest. Constituents carry their own forms; nothing is classified twice.
+11.4.3 One stored `manifests` at `whole` overrides the derived root (a page two layouts both match manifests the one that fits); where two forms match an artifact, the most specific `matches` decides and a stored override settles the rest. Constituents carry their own forms; nothing is classified twice.
 
 ### 11.5 Classification
 
@@ -871,7 +869,7 @@ A form's `check` lines are declarative checks over its scopes, composed from:
 
 ### 17.4 Vocabulary checks
 
-The vocabulary check refuses: a term that refines a term of another vocabulary; a predicate its vocabulary does not carry; a `reads` value outside the four; a `derivation` that does not parse, names an unregistered op or carries an argument the op refuses; a selector the root family's language rejects; a `matches` without `mime`; an `owes` naming no property; a `range` naming neither a type, `artifact` nor a kind; a name shared by an entity and a kind; an `evidenced_by` naming no form; a write at an identity a base's vocabulary holds; a `refines` cycle.
+The vocabulary check refuses: a term that refines a term of another vocabulary; a predicate its vocabulary does not carry; a `reads` value outside the four; a `derivation` that does not parse, names an unregistered op or carries an argument the op refuses; a selector the root family's language rejects; a `matches` without `mime`; an `owes` naming no property; a `range` naming neither a type, `artifact` nor a kind; a name shared by an entity and a kind; a write at an identity a base's vocabulary holds; a `refines` cycle.
 
 ## 18. Custody
 

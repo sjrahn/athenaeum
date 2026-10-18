@@ -110,7 +110,22 @@ class Instance {
   entity(name: string, ...lines: J[]) {
     this.entities.set(name, [...(this.entities.get(name) ?? []), ...lines]);
   }
+  prune(base?: Instance) {
+    const have = new Set([...this.terms.keys(), ...(base ? [...base.terms.keys()] : [])].filter((k) => k.startsWith("forms/")).map((k) => k.slice(6)));
+    for (const [k, ls] of this.terms) {
+      if (!k.startsWith("forms/")) continue;
+      this.terms.set(
+        k,
+        ls
+          .filter((l) => l.pred !== "refines" || have.has(String(l.val)))
+          .map((l) => (l.pred === "expects" ? { ...l, val: (l.val as string[]).filter((f) => have.has(f)) } : l))
+          .filter((l) => l.pred !== "expects" || (l.val as string[]).length),
+      );
+      if (!this.terms.get(k)!.length) this.terms.set(k, [{ pred: "definition", val: k.slice(6).replace(/-/g, " ") }]);
+    }
+  }
   async flush(base?: Instance) {
+    this.prune(base);
     const pins = { "@corpus": await this.pin("corpus", base), "@graph": await this.pin("graph", base) };
     const pinned = (ls: J[]) => JSON.parse(JSON.stringify(ls).replace(/"@(corpus|graph)"/g, (m) => JSON.stringify(pins[m.slice(1, -1) as keyof typeof pins]))) as J[];
     write(join(this.dir, "athenaeum.yaml"), yaml(this.config));
@@ -200,9 +215,11 @@ async function ingest(inst: Instance, bytes: Uint8Array, name: string, testimony
 const DROP = new Set(["concept", "keys", "cells", "sentinel", "owes", "functional", "origin", "lint", "axes", "physical", "tree"]);
 /** What only restates a format (§11.4.1): the tooling knows these, so no form names them. */
 const FORMATS = new Set(["unit", "document", "data", "container", "lossy", "image", "media", "html", "xhtml", "pdf", "json", "ndjson", "csv", "tsv", "zip", "png", "jpeg", "gif", "markdown", "yaml", "rfc822", "plain-text"]);
+/** Forms that named meaning, not structure (§11.1.2), and the structural form each scope really is. */
+const STRUCTURE: Record<string, string | null> = { "methodological-tool": null, regulation: null, "parameter-table": "table", "revision-history": "table", toc: "table", metadata: "definition-list", price: "value", "listing-fact": "list-item", "listing-page": null };
 const OWN_SURFACE = new Set(["html.text@1", "pdf.words@1", "csv.parse@1", "eml.text@1", "json.text@1", "yaml.text@1", "markdown.text@1"]);
 function copyForm(inst: Instance, name: string, seen = new Set<string>()) {
-  if (FORMATS.has(name) || seen.has(name) || inst.terms.has(`forms/${name}`)) return;
+  if (FORMATS.has(name) || name in STRUCTURE || seen.has(name) || inst.terms.has(`forms/${name}`)) return;
   seen.add(name);
   const path = join(ONTO, `${name}.claims.jsonl`);
   if (!existsSync(path)) throw new Error(`no regression term ${name}`);
@@ -252,9 +269,7 @@ const ev = (anchor: string, quote: string, reading: string, extra: J = {}) => ({
 // ══ reference — public, standalone ════════════════════════════════════════════════════════════════════════════════
 rmSync(OUT, { recursive: true, force: true });
 const ref = new Instance(join(OUT, "reference"), { id: "3b8f1d2e-9a4c-4f6b-8e2d-5c7a1b9e0f43", name: "reference", tier: "public", shard: { records: 2, entities: 2 } });
-for (const f of ["header", "listing-page", "methodological-tool"])
-  copyForm(ref, f);
-for (const f of ["page", "cover-page", "label", "paragraph", "definition", "definition-list", "row", "caption", "list", "list-item", "parameter-table", "equation", "figure", "toc", "table-of-contents", "table", "revision-history", "metadata", "footnote", "end-mark"])
+for (const f of ["header", "heading", "page", "cover-page", "label", "paragraph", "definition", "definition-list", "row", "caption", "list", "list-item", "equation", "figure", "table-of-contents", "table", "footnote", "end-mark"])
   copyForm(ref, f);
 ref.term("testimony", { pred: "definition", val: "what a producer said about other artifacts: where, when, by what and why they were found" });
 ref.term(
@@ -263,22 +278,33 @@ ref.term(
   { pred: "definition", val: "the instance's own testimony of an ingest" },
   { pred: "matches", val: { mime: "application/json", selector: "/artifact" } },
   { pred: "matches", val: { mime: "application/json", selector: "/received" } },
-  { pred: "field", val: { name: "received", type: "datetime", required: true } },
+  { pred: "field", val: { name: "received", type: "datetime", required: true, from: "/received" } },
+  { pred: "field", val: { name: "artifact", type: "string", required: true, from: "/artifact" } },
 );
 ref.term(
   "web-capture",
   { pred: "refines", val: "testimony" },
   { pred: "definition", val: "a page capture's sidecar: the page's address, the capturing tool, why it was captured" },
   { pred: "matches", val: { mime: "application/yaml", selector: "/source/uri" } },
-  { pred: "select", val: { selector: "/source/uri", form: "source", field: "uri", attr: "" } },
-  { pred: "select", val: { selector: "/producer/tool", form: "producer", field: "tool", attr: "" } },
-  { pred: "field", val: { name: "uri", type: "string", required: true } },
-  { pred: "field", val: { name: "tool", type: "string", required: true } },
+  { pred: "field", val: { name: "source-uri", type: "string", required: true, from: "/source/uri" } },
+  { pred: "field", val: { name: "producer-tool", type: "string", required: true, from: "/producer/tool" } },
+  { pred: "field", val: { name: "context", type: "string", from: "/context" } },
 );
-ref.term("source", { pred: "reads", val: "none" });
-ref.term("producer", { pred: "reads", val: "none" });
-kind(ref, "residence", ["address", "price", "bedrooms", "tenure"], "a dwelling offered or held", ["listing-page"]);
-kind(ref, "standard", ["title", "version", "issued-by", "source"], "a published method others follow", ["methodological-tool"]);
+ref.term("value", { pred: "definition", val: "a short value printed apart from running text" }, { pred: "reads", val: "text" });
+ref.term(
+  "homes-listing",
+  { pred: "definition", val: "the markup of homes.example.invalid's property pages" },
+  { pred: "matches", val: { mime: "text/html", selector: '.listing[itemtype="https://schema.org/Residence"]' } },
+  { pred: "select", val: { selector: "h1.listing-title", form: "heading", level: 0 } },
+  { pred: "select", val: { selector: ".price .amount", form: "value" } },
+  { pred: "select", val: { selector: "ul.facts li", form: "list-item" } },
+  { pred: "select", val: { selector: ".description > p", form: "paragraph" } },
+  { pred: "select", val: { selector: ".rooms li.room", form: "list-item" } },
+  { pred: "select", val: { selector: ".photos img", form: "figure", field: "alt", attr: "alt" } },
+  { pred: "chrome", val: { selector: ".site-header, .site-footer, script, .agent" } },
+);
+kind(ref, "residence", ["address", "price", "bedrooms", "tenure"], "a dwelling offered or held");
+kind(ref, "standard", ["title", "version", "issued-by", "source"], "a published method others follow");
 kind(ref, "organization", ["legal-name"], "a body that acts in its own name");
 prop(ref, "address", "string", true);
 prop(ref, "price", "amount", true);
@@ -315,7 +341,9 @@ const passFile = readdirSync(join(HERE, "passes")).find((f) => f.startsWith(proc
 const procLines: J[] = [];
 for (const raw of readFileSync(join(HERE, "passes", passFile), "utf8").split("\n").filter(Boolean)) {
   const { at, predicate, value, term, ...rest } = JSON.parse(raw) as J;
-  procLines.push({ at, pred: predicate, ...(value !== undefined ? { val: value } : {}), ...(term ? { form: term } : {}), ...rest, pass: "p1" });
+  const form = term === undefined ? undefined : String(term) in STRUCTURE ? STRUCTURE[String(term)] : String(term);
+  if (term !== undefined && form === null) continue;
+  procLines.push({ at, pred: predicate, ...(value !== undefined ? { val: value } : {}), ...(form ? { form } : {}), ...rest, pass: "p1" });
 }
 const read = (body: string) => procLines.find((l) => l.pred === "reads_as" && l.body === body)!;
 ref.record(
@@ -364,31 +392,31 @@ home.term(
   { pred: "refines", val: "testimony" },
   { pred: "definition", val: "a cloud drive's export sidecar: the account and folder exported, when, how much of it" },
   { pred: "matches", val: { mime: "application/yaml", selector: "/origin_fields/folder" } },
-  { pred: "select", val: { selector: "/origin_fields/account", form: "source", field: "account", attr: "" } },
-  { pred: "field", val: { name: "account", type: "string", required: true } },
+  { pred: "field", val: { name: "account", type: "string", required: true, from: "/origin_fields/account" } },
+  { pred: "field", val: { name: "exported-at", type: "datetime", from: "/origin_fields/exported_at" } },
 );
 home.term(
-  "berth-list",
-  { pred: "definition", val: "a list of moorings: berth, vessel, length" },
+  "headed-sheet",
+  { pred: "definition", val: "a CSV whose first row names its columns: Berth, Vessel, Length (m)" },
   { pred: "matches", val: { mime: "text/csv", first_row: ["Berth", "Vessel", "Length (m)"] } },
   { pred: "shape", val: { header: 0, form: "header" } },
-  { pred: "shape", val: { rows: "berth-row" } },
+  { pred: "shape", val: { rows: "row" } },
 );
-home.term("berth-row", { pred: "reads", val: "cells" });
-home.term("mooring-plan", { pred: "definition", val: "a harbour's plan of berths for a season" });
 home.term(
-  "chat-thread",
+  "messenger-thread",
   { pred: "definition", val: "one conversation as a messaging service exports it: participants, then messages" },
   { pred: "matches", val: { mime: "application/json", selector: "/participants" } },
   { pred: "matches", val: { mime: "application/json", selector: "/messages/*/sender_name" } },
   { pred: "select", val: { selector: "/messages/*", form: "message" } },
-  { pred: "select", val: { selector: "/messages/*/sender_name", form: "author", in: "message" } },
-  { pred: "select", val: { selector: "/messages/*/content", form: "bubble", in: "message" } },
+  { pred: "select", val: { selector: "/messages/*/sender_name", form: "field", in: "message" } },
+  { pred: "select", val: { selector: "/messages/*/content", form: "body", in: "message" } },
 );
-for (const f of ["message", "author", "bubble"]) home.term(f, { pred: "reads", val: f === "message" ? "none" : "text" });
-kind(home, "berth", ["occupant"], "a mooring place in a harbour", ["berth-list", "mooring-plan"]);
-kind(home, "vessel", ["display-name", "length"], "a boat", ["berth-list"]);
-kind(home, "person", ["display-name"], "a human being", ["chat-thread"]);
+home.term("message", { pred: "definition", val: "one message of a conversation" }, { pred: "reads", val: "none" });
+home.term("field", { pred: "definition", val: "one named value of a structured record" }, { pred: "reads", val: "text" });
+home.term("body", { pred: "definition", val: "the running text of a message" }, { pred: "reads", val: "text" });
+kind(home, "berth", ["occupant"], "a mooring place in a harbour");
+kind(home, "vessel", ["display-name", "length"], "a boat");
+kind(home, "person", ["display-name"], "a human being");
 prop(home, "occupant", "vessel", true);
 prop(home, "display-name", "string", true);
 prop(home, "length", "decimal", true);
@@ -413,7 +441,6 @@ home.record(
   plan.blake3,
   (await intrinsics(plan.bytes, "Mooring plan 2026.pdf")).line,
   { at: "whole", ...recordPass },
-  { at: "whole", pred: "manifests", form: "mooring-plan", pass: "p1" },
   { at: headAt, pred: "manifests", form: "heading", level: 0, pass: "p1" },
   { at: headAt, pred: "in", val: { at: "whole", ord: 0 }, pass: "p1" },
   { at: headAt, pred: "reads_as", aspect: "text", body: "Mooring plan 2026", rev: await rev("Mooring plan 2026"), pass: "p1" },
