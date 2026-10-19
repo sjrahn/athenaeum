@@ -13,7 +13,7 @@ import { journalPending, recoverJournal } from "./journal.ts";
 import { acquireLocks } from "./locks.ts";
 import type { Registry } from "./registry.ts";
 import { findRoot, instanceId } from "./root.ts";
-import type { Caller, CommandDef, HistoryLine, KitCtx, SessionIdentity } from "./types.ts";
+import { type Caller, type CommandDef, type Envelope, ERROR_CODES, type HistoryLine, type KitCtx, type SessionIdentity } from "./types.ts";
 import { ATH_VERSION } from "./version.ts";
 import { type HostPaths, hostPaths, instanceState } from "./xdg.ts";
 
@@ -33,7 +33,12 @@ export interface DispatchDeps {
   /** History is appended when a root is known; tests may turn it off. */
   history?: boolean;
   prog?: string;
+  /** Hand a verb that writes the host index to the host daemon, its single writer while it runs (§18.9.3): the
+   * daemon's envelope, or null when no daemon is running and the verb runs here under the index lock. */
+  forward?: Forward;
 }
+
+export type Forward = (o: { verb: string; args: unknown; root: string | null; cwd: string; caller: Caller }) => Promise<Envelope | null>;
 
 export interface Globals {
   json: boolean;
@@ -238,13 +243,31 @@ export async function runCli(argv: readonly string[], deps: DispatchDeps): Promi
     prog: `${prog} ${cmd.replaceAll("-", " ")}`,
   };
 
+  // a verb that writes the host index goes to the daemon when one runs; `--now` is a global flag the socket refuses,
+  // and an admin verb is confirmed here and never crosses it
+  if (deps.forward && def.meta.locks?.includes("index") && def.meta.tier !== "admin" && g.now === undefined) {
+    let env: Envelope | null;
+    try {
+      env = await deps.forward({ verb: cmd, args, root, cwd: deps.cwd, caller });
+    } catch (e) {
+      return fail(cmd, e, caller, state, rest);
+    }
+    if (env) {
+      if (json) io.out(`${JSON.stringify(env)}\n`);
+      else if (!env.ok) io.err(`${prog}: ${env.error.message}\n`);
+      else if (def.text) def.text(env.data as never, io, ctx);
+      else io.out(`${JSON.stringify(env.data, null, 2)}\n`);
+      return env.ok ? (env.exit_code ?? 0) : ERROR_CODES[env.error.code];
+    }
+  }
+
   try {
     const result = await execute(def, args, ctx);
     const exit = result.exitCode ?? 0;
     if (json) io.out(`${JSON.stringify(okEnvelope(cmd, result.data, performance.now() - started, exit))}\n`);
     else if (def.text) def.text(result.data as never, io, ctx);
     else io.out(`${JSON.stringify(result.data, null, 2)}\n`);
-    if (state && deps.history !== false) record(state, cmd, rest, caller, exit, started);
+    if (state && deps.history !== false && !result.relayed) record(state, cmd, rest, caller, exit, started);
     return exit;
   } catch (e) {
     return fail(cmd, e, caller, state, rest);
@@ -253,7 +276,11 @@ export async function runCli(argv: readonly string[], deps: DispatchDeps): Promi
 
 /** Run a verb whose gates have passed: its locks taken in order, an interrupted journal completed or undone first —
  * before any verb, a read included, sees the instance (§19.3.1) — then the verb itself. Throws what the verb throws. */
-export async function execute(def: CommandDef, args: unknown, ctx: KitCtx): Promise<{ data: unknown; exitCode?: number }> {
+export async function execute(
+  def: CommandDef,
+  args: unknown,
+  ctx: KitCtx,
+): Promise<{ data: unknown; exitCode?: number; relayed?: boolean }> {
   const instance = ctx.instance;
   const cmd = def.contract.key;
   if (def.meta.locks?.includes("repository") && !instance)

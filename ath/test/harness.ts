@@ -18,6 +18,8 @@ export interface RunOpts {
   history?: boolean;
   /** The wall clock; absent, a fixed instant so output compares byte for byte. */
   wall?: () => Date;
+  /** The hand-over to a host daemon; absent, every verb runs in-process. */
+  forward?: DispatchDeps["forward"];
 }
 
 export interface RunOut {
@@ -49,6 +51,7 @@ export async function ath(argv: string[], o: RunOpts = {}): Promise<RunOut> {
     confirm: o.confirm,
     history: o.history,
     wall: o.wall ?? (() => new Date("2026-03-20T09:00:00Z")),
+    ...(o.forward ? { forward: o.forward } : {}),
   };
   const code = await runCli(argv, deps);
   return { code, stdout: io.stdout, stderr: io.stderr, json: () => JSON.parse(io.stdout) };

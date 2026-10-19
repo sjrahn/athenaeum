@@ -16,6 +16,7 @@
     "@ath/cli": "workspace:*",
     "@ath/contracts": "workspace:*",
     "@ath/custody": "workspace:*",
+    "@ath/daemon": "workspace:*",
     "@ath/engine": "workspace:*",
     "@ath/kit": "workspace:*",
     "@ath/scanner": "workspace:*",

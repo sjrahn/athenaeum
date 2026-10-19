@@ -8,6 +8,7 @@
         "@ath/cli": "workspace:*",
         "@ath/contracts": "workspace:*",
         "@ath/custody": "workspace:*",
+        "@ath/daemon": "workspace:*",
         "@ath/engine": "workspace:*",
         "@ath/kit": "workspace:*",
         "@ath/scanner": "workspace:*",
@@ -37,6 +38,9 @@
     "packages/custody": {
       "name": "@ath/custody",
     },
+    "packages/daemon": {
+      "name": "@ath/daemon",
+    },
     "packages/engine": {
       "name": "@ath/engine",
     },
@@ -60,6 +64,8 @@
     "@ath/contracts": ["@ath/contracts@workspace:packages/contracts"],
 
     "@ath/custody": ["@ath/custody@workspace:packages/custody"],
+
+    "@ath/daemon": ["@ath/daemon@workspace:packages/daemon"],
 
     "@ath/engine": ["@ath/engine@workspace:packages/engine"],
 

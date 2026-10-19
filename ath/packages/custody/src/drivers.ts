@@ -2,6 +2,7 @@
 // `get`; `put`; `remove`; `stat` — used and free space where it can tell. A managed store's driver puts under a
 // temporary name and renames once the hash is verified. `local` is a directory on this host; `rclone` is any backend
 // rclone reaches. An observed tree is read by path and inventoried through the scanner's published manifest (§18.5).
+// A transfer keeps within the bandwidth the access file grants the store on this host.
 import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statfsSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -45,6 +46,8 @@ export interface Driver {
   put(tree: Tree, hash: string, bytes: Uint8Array): Promise<void>;
   remove(tree: Tree, hash: string): Promise<void>;
   stat(): Promise<{ used?: number; free?: number }>;
+  /** Whether the store answers now: its mark is where the access file says (a disk plugged in, a remote reached). */
+  available(): Promise<boolean>;
   /** An observed tree's files, from the scanner's manifest. */
   observed?(): ObservedFile[];
   /** An observed tree's root on this host, for links. */
@@ -54,13 +57,29 @@ export interface Driver {
 
 const TREES: Tree[] = ["artifacts", "testimony"];
 
-export function localDriver(decl: StoreDecl, root: string): Driver {
+/** Hold a transfer of `bytes` that began at `t0` (ms) until it has taken no more than `limit` bytes per second. */
+export async function pace(
+  bytes: number,
+  t0: number,
+  limit: number | undefined,
+  sleep: (ms: number) => Promise<unknown> = (ms) => Bun.sleep(ms),
+): Promise<void> {
+  if (!limit) return;
+  const owed = (bytes / limit) * 1000 - (performance.now() - t0);
+  if (owed > 0) await sleep(owed);
+}
+
+export function localDriver(decl: StoreDecl, root: string, bwlimit?: number): Driver {
   if (decl.role === "observed") return observedDriver(decl, root);
   const path = (t: Tree, h: string) => join(root, t, h.slice(0, 2), h);
   return {
     decl,
     capabilities: ["inventory", "get", "put", "remove", "stat"],
+    available: async () => existsSync(join(root, "store.yaml")),
     async inventory() {
+      // an unmounted disk leaves an empty mountpoint: without the store's mark nothing is read, so nothing reads as lost
+      if (!existsSync(join(root, "store.yaml")))
+        throw new AthError("EXTERNAL", `${decl.name}: no store is at ${root} (unplugged, unmounted or moved); nothing read`);
       const out: Present[] = [];
       for (const t of TREES) {
         const dir = join(root, t);
@@ -74,13 +93,20 @@ export function localDriver(decl: StoreDecl, root: string): Driver {
     has: async (t, h) => existsSync(path(t, h)),
     async get(t, h) {
       const p = path(t, h);
-      return existsSync(p) ? new Uint8Array(readFileSync(p)) : null;
+      if (!existsSync(p)) return null;
+      const t0 = performance.now();
+      const b = new Uint8Array(readFileSync(p));
+      await pace(b.length, t0, bwlimit);
+      return b;
     },
     async put(t, h, bytes) {
       const p = path(t, h);
       if (existsSync(p)) return;
       if ((await blake3Hex(bytes)) !== h) throw new AthError("CONFLICT", `bytes hash otherwise than ${h}`);
+      if (!existsSync(join(root, "store.yaml"))) throw new AthError("EXTERNAL", `${decl.name}: no store is at ${root}; nothing written`);
+      const t0 = performance.now();
       const tmp = writeTemp(p, bytes, 0o444);
+      await pace(bytes.length, t0, bwlimit);
       if ((await blake3Hex(new Uint8Array(readFileSync(tmp)))) !== h) {
         rmSync(tmp, { force: true });
         throw new AthError("EXTERNAL", `the copy of ${h} in ${decl.name} did not verify as written`);
@@ -168,6 +194,7 @@ export function observedDriver(decl: StoreDecl, root: string): Driver {
     decl,
     root,
     capabilities: ["inventory", "get", "stat"],
+    available: async () => existsSync(manifest) || existsSync(join(root, ".athenaeum", "store.yaml")),
     inventory: async () => files().map((f) => ({ tree: "artifacts" as Tree, hash: f.hash, size: f.size })),
     has: async (t, h) => t === "artifacts" && files().some((f) => f.hash === h),
     async get(t, h) {
@@ -192,27 +219,31 @@ export function observedDriver(decl: StoreDecl, root: string): Driver {
   };
 }
 
-/** rclone: every backend it reaches. The remote root holds `artifacts/` and `testimony/` as the local store does. */
-export function rcloneDriver(decl: StoreDecl, remote: string, bin = "rclone"): Driver {
-  const run = (args: string[], stdin?: Uint8Array) => {
+/** rclone: every backend it reaches. The remote root holds `artifacts/` and `testimony/` as the local store does.
+ * rclone runs as a child the event loop waits on, so a long transfer never stalls a daemon serving its socket. */
+export function rcloneDriver(decl: StoreDecl, remote: string, bin = "rclone", bwlimit?: number): Driver {
+  const run = async (args: string[], stdin?: Uint8Array) => {
     const exe = Bun.which(bin, { PATH: process.env.PATH ?? "" });
     if (!exe) throw new AthError("EXTERNAL", `${bin} is not on PATH; ${decl.name} is reached through it`);
-    const r = Bun.spawnSync([exe, ...args], {
-      stdin: stdin ? new Blob([stdin as unknown as ArrayBuffer]) : undefined,
+    const limit = bwlimit && ["rcat", "cat"].includes(args[0]!) ? [`--bwlimit=${Math.max(1, Math.floor(bwlimit / 1024))}K`] : [];
+    const p = Bun.spawn([exe, args[0]!, ...limit, ...args.slice(1)], {
+      stdin: stdin ? new Blob([stdin as unknown as ArrayBuffer]) : "ignore",
       stdout: "pipe",
       stderr: "pipe",
       env: process.env,
     });
-    return { ok: r.exitCode === 0, code: r.exitCode, out: new Uint8Array(r.stdout), err: r.stderr.toString().trim() };
+    const [out, err, code] = await Promise.all([new Response(p.stdout).bytes(), new Response(p.stderr).text(), p.exited]);
+    return { ok: code === 0, code, out, err: err.trim() };
   };
   const at = (t: Tree, h: string) => `${remote.replace(/\/$/, "")}/${t}/${h.slice(0, 2)}/${h}`;
   return {
     decl,
     capabilities: ["inventory", "get", "put", "remove", "stat"],
+    available: async () => (await run(["cat", `${remote.replace(/\/$/, "")}/store.yaml`]).catch(() => null))?.ok === true,
     async inventory() {
       const out: Present[] = [];
       for (const t of TREES) {
-        const r = run(["lsjson", "-R", "--files-only", `${remote.replace(/\/$/, "")}/${t}`]);
+        const r = await run(["lsjson", "-R", "--files-only", `${remote.replace(/\/$/, "")}/${t}`]);
         // rclone exits 3 for a directory that is not there: an empty tree; anything else is a store not answering,
         // which an inventory must not mistake for a store that lost everything
         if (r.code === 3) continue;
@@ -223,32 +254,33 @@ export function rcloneDriver(decl: StoreDecl, remote: string, bin = "rclone"): D
       return out;
     },
     async has(t, h) {
-      const r = run(["lsjson", at(t, h)]);
+      const r = await run(["lsjson", at(t, h)]);
       return r.ok && r.out.length > 2;
     },
     async get(t, h) {
-      const r = run(["cat", at(t, h)]);
+      const r = await run(["cat", at(t, h)]);
       return r.ok && r.out.length ? r.out : null;
     },
     async put(t, h, bytes) {
       if ((await blake3Hex(bytes)) !== h) throw new AthError("CONFLICT", `bytes hash otherwise than ${h}`);
       const tmp = `${at(t, h)}.${process.pid}.tmp`;
-      const w = run(["rcat", tmp], bytes);
+      const w = await run(["rcat", tmp], bytes);
       if (!w.ok) throw new AthError("EXTERNAL", `rclone rcat into ${decl.name}: ${w.err}`);
-      const back = run(["cat", tmp]);
+      const back = await run(["cat", tmp]);
       if (!back.ok || (await blake3Hex(back.out)) !== h) {
-        run(["deletefile", tmp]);
+        await run(["deletefile", tmp]);
         throw new AthError("EXTERNAL", `the copy of ${h} in ${decl.name} did not verify as written`);
       }
-      const mv = run(["moveto", tmp, at(t, h)]);
+      const mv = await run(["moveto", tmp, at(t, h)]);
       if (!mv.ok) throw new AthError("EXTERNAL", `rclone moveto in ${decl.name}: ${mv.err}`);
     },
     async remove(t, h) {
-      const r = run(["deletefile", at(t, h)]);
+      const r = await run(["deletefile", at(t, h)]);
       if (!r.ok) throw new AthError("EXTERNAL", `rclone deletefile in ${decl.name}: ${r.err}`);
     },
     async stat() {
-      const r = run(["about", "--json", remote]);
+      const r = await run(["about", "--json", remote]).catch(() => null);
+      if (!r) return {};
       if (!r.ok) return {};
       const j = JSON.parse(new TextDecoder().decode(r.out)) as { used?: number; free?: number };
       return { ...(j.used !== undefined ? { used: j.used } : {}), ...(j.free !== undefined ? { free: j.free } : {}) };
@@ -261,6 +293,6 @@ export function rcloneDriver(decl: StoreDecl, remote: string, bin = "rclone"): D
  * there. */
 export function driverFor(decl: StoreDecl, access: Access | undefined): Driver | null {
   if (!access || decl.encryption === "client") return null;
-  if (decl.driver === "local") return access.path ? localDriver(decl, access.path) : null;
-  return access.remote ? rcloneDriver(decl, access.remote) : null;
+  if (decl.driver === "local") return access.path ? localDriver(decl, access.path, access.bwlimit) : null;
+  return access.remote ? rcloneDriver(decl, access.remote, "rclone", access.bwlimit) : null;
 }

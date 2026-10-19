@@ -144,6 +144,8 @@ const storeRow = z.object({
   reachable: z.boolean(),
   copies: z.number(),
   bytes: z.number(),
+  /** An observed tree's latest finished scan. */
+  generation: z.number().optional(),
 });
 
 export const storeList = defineCommand({
@@ -153,28 +155,28 @@ export const storeList = defineCommand({
     mutating: false,
   },
   contract: defineContract({ key: "store-list", args: z.object({}), argv: {}, data: z.object({ stores: z.array(storeRow) }) }),
-  run(ctx) {
+  async run(ctx) {
     const s = openSites(ctx, instanceOf(ctx));
     try {
-      return {
-        data: {
-          stores: s.sites.map((x) => {
-            const held = s.index.copiesOn(x.decl.id).filter((c) => c.state !== "missing");
-            return {
-              name: x.decl.name,
-              id: x.decl.id,
-              instance: x.decl.instance ?? null,
-              driver: x.decl.driver,
-              role: x.decl.role,
-              tags: x.decl.tags,
-              cost: x.decl.cost,
-              reachable: x.driver !== null,
-              copies: held.length,
-              bytes: held.reduce((n, c) => n + c.size, 0),
-            };
-          }),
-        },
-      };
+      const stores = [];
+      for (const x of s.sites) {
+        const held = s.index.copiesOn(x.decl.id).filter((c) => c.state !== "missing");
+        const generation = x.driver?.manifest?.()?.generation;
+        stores.push({
+          name: x.decl.name,
+          id: x.decl.id,
+          instance: x.decl.instance ?? null,
+          driver: x.decl.driver,
+          role: x.decl.role,
+          tags: x.decl.tags,
+          cost: x.decl.cost,
+          reachable: x.driver ? await x.driver.available() : false,
+          copies: held.length,
+          bytes: held.reduce((n, c) => n + c.size, 0),
+          ...(generation !== undefined ? { generation } : {}),
+        });
+      }
+      return { data: { stores } };
     } finally {
       s.close();
     }

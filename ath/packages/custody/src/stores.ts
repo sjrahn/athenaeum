@@ -1,8 +1,8 @@
 // stores.ts — the stores an instance declares (spec §18.2): `stores/<name>.yaml` with the store's `id` (a UUID written
 // into the store itself), its `driver`, its `role` (`managed`: content-addressed trees only custody writes; `observed`:
 // a tree that keeps its own names, which custody reads and never writes), its `tags`, `encryption`, `capacity`,
-// `evict`, `links` and declared `cost`. How this host reaches each is `$XDG_CONFIG_HOME/athenaeum/access.yaml`, by id;
-// credentials never enter a repository. The host's local store is a managed store tagged `local`, and evictable.
+// `evict`, `links` and declared `cost`. How this host reaches each is `$XDG_CONFIG_HOME/athenaeum/access.yaml`, by id —
+// a path or a remote, credentials, and the bandwidth a transfer may take; credentials never enter a repository. The host's local store is a managed store tagged `local`, and evictable.
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { AthError } from "@ath/kit/errors.ts";
@@ -29,6 +29,8 @@ export interface Access {
   path?: string;
   remote?: string;
   credentials?: string;
+  /** Bytes per second a transfer to or from the store may take on this host. */
+  bwlimit?: number;
 }
 
 const SIZE = /^(\d+(?:\.\d+)?)\s*(B|KB|MB|GB|TB|PB)?$/i;
@@ -139,8 +141,19 @@ export function loadAccess(configDir: string): { stores: Map<string, Access>; lo
       continue;
     }
     if (!UUID.test(k)) throw new AthError("CONFIG", `${p}: \`${k}\` is not a store id`);
-    const a = (v ?? {}) as Access;
-    if (!a.path && !a.remote) throw new AthError("CONFIG", `${p}: ${k} names no path and no remote`);
+    const o = (v ?? {}) as Record<string, unknown>;
+    for (const key of Object.keys(o))
+      if (!["path", "remote", "credentials", "bwlimit"].includes(key))
+        throw new AthError("CONFIG", `${p}: ${k}: \`${key}\` is not a key of a store's access`);
+    if (!o.path && !o.remote) throw new AthError("CONFIG", `${p}: ${k} names no path and no remote`);
+    const a: Access = {};
+    for (const key of ["path", "remote", "credentials"] as const) if (o[key] !== undefined) a[key] = String(o[key]);
+    if (o.bwlimit !== undefined) {
+      const m = /^(.+?)\/s$/.exec(String(o.bwlimit).trim());
+      const n = m ? parseSize(m[1]!) : null;
+      if (!n) throw new AthError("CONFIG", `${p}: ${k}: \`bwlimit\` is a rate: 10MB/s`);
+      a.bwlimit = n;
+    }
     stores.set(k, a);
   }
   return { stores, local };
@@ -158,6 +171,7 @@ export function emitAccess(local: LocalDecl, stores: ReadonlyMap<string, Access>
   for (const [id, a] of [...stores].sort(([x], [y]) => (x < y ? -1 : 1))) {
     out += `${id}:\n`;
     for (const k of ["path", "remote", "credentials"] as const) if (a[k] !== undefined) out += `  ${k}: ${JSON.stringify(a[k])}\n`;
+    if (a.bwlimit !== undefined) out += `  bwlimit: ${a.bwlimit}B/s\n`;
   }
   return out;
 }

@@ -143,6 +143,8 @@ export interface RunResult<D> {
   data: D;
   /** A verdict: the command ran, the answer is no (lint found errors). Reported as ok with exit_code. */
   exitCode?: number;
+  /** The verb ran in the host daemon, which recorded it in the history; it is not recorded twice. */
+  relayed?: boolean;
 }
 
 export interface CommandDef<C extends AnyContract = AnyContract> {

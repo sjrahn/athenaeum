@@ -30,6 +30,22 @@ Nothing the tool keeps for itself is in a repository (§5.6): the local store un
 custody index and each instance's staging, locks, journal and history under `$XDG_STATE_HOME/athenaeum/`, the access
 and host files under `$XDG_CONFIG_HOME/athenaeum/`, the daemon's socket under `$XDG_RUNTIME_DIR/athenaeum/`.
 
+## The host daemon
+
+`athd` (`ath daemon run`; `ath daemon install` writes and starts a systemd user unit) answers every read and write
+verb at `POST /v1/<verb>` on its socket, and keeps custody for the instances `host.yaml` names:
+
+```yaml
+daemon:
+  instances: [~/athenaeum]
+  every: {inventory: 1d, verify: 30d, reconcile: 1h}   # a job left out runs on events and on demand only
+  poll: 5m                                              # look for a store come back or a new observed generation
+```
+
+While it runs, a verb that writes the custody index (`ingest`, `custody inventory|verify|reconcile`) is handed to it;
+without it, the verb runs in the calling process under the index lock. A store's bandwidth on this host is its
+`bwlimit` in `access.yaml` (`bwlimit: 10MB/s`).
+
 ## Conventions
 
 Global flags come before the verb's words: `ath --json --root PATH --profile P --now ISO <words> [args]`. Exit codes:

@@ -8,6 +8,7 @@
 // policy: at least one copy on a managed store not tagged `local`.
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { parseDuration } from "@ath/kit/duration.ts";
 import { AthError } from "@ath/kit/errors.ts";
 import { parseSize, type StoreDecl, tagsMatch } from "./stores.ts";
 
@@ -54,9 +55,6 @@ export interface CopyView {
 }
 
 export const DEFAULT_POLICY: Policy = { name: "default", select: {}, require: [{ copies: 1, where: { not: ["local"] } }] };
-
-const DUR = /^(\d+)\s*(s|m|h|d|w|y)$/;
-const SECONDS: Record<string, number> = { s: 1, m: 60, h: 3600, d: 86400, w: 604800, y: 31557600 };
 
 function tagExpr(v: unknown, where: string): TagExpr | undefined {
   if (v === undefined) return undefined;
@@ -114,9 +112,9 @@ export function parsePolicy(name: string, text: string, where: string): Policy {
   const confine = tagExpr(d.confine, where);
   if (confine) p.confine = confine;
   if (d.verify !== undefined) {
-    const m = DUR.exec(String(d.verify));
-    if (!m) throw new AthError("CONFIG", `${where}: verify is a duration: 90d`);
-    p.verify = Number(m[1]) * SECONDS[m[2]!]!;
+    const secs = parseDuration(d.verify);
+    if (secs === null) throw new AthError("CONFIG", `${where}: verify is a duration: 90d`);
+    p.verify = secs;
   }
   return p;
 }
