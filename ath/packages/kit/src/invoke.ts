@@ -8,7 +8,7 @@ import { execute, recordHistory } from "./dispatch.ts";
 import { errEnvelope, okEnvelope, toAthError } from "./envelope.ts";
 import { AthError } from "./errors.ts";
 import { collectSink, createEventBus } from "./events.ts";
-import { checkGates, visible } from "./gates.ts";
+import { checkGates, HiddenError, visible } from "./gates.ts";
 import type { Io } from "./io.ts";
 import type { Registry } from "./registry.ts";
 import { instanceId } from "./root.ts";
@@ -43,19 +43,27 @@ export async function invoke(o: InvokeOpts): Promise<{ envelope: Envelope; exit:
   if (!r || r.consumed !== 1 || !visible(r.def, o.caller)) return fail(new AthError("USAGE", `unknown verb '${o.verb}'`));
   const def = r.def;
   const cmd = def.contract.key;
+  const host = hostPaths(o.env);
+  const id = o.root ? instanceId(o.root) : null;
+  const instance = id ? { id, state: instanceState(host, id) } : null;
+  // a refusal at the gates is recorded as at the terminal: a denial with its reason, an argument error not
+  const refused = (e: AthError, code: AthError["code"] = e.code, reason?: string) => {
+    const out = fail(e, cmd);
+    if (instance && o.history !== false)
+      recordHistory(instance.state, cmd, [JSON.stringify(o.args ?? {})], o.caller, out.exit, started, code, reason);
+    return out;
+  };
   if (def.meta.tier === "admin")
-    return fail(new AthError("DENIED", `${cmd} is the owner's, confirmed at a terminal; it is not run ${o.via}`), cmd);
+    return refused(new AthError("DENIED", `${cmd} is the owner's, confirmed at a terminal; it is not run ${o.via}`));
   const gate = checkGates(def, o.caller);
-  if (gate) return fail(gate, cmd);
+  if (gate) return gate instanceof HiddenError ? refused(gate, "DENIED", gate.reason) : refused(gate);
   let args: unknown;
   try {
     args = parseArgs(def.contract, o.args ?? {});
   } catch (e) {
-    return fail(e instanceof ContractUsageError ? new AthError("USAGE", e.message) : e, cmd);
+    if (e instanceof ContractUsageError) return fail(new AthError("USAGE", e.message), cmd);
+    return refused(toAthError(e));
   }
-  const host = hostPaths(o.env);
-  const id = o.root ? instanceId(o.root) : null;
-  const instance = id ? { id, state: instanceState(host, id) } : null;
   const events = createEventBus(makeClock());
   events.subscribe(collectSink());
   const ctx: KitCtx = {

@@ -96,6 +96,8 @@ async function host() {
     hostYaml,
     start,
     post,
+    /** The instance's history, as written so far. */
+    history: () => readFileSync(join(h, "state", "athenaeum", "instances", instanceId(root)!, "history.jsonl"), "utf8"),
     tick: (ms: number) => {
       clock += ms;
     },
@@ -152,7 +154,7 @@ describe("the daemon's socket", () => {
       const st = await a.post("custody-status", { root: a.root });
       expect([st.status, st.env.ok, st.env.exit_code]).toEqual([200, true, 1]);
       // the actor is the request's, recorded in the history
-      const log = readFileSync(join(a.h, "state", "athenaeum", "instances", instanceId(a.root)!, "history.jsonl"), "utf8");
+      const log = a.history();
       expect(log).toContain('"actor":"agent-b"');
       const refusals: [string, Record<string, unknown>, Record<string, string>, number, string][] = [
         // an admin verb does not exist for an agent (§19.1.1)
@@ -170,6 +172,17 @@ describe("the daemon's socket", () => {
         const r = await a.post(verb, body, headers);
         expect([verb, r.status, r.env.error?.code], r.text).toEqual([verb, status, code]);
       }
+      // a denial at the gates is recorded as at the terminal; an argument error is not
+      const denied = a
+        .history()
+        .trim()
+        .split("\n")
+        .map((l) => JSON.parse(l) as { cmd: string; error?: string })
+        .filter((l) => l.error);
+      expect(denied.map((l) => [l.cmd, l.error])).toEqual([
+        ["ingest", "DENIED"],
+        ["record", "NOT_FOUND"],
+      ]);
       const get = await fetch(`http://athd/v1/store-list`, { unix: a.paths.socket } as RequestInit);
       expect(get.status).toBe(400);
     } finally {
@@ -200,10 +213,7 @@ describe("the daemon's socket", () => {
       await d.stop();
     }
     expect((here.results as { status: string }[])[0]!.status).toBe("new");
-    const id = instanceId(a.root)!;
-    const hist = readFileSync(join(a.h, "state", "athenaeum", "instances", id, "history.jsonl"), "utf8")
-      .trim()
-      .split("\n");
+    const hist = a.history().trim().split("\n");
     const ingests = hist.map((l) => JSON.parse(l)).filter((l: { cmd: string }) => l.cmd === "ingest");
     // the first ran here (argv as typed), the second in the daemon (its arguments as one object), once each
     expect(ingests.map((l: { argv: string[]; actor: string }) => [l.argv[0]!.startsWith("{"), l.actor])).toEqual([
@@ -229,7 +239,7 @@ describe("the daemon's socket", () => {
       expect(tr.queued).toEqual([{ kind: "inventory", root: a.root }]);
       await d.idle();
       // asked of the daemon, recorded once, by the daemon, with the asker's actor
-      const hist = readFileSync(join(a.h, "state", "athenaeum", "instances", instanceId(a.root)!, "history.jsonl"), "utf8");
+      const hist = a.history();
       const triggers = hist
         .trim()
         .split("\n")
@@ -243,7 +253,8 @@ describe("the daemon's socket", () => {
       a.hostYaml("daemon: {every: {sweep: 1h}}\n");
       const bad = await a.run(["daemon", "reload"]);
       expect(bad.code).toBe(78);
-      const reloads = readFileSync(join(a.h, "state", "athenaeum", "instances", instanceId(a.root)!, "history.jsonl"), "utf8")
+      const reloads = a
+        .history()
         .trim()
         .split("\n")
         .filter((l) => l.includes('"cmd":"daemon-reload"'));
@@ -389,17 +400,26 @@ describe("the service unit, bandwidth, availability", () => {
   test("an index another schema wrote: an older one is dropped and rebuilt, a newer one left to the tool that knows it", async () => {
     const a = await host();
     const path = join(a.h, "state", "athenaeum", "index.sqlite");
-    openIndex(path).close();
+    const copy = { store: "s", tree: "artifacts", hash: "h", state: "claimed", size: 1, verified_at: null, generation: 1 } as const;
+    const first = openIndex(path);
+    first.putCopy(copy);
+    first.close();
     const set = (v: string) => {
       const db = new Database(path);
       db.run("UPDATE meta SET value = ? WHERE key = 'schema'", [v]);
       db.close();
     };
     set("1");
-    openIndex(path).close();
+    const rebuilt = openIndex(path);
+    expect(rebuilt.copies("h")).toEqual([]);
+    rebuilt.putCopy(copy);
+    rebuilt.close();
     set("9");
     expect(() => openIndex(path)).toThrow(/schema 9/);
     expect((await a.run(["custody", "status"])).code).toBe(78);
+    const kept = new Database(path);
+    expect(kept.query("SELECT count(*) AS n FROM copies").get()).toEqual({ n: 1 });
+    kept.close();
   });
 
   test("the request client: no socket is no daemon", async () => {

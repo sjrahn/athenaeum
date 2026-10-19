@@ -92,11 +92,11 @@ export function openIndex(path: string): CustodyIndex {
   mkdirSync(dirname(path), { recursive: true });
   const db = new Database(path, { create: true, strict: true });
   db.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;");
-  // the index is a belief, always safe to delete (§18.4.2): one of another schema is dropped and re-inventoried
+  // the index is a belief, always safe to delete (§18.4.2): one of an older schema is dropped and re-inventoried; a
+  // newer tool's is left as it is, since dropping it would undo what a newer daemon keeps
   const hasMeta = db.query<{ n: number }, []>("SELECT count(*) AS n FROM sqlite_master WHERE name = 'meta'").get()!.n > 0;
   const found = hasMeta ? db.query<{ value: string }, []>("SELECT value FROM meta WHERE key = 'schema'").get()?.value : undefined;
-  // a newer tool's index is left as it is: dropping it would undo what a newer daemon keeps
-  if (hasMeta && found !== undefined && Number(found) > Number(VERSION)) {
+  if (Number(found) > Number(VERSION)) {
     db.close();
     throw new AthError("CONFIG", `${path}: index schema ${found}; this tool knows ${VERSION} — a newer ath keeps this index`);
   }
