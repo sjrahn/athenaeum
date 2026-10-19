@@ -1,4 +1,11 @@
-intrinsics: {op: pdf.intrinsics@1, mime: application/pdf, bytes: 121640, page_count: 8, pdf_version: "1.7", page_size_pt: [595.28, 841.89], info: {Title: Procedure to estimate heat loss from insulated pipework over a reporting period, Author: Harbour Standards Office, Creator: Typst 0.15.1}}
+intrinsics:
+  op: pdf.intrinsics@1
+  mime: application/pdf
+  bytes: 121640
+  pdf_version: "1.7"
+  page_count: 8
+  page_sizes: [[595.28, 841.89], [595.28, 841.89], [595.28, 841.89], [595.28, 841.89], [595.28, 841.89], [595.28, 841.89], [595.28, 841.89], [595.28, 841.89]]
+  info: {Title: Procedure to estimate heat loss from insulated pipework over a reporting period, Author: Harbour Standards Office, Creator: Typst 0.15.1}
 receipts:
   - {actor: reader-a, received: "2026-03-20T09:01:00Z", name: procedure.pdf}
 origins:

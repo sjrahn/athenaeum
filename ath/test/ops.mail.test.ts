@@ -3,7 +3,7 @@
 // readings under eml.text@1, the harvested message concept, every entry bound, lint clean.
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { attestMessage } from "@ath/engine/formats/mail/attest.ts";
+import { intrinsicsOf } from "@ath/engine/formats/index.ts";
 import { mboxMembers, unstuff } from "@ath/engine/formats/mail/mbox.ts";
 import {
   decodeEncodedWords,
@@ -52,21 +52,21 @@ describe("rfc822 parse", () => {
     const body = m.parts[0]!;
     expect(spanText(m, body, body.bodyStart, body.bodyEnd).startsWith("This is the reply-text body")).toBe(true);
     expect(blocks(m, body).map((b) => b.kind)).toEqual(["paragraph"]);
-    const a = await attestMessage(bytes, "message/rfc822");
+    const a = await intrinsicsOf(bytes, "message/rfc822");
     expect(a.value).toMatchObject({
+      op: "rfc822.intrinsics@1",
       message_id: "<synthetic-message-0001@athenaeum.example>",
       subject: "Synthetic exemplar message",
       date_iso: "2025-01-01T00:00:00Z",
-      content_type: "multipart/mixed",
     });
-    expect(
-      (a.value.members as { path: string; mime: string; filename?: string }[]).map((x) => [x.path, x.mime, x.filename ?? null]),
-    ).toEqual([
-      ["2", "message/rfc822", null],
-      ["3", "image/png", "pixel.png"],
+    expect((a.value.parts as { path: string }[]).map((p) => p.path)).toEqual(["1", "2", "3"]);
+    expect(a.constituents.map((x) => [x.path, x.kind, x.fields?.mime ?? x.intrinsics?.mime, x.fields?.filename ?? null])).toEqual([
+      ["1", "part", "text/plain", null],
+      ["2", "asset", "message/rfc822", null],
+      ["3", "asset", "image/png", "pixel.png"],
     ]);
-    expect(a.members!.map((x) => x.name)).toEqual(["2.eml", "pixel.png"]);
-    expect(a.members![1]!.bytes.length).toBe(74);
+    expect(a.constituents.map((x) => x.name ?? null)).toEqual([null, "2.eml", "pixel.png"]);
+    expect(a.constituents[2]!.read().length).toBe(74);
   });
 
   test("the mailbox roster: separators, un-stuffing, members hashed over un-stuffed bytes", async () => {

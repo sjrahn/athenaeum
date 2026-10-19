@@ -1,11 +1,9 @@
-// attest.ts — what an EPUB is (D-epub): the zip roster (every member a subject of its own) plus the package
-// document the OCF container names — Dublin Core metadata and the spine, as member paths in reading order. XML is
-// parsed with htmlparser2 in xmlMode, never as HTML.
+// opf.ts — an EPUB's package document (the OPF the OCF container names): its Dublin Core, its manifest with each
+// item's media type, its spine as entry paths in reading order. XML is parsed with htmlparser2 in xmlMode.
 
 import { AthError } from "@ath/kit/errors.ts";
 import { DomUtils, parseDocument } from "htmlparser2";
-import { type AttestResult, registerAttester } from "../registry.ts";
-import { type MemberBytes, zipMembers } from "../zip/roster.ts";
+import type { MemberBytes } from "../zip/roster.ts";
 
 export interface Opf {
   path: string;
@@ -96,23 +94,3 @@ export function readOpf(members: MemberBytes[]): Opf {
   if (!opf) throw new AthError("EXTERNAL", `epub: rootfile ${path} is not in the archive`);
   return parseOpf(path, utf8.decode(opf.bytes));
 }
-
-export async function attestEpub(bytes: Uint8Array, mime: string): Promise<AttestResult> {
-  const members = await zipMembers(bytes);
-  const opf = readOpf(members);
-  const value: Record<string, unknown> = { mime, bytes: bytes.length };
-  if (opf.title) value.title = opf.title;
-  if (opf.creators.length) value.creator = opf.creators.join("; ");
-  if (opf.language) value.language = opf.language;
-  if (opf.identifier) value.identifier = opf.identifier;
-  const isbn = opf.identifiers.find((i) => i.scheme?.toUpperCase() === "ISBN");
-  if (isbn) value.isbn = isbn.value;
-  if (opf.date) value.date = opf.date;
-  if (opf.publisher) value.publisher = opf.publisher;
-  value.opf = opf.path;
-  value.spine = opf.spine;
-  value.members = members.map((m) => ({ path: m.path, bytes: m.bytes.length, blake3: m.blake3 }));
-  return { value, members };
-}
-
-registerAttester("application/epub+zip", attestEpub);

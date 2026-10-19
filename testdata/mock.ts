@@ -11,8 +11,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import "../ath/packages/engine/src/formats/index.ts";
-import { attesterFor } from "../ath/packages/engine/src/formats/registry.ts";
+import { intrinsicsOf } from "../ath/packages/engine/src/formats/index.ts";
 import { sniffMime } from "../ath/packages/engine/src/formats/sniff.ts";
 import { emitRecord, type Reading, type RecordDoc as Rec, type Scope } from "../ath/packages/engine/src/record/document.ts";
 import { emptyVocabulary, pin as vocabPin, serializeTerm, type Vocab } from "../ath/packages/engine/src/vocab/terms.ts";
@@ -126,32 +125,11 @@ class Instance {
   }
 }
 
-/** intrinsics (§8.2, §10.2): what the format defines, by the format's intrinsics op; a container's constituents. */
+/** intrinsics (§8.2, §10.2): the tool's own intrinsics op for the sniffed format, constituents with their bytes. */
 async function intrinsics(bytes: Uint8Array, name: string) {
-  const sniffed = sniffMime(bytes, name);
-  const mime = sniffed === "text/plain" && /\.ya?ml$/.test(name) ? "application/yaml" : sniffed;
-  const r = mime === "application/yaml" ? null : await attesterFor(mime)?.(bytes, mime);
-  const val: J = { ...(r?.value ?? { mime, bytes: bytes.length, encoding: "utf-8" }) };
-  for (const k of ["sha256", "md5", "members", ...(/^(image|audio|video)\//.test(mime) ? ["encoding"] : [])]) delete val[k];
-  const parts: { path: string; blake3: string; bytes: Uint8Array }[] = [];
-  for (const m of r?.members ?? []) parts.push({ path: m.path, blake3: m.blake3 ?? (await blake3Hex(m.bytes)), bytes: m.bytes });
-  if (mime === "text/html") parts.push(...(await dataUris(bytes)));
-  if (parts.length) val.constituents = parts.map((p) => ({ path: p.path, blake3: p.blake3, kind: "asset" }));
-  if (mime === "video/quicktime") Object.assign(val, TRACKS[name] ?? {});
-  const family = mime.split("/")[1]!.replace(/^x-/, "").split("+")[0]!;
-  return { val: { op: `${family}.intrinsics@1`, ...val }, parts };
+  const p = await intrinsicsOf(bytes, sniffMime(bytes, name));
+  return { val: p.value, parts: p.constituents.map((c) => ({ path: c.path, blake3: c.blake3, bytes: c.read() })) };
 }
-
-/** What the recording fixture's tracks are (ffprobe); the tooling's quicktime op reports them, this mock states them (§10.3). */
-const TRACKS: Record<string, J> = {
-  "harbour-clip.mov": {
-    duration: 1,
-    constituents: [
-      { path: "0", kind: "part", codec: "h264", width: 160, height: 120, frame_rate: "15/1", duration: 1 },
-      { path: "1", kind: "part", codec: "aac", duration: 1 },
-    ],
-  },
-};
 /** Admission (§9.5): a delivered testimony follows the contract (§9.4), its `subject` the artifact it is delivered for, or ingest refuses it. Nothing else is asked, nothing is written. */
 const pointer = (doc: unknown, ptr: string) => ptr.split("/").slice(1).reduce<unknown>((v, k) => (v && typeof v === "object" ? (v as J)[k] : undefined), doc);
 function admit(bytes: Uint8Array, subject: string): J {
@@ -163,17 +141,6 @@ function admit(bytes: Uint8Array, subject: string): J {
 /** A capture sidecar in the contract's shape (§9.4). */
 const sidecar = async (bytes: Uint8Array, uri: string, at: string, context: string) =>
   new TextEncoder().encode(["subject: b3:" + (await blake3Hex(bytes)), "producer:", "  tool: page-capture", '  version: "4.2"', `  at: "${at}"`, "  host: capture-box", "source:", `  uri: ${uri}`, `context: ${context}`, ""].join("\n"));
-
-/** Every `data:` URI in markup is a constituent; its path is the URI's byte span (§10.3). */
-async function dataUris(bytes: Uint8Array) {
-  const text = new TextDecoder("latin1").decode(bytes);
-  const out: { path: string; blake3: string; bytes: Uint8Array }[] = [];
-  for (const m of text.matchAll(/data:([a-z0-9.+/-]*)(;base64)?,([^"')\s]+)/gi)) {
-    const payload = m[2] ? Uint8Array.from(Buffer.from(m[3]!, "base64")) : new TextEncoder().encode(decodeURIComponent(m[3]!));
-    if (payload.length) out.push({ path: `${m.index}-${m.index! + m[0].length}`, blake3: await blake3Hex(payload), bytes: payload });
-  }
-  return out;
-}
 
 /** The byte span of an element (start tag to end tag), or of a JSON string value (§10.4.5). */
 function htmlSpan(bytes: Uint8Array, open: string, tag: string) {

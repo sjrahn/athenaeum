@@ -48,7 +48,8 @@ export interface Receipt {
 }
 
 export interface RecordDoc {
-  intrinsics: J;
+  /** Absent only on an extension's record of its base's artifact, which holds its own receipts and origins (§4.4). */
+  intrinsics?: J;
   receipts?: Receipt[];
   origins?: J[];
   shape?: string;
@@ -137,9 +138,23 @@ function scopeLines(sc: Scope, ind: string): string {
   return out;
 }
 
+/** `intrinsics` as a block mapping: each value in flow, but a list of mappings — a container's constituents, a
+ * message's part table — as a block list, one entry per line, so a large container stays readable and diffable. */
+function intrinsicsLines(v: J): string {
+  if (!Object.values(v).some((x) => x !== undefined)) return "intrinsics: {}\n";
+  let out = "intrinsics:\n";
+  for (const [k, x] of Object.entries(v)) {
+    if (x === undefined) continue;
+    if (Array.isArray(x) && x.length && x.every((e) => e && typeof e === "object" && !Array.isArray(e)))
+      out += `  ${scalar(k)}:\n${x.map((e) => `    - ${flow(e)}\n`).join("")}`;
+    else out += entry(k, x, "  ");
+  }
+  return out;
+}
+
 /** The record in its one style. */
 export function emitRecord(r: RecordDoc): string {
-  let out = `intrinsics: ${flow(r.intrinsics)}\n`;
+  let out = r.intrinsics ? intrinsicsLines(r.intrinsics) : "";
   if (r.receipts?.length) out += `receipts:\n${r.receipts.map((e) => `  - ${flow(ordered(e as unknown as J, RECEIPT_KEYS))}\n`).join("")}`;
   if (r.origins?.length) out += `origins:\n${r.origins.map((e) => `  - ${flow(e)}\n`).join("")}`;
   if (r.shape !== undefined) out += `shape: ${scalar(r.shape)}\n`;
@@ -200,7 +215,7 @@ export function loadRecord(text: string, where = "record"): RecordDoc {
   }
   if (!isObj(doc)) return refuse("a record is a mapping");
   for (const k of Object.keys(doc)) if (!(RECORD_KEYS as readonly string[]).includes(k)) refuse(`\`${k}\` is not a key of a record`);
-  if (!isObj(doc.intrinsics)) refuse("`intrinsics` is required and is a mapping");
+  if (doc.intrinsics !== undefined && !isObj(doc.intrinsics)) refuse("`intrinsics` is a mapping");
   if (doc.readings !== undefined && doc.scopes !== undefined) refuse("a record holds `readings` or `scopes`, never both");
   for (const k of ["receipts", "origins", "chrome"] as const)
     if (doc[k] !== undefined && !(Array.isArray(doc[k]) && (doc[k] as unknown[]).every(isObj))) refuse(`\`${k}\` is a list of mappings`);

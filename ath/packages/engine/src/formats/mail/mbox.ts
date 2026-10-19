@@ -3,7 +3,6 @@
 // hashed over the un-stuffed bytes; members are routed `path=<1-based ordinal>`. Nothing lands on a mailbox: text
 // is a member's aspect.
 import { blake3Hex } from "@ath/kit/hash.ts";
-import { type AttestResult, registerAttester } from "../registry.ts";
 import { header, parseHeaders } from "./parse.ts";
 
 const latin1 = new TextDecoder("latin1");
@@ -78,23 +77,3 @@ export async function mboxMembers(b: Uint8Array): Promise<MboxMember[]> {
   }
   return out;
 }
-
-export async function attestMbox(bytes: Uint8Array, mime: string): Promise<AttestResult> {
-  const members = await mboxMembers(bytes);
-  return {
-    value: {
-      mime,
-      bytes: bytes.length,
-      messages: members.length,
-      members: members.map((m) => ({
-        path: m.path,
-        bytes: m.bytes.length,
-        blake3: m.blake3,
-        ...(m.message_id ? { message_id: m.message_id } : {}),
-      })),
-    },
-    members: members.map((m) => ({ path: m.path, bytes: m.bytes, blake3: m.blake3, name: `${m.path}.eml` })),
-  };
-}
-
-registerAttester("application/mbox", attestMbox);

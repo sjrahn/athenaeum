@@ -15,6 +15,7 @@ for (const [k, d] of [
   ["XDG_STATE_HOME", ".local/state"],
   ["XDG_CONFIG_HOME", ".config"],
   ["XDG_RUNTIME_DIR", "run"],
+  ["XDG_CACHE_HOME", ".cache"],
 ] as const)
   process.env[k] = join(scratchHome, d);
 delete process.env.ATHENAEUM_ROOT;

@@ -38,6 +38,7 @@ export async function ath(argv: string[], o: RunOpts = {}): Promise<RunOut> {
       XDG_STATE_HOME: process.env.XDG_STATE_HOME,
       XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
       XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR,
+      XDG_CACHE_HOME: process.env.XDG_CACHE_HOME,
       USER: "tester",
       ATH_TEST: "1",
       ...(o.env ?? {}),

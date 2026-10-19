@@ -15,6 +15,7 @@
   "dependencies": {
     "@ath/cli": "workspace:*",
     "@ath/contracts": "workspace:*",
+    "@ath/custody": "workspace:*",
     "@ath/engine": "workspace:*",
     "@ath/kit": "workspace:*",
     "@ath/scanner": "workspace:*",

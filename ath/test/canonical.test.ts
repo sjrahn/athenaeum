@@ -70,7 +70,10 @@ describe("a record (§8.2)", () => {
     });
     expect(out).toBe(
       [
-        "intrinsics: {op: pdf.intrinsics@1, mime: application/pdf, bytes: 3}",
+        "intrinsics:",
+        "  op: pdf.intrinsics@1",
+        "  mime: application/pdf",
+        "  bytes: 3",
         "receipts:",
         '  - {actor: r, received: "2026-01-01T00:00:00Z", name: a.pdf}',
         "passes:",
@@ -104,7 +107,8 @@ describe("a record (§8.2)", () => {
     });
     expect(out).toBe(
       [
-        "intrinsics: {mime: application/pdf}",
+        "intrinsics:",
+        "  mime: application/pdf",
         "scopes:",
         "  - form: heading",
         "    at: page=3",
@@ -149,9 +153,20 @@ describe("a record (§8.2)", () => {
     const body = { intrinsics: {}, readings: { whole: { text: "  indented\nfirst" } } };
     expect(Bun.YAML.parse(emitRecord(body))).toEqual(body);
   });
+  test("intrinsics is a block mapping; a list of mappings in it a block list; an empty one stays a mapping", () => {
+    const out = emitRecord({
+      intrinsics: { op: "zip.intrinsics@1", constituents: [{ path: "a b", blake3: "0f", kind: "asset" }], sizes: [[1, 2]] },
+    });
+    expect(out).toBe(
+      'intrinsics:\n  op: zip.intrinsics@1\n  constituents:\n    - {path: a b, blake3: "0f", kind: asset}\n  sizes: [[1, 2]]\n',
+    );
+    expect(emitRecord({ intrinsics: {} })).toBe("intrinsics: {}\n");
+    expect(emitRecord({ receipts: [{ actor: "a", received: "2026-01-01T00:00:00Z", name: "a.pdf" }] })).toBe(
+      'receipts:\n  - {actor: a, received: "2026-01-01T00:00:00Z", name: a.pdf}\n',
+    );
+  });
   test("loading refuses what the grammar lacks", () => {
     const refuse = (t: string) => expect(() => loadRecord(t)).toThrow();
-    refuse("receipts: []\n");
     refuse("intrinsics: {}\nsummary: no\n");
     refuse("intrinsics: {}\nreadings: {whole: {text: a}}\nscopes: []\n");
     refuse("intrinsics: {}\nreadings: {whole: {gist: a}}\n");

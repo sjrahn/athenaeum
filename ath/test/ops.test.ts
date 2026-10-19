@@ -4,7 +4,7 @@ import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { csvSurface, parseCsv } from "@ath/engine/formats/csv/parse.ts";
 import { byteMap, parseHtml, select, spanOf } from "@ath/engine/formats/html/dom.ts";
-import { attest } from "@ath/engine/formats/index.ts";
+import { intrinsicsOf } from "@ath/engine/formats/index.ts";
 import { sniffMime } from "@ath/engine/formats/sniff.ts";
 import { TESTDATA } from "./harness.ts";
 
@@ -57,9 +57,18 @@ describe("csv.parse@1", () => {
     expect(csvSurface(p, 1)).toBe("1\tSmith, J\tmulti\nline");
     expect(csvSurface(p, 9)).toBeNull();
   });
-  test("attests rows (data), cols, header_row 0, bom", async () => {
-    const a = await attest(await read(join(FIX, "small.csv")), "text/csv");
-    expect(a.value).toEqual({ mime: "text/csv", bytes: 72, rows: 3, header_row: 0, cols: 3, encoding: "utf-8", bom: true });
+  test("intrinsics: physical rows, columns, the delimiter, the byte-order mark; no header (that is a shape's)", async () => {
+    const a = await intrinsicsOf(await read(join(FIX, "small.csv")), "text/csv");
+    expect(a.value).toEqual({
+      op: "csv.intrinsics@1",
+      mime: "text/csv",
+      bytes: 72,
+      encoding: "utf-8",
+      rows: 4,
+      columns: 3,
+      delimiter: ",",
+      bom: true,
+    });
   });
   test("a tab-separated file is the same parse with the tab as the delimiter", async () => {
     const p = parseCsv(await read(join(FIX, "small.tsv")), "\t");
@@ -68,8 +77,8 @@ describe("csv.parse@1", () => {
       ["1", "Ada"],
       ["2", "Bo"],
     ]);
-    const a = await attest(await read(join(FIX, "small.tsv")), "text/tab-separated-values");
-    expect(a.value).toMatchObject({ mime: "text/tab-separated-values", rows: 2, cols: 2 });
+    const a = await intrinsicsOf(await read(join(FIX, "small.tsv")), "text/tab-separated-values");
+    expect(a.value).toMatchObject({ mime: "text/tab-separated-values", rows: 3, columns: 2, delimiter: "\t" });
   });
 });
 
@@ -87,34 +96,46 @@ describe("html", () => {
     expect(new TextDecoder().decode(bytes.subarray(bs.start, bs.end))).toBe('<div class="bbWrapper">héllo <b>wörld</b><br>line two</div>');
     expect(byteMap("a𝑃b")).toEqual(new Uint32Array([0, 1, 5, 5, 6]));
   });
-  test("attests the encoding, the title and the standard meta names; a capture banner is not the format's", async () => {
-    const a = await attest(await read(join(FIX, "small.html")), "text/html");
-    expect(a.value).toMatchObject({ mime: "text/html", encoding: "utf-8", title: "Ünïcode · thread | Example Forum" });
+  test("intrinsics: the declared encoding, the title and the standard meta names; a capture banner is not the format's", async () => {
+    const a = await intrinsicsOf(await read(join(FIX, "small.html")), "text/html");
+    expect(a.value).toMatchObject({
+      op: "html.intrinsics@1",
+      mime: "text/html",
+      encoding: "utf-8",
+      title: "Ünïcode · thread | Example Forum",
+    });
     expect(a.value.generator).toBeUndefined();
-    expect(Object.keys(a)).toEqual(["value"]);
   });
 });
 
 describe("image, zip, pdf", () => {
-  test("png dims", async () => {
-    const a = await attest(await read(join(PY, "sample.png")), "image/png");
-    expect(a.value.mime).toBe("image/png");
+  test("png: the stored pixel grid", async () => {
+    const a = await intrinsicsOf(await read(join(PY, "sample.png")), "image/png");
+    expect(a.value).toMatchObject({ op: "image.intrinsics@1", mime: "image/png" });
     expect(typeof a.value.width).toBe("number");
     expect(typeof a.value.height).toBe("number");
   });
-  test("zip roster lists files, not directories, each with its blake3", async () => {
-    const a = await attest(await read(join(FIX, "small.zip")), "application/zip");
-    const members = a.value.members as { path: string; bytes: number; blake3: string }[];
-    expect(members.map((m) => m.path)).toEqual(["notes/readme.txt", "data/rows.csv"]);
-    expect(members[0]!.bytes).toBe(13);
-    expect(members[0]!.blake3).toMatch(/^[0-9a-f]{64}$/);
-    expect(a.members?.length).toBe(2);
-    expect(new TextDecoder().decode(a.members![0]!.bytes)).toBe("hello member\n");
+  test("zip: every file entry an asset at its entry name, with its BLAKE3; directories are not entries", async () => {
+    const a = await intrinsicsOf(await read(join(FIX, "small.zip")), "application/zip");
+    expect(a.constituents.map((m) => [m.path, m.kind])).toEqual([
+      ["notes/readme.txt", "asset"],
+      ["data/rows.csv", "asset"],
+    ]);
+    expect(a.constituents[0]!.blake3).toMatch(/^[0-9a-f]{64}$/);
+    expect(new TextDecoder().decode(a.constituents[0]!.read())).toBe("hello member\n");
+    expect(a.value.constituents).toEqual(a.constituents.map((c) => ({ path: c.path, blake3: c.blake3, kind: "asset" })));
   });
-  test("pdf attests page count, version, size, info, sha256", async () => {
-    const a = await attest(await read(join(PY, "born_text.pdf")), "application/pdf");
-    expect(a.value).toMatchObject({ mime: "application/pdf", page_count: 2, page_size_pt: [612, 792] });
+  test("pdf: version, page count, every page's displayed size, the information dictionary as recorded", async () => {
+    const a = await intrinsicsOf(await read(join(PY, "born_text.pdf")), "application/pdf");
+    expect(a.value).toMatchObject({
+      op: "pdf.intrinsics@1",
+      mime: "application/pdf",
+      page_count: 2,
+      page_sizes: [
+        [612, 792],
+        [612, 792],
+      ],
+    });
     expect(String(a.value.pdf_version)).toMatch(/^1\.\d$/);
-    expect(String(a.value.sha256)).toMatch(/^[0-9a-f]{64}$/);
   });
 });

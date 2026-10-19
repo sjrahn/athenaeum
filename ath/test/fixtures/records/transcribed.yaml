@@ -1,4 +1,9 @@
-intrinsics: {op: jpeg.intrinsics@1, mime: image/jpeg, bytes: 47268, width: 900, height: 420}
+intrinsics:
+  op: image.intrinsics@1
+  mime: image/jpeg
+  bytes: 47268
+  width: 900
+  height: 420
 receipts:
   - {actor: reader-a, received: "2026-03-20T09:04:00Z", name: sign.jpg}
 passes:

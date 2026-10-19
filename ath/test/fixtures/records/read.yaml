@@ -1,4 +1,15 @@
-intrinsics: {op: html.intrinsics@1, mime: text/html, bytes: 9290, encoding: utf-8, title: "12 Quay Street, Port Ellen – 2 bed cottage | Harbour Homes", constituents: [{path: "1278-1356", blake3: a48bf844a588a0427428d884e2e4f0405cca82d1387265f215bacdd18e08bacb, kind: asset}, {path: "1382-1460", blake3: a48bf844a588a0427428d884e2e4f0405cca82d1387265f215bacdd18e08bacb, kind: asset}, {path: "1486-1564", blake3: a48bf844a588a0427428d884e2e4f0405cca82d1387265f215bacdd18e08bacb, kind: asset}, {path: "1590-1668", blake3: a48bf844a588a0427428d884e2e4f0405cca82d1387265f215bacdd18e08bacb, kind: asset}, {path: "1694-1772", blake3: a48bf844a588a0427428d884e2e4f0405cca82d1387265f215bacdd18e08bacb, kind: asset}]}
+intrinsics:
+  op: html.intrinsics@1
+  mime: text/html
+  bytes: 9290
+  encoding: utf-8
+  title: "12 Quay Street, Port Ellen – 2 bed cottage | Harbour Homes"
+  constituents:
+    - {path: "1278-1356", blake3: a48bf844a588a0427428d884e2e4f0405cca82d1387265f215bacdd18e08bacb, kind: asset, mime: image/gif}
+    - {path: "1382-1460", blake3: a48bf844a588a0427428d884e2e4f0405cca82d1387265f215bacdd18e08bacb, kind: asset, mime: image/gif}
+    - {path: "1486-1564", blake3: a48bf844a588a0427428d884e2e4f0405cca82d1387265f215bacdd18e08bacb, kind: asset, mime: image/gif}
+    - {path: "1590-1668", blake3: a48bf844a588a0427428d884e2e4f0405cca82d1387265f215bacdd18e08bacb, kind: asset, mime: image/gif}
+    - {path: "1694-1772", blake3: a48bf844a588a0427428d884e2e4f0405cca82d1387265f215bacdd18e08bacb, kind: asset, mime: image/gif}
 receipts:
   - {actor: reader-a, received: "2026-03-20T09:00:00Z", name: cottage-listing.html}
 origins:

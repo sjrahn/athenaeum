@@ -1,6 +1,7 @@
-// sniff.ts — the mime of bytes, from magic first and the file name second (D-sniff). Only the mimes the ontology's
-// roots know need a name here; everything else is application/octet-stream and manifests nothing until a term
-// claims it. A zip is told apart by what it holds (the OCF `mimetype` member, an OOXML part), not by its extension.
+// sniff.ts — an artifact's mime from its bytes (spec §10.1): a signature where the format has one, never the name; a
+// zip told apart by its entries, an ISO base media file by its brand, a message and a mailbox by their header lines,
+// JSON by parsing. Where no signature decides, the extension of the name it arrived under may name a text format;
+// what nothing names is application/octet-stream.
 import { readCentralDirectory } from "./zip/roster.ts";
 
 const text = (b: Uint8Array, n = 512): string => new TextDecoder("latin1").decode(b.subarray(0, n));
@@ -167,6 +168,8 @@ export function sniffMime(bytes: Uint8Array, name = ""): string {
     csv: "text/csv",
     tsv: "text/tab-separated-values",
     md: "text/markdown",
+    yaml: "application/yaml",
+    yml: "application/yaml",
     markdown: "text/markdown",
     txt: "text/plain",
     json: "application/json",

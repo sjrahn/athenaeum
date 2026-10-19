@@ -3,7 +3,8 @@
 // (matches by container) and derived through html.text@1, the publication harvested from the attestation.
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { attestEpub, parseOpf } from "@ath/engine/formats/epub/attest.ts";
+import { parseOpf } from "@ath/engine/formats/epub/opf.ts";
+import { intrinsicsOf } from "@ath/engine/formats/index.ts";
 
 const FIX = join(import.meta.dir, "fixtures");
 const EPUB = join(FIX, "small.epub");
@@ -20,8 +21,8 @@ describe("epub attest", () => {
     expect(opf.spine).toEqual(["a/b/z.xhtml", "a/x y.xhtml"]);
   });
 
-  test("the fixture attests Dublin Core, the ISBN, the spine and the roster", async () => {
-    const a = await attestEpub(await read(EPUB), "application/epub+zip");
+  test("intrinsics: the Dublin Core, the ISBN, the package, the spine, and media as assets and the rest as parts", async () => {
+    const a = await intrinsicsOf(await read(EPUB), "application/epub+zip");
     expect(a.value).toMatchObject({
       title: "A Small Book",
       creator: "Ada Example",
@@ -29,9 +30,16 @@ describe("epub attest", () => {
       identifier: "00000000-0000-4000-8000-00000000c0de",
       isbn: "9780000000002",
       publisher: "Athenaeum Press",
-      opf: "OEBPS/content.opf",
+      op: "epub.intrinsics@1",
+      package: "OEBPS/content.opf",
       spine: ["OEBPS/text/toc.xhtml", "OEBPS/text/ch1.xhtml", "OEBPS/text/ch2.xhtml"],
     });
-    expect(a.members!.length).toBe(7);
+    expect(a.constituents.length).toBe(7);
+    const kinds = Object.fromEntries(a.constituents.map((c) => [c.path, c.kind]));
+    expect(Object.values(kinds).filter((k) => k === "asset").length).toBe(
+      a.constituents.filter((c) => /^image|^audio|^video/.test(String(c.fields?.mime))).length,
+    );
+    expect(kinds["OEBPS/content.opf"]).toBe("part");
+    expect(kinds.mimetype).toBe("part");
   });
 });

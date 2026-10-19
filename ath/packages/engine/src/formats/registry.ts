@@ -1,26 +1,5 @@
-// registry.ts — derivation ops by `name@version`. An op is a pure function of bytes (and an address) that yields a
-// byte-fact: the attestation of what the bytes are, or the quote surface a term's `derivation` names. Ops never read
-// a layer and never touch the network.
-export interface AttestResult {
-  /** The `attests` value: mime, bytes, and the format's own facts. */
-  value: Record<string, unknown>;
-  /** A container's members: each becomes its own subject. */
-  members?: { path: string; bytes: Uint8Array; blake3?: string /** A file name to sniff by, when the path is not one. */; name?: string }[];
-}
-
-export type Attester = (bytes: Uint8Array, mime: string) => Promise<AttestResult>;
-
-const attesters = new Map<string, Attester>();
-
-/** Register the attester for a mime (exact) or a family (`image/*`). */
-export function registerAttester(mime: string, fn: Attester): void {
-  attesters.set(mime, fn);
-}
-
-export function attesterFor(mime: string): Attester | null {
-  return attesters.get(mime) ?? attesters.get(`${mime.split("/")[0]}/*`) ?? attesters.get("*/*") ?? null;
-}
-
+// registry.ts — surface and hint ops by `name@version` (§10.5, §10.6). An op of one family shares one parse of the
+// bytes with the other ops of that family (§10.5.2); the parse is cached on the artifact by family.
 // ── derivation ops (D-derivation) ───────────────────────────────────────────────────────────────────────────────────
 // The ontology names the op (`derivation: <op>@<v>[ <arg>]`); the registry is the only place an op exists. An op of
 // one family shares one parse of the bytes with the other ops of that family (html.text, html.attr and html.title all
