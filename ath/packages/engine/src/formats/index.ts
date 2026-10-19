@@ -246,4 +246,4 @@ export async function intrinsicsOf(bytes: Uint8Array, mime: string): Promise<Pro
   return { value, constituents, format };
 }
 
-export { formatNamed, formatOf, formats, intrinsicsOp, parseIntrinsicsOp } from "./format.ts";
+export { type Format, formatNamed, formatOf, formats, intrinsicsOp, parseIntrinsicsOp } from "./format.ts";

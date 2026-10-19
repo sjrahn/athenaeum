@@ -14,9 +14,55 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fmt } from "../../../ath/packages/engine/src/address/address.ts";
-import { allPages, detectChrome, isChromeWord, type PageWords, type Word } from "../../../ath/packages/engine/src/formats/pdf/words.ts";
+import { type Box, pointInBox } from "../../../ath/packages/engine/src/address/address.ts";
+import { allPages, type Line, type PageWords, type Word } from "../../../ath/packages/engine/src/formats/pdf/words.ts";
 import { squash } from "../../../ath/packages/engine/src/norm/text.ts";
 import { blake3Hex, short as bodyRev } from "../../../ath/packages/kit/src/hash.ts";
+
+// chrome by repetition, the generator's own heuristic for laying out its pass (the tooling has none: §8.4.6)
+interface ChromeLine {
+  page: number;
+  box: Box;
+  text: string;
+  role: "running-header" | "running-footer" | "page-number";
+}
+
+const CHROME_PAGE_RATIO = 0.4;
+const r4 = (n: number) => Math.round(n * 1e4) / 1e4;
+const mask = (t: string) => t.replace(/\d+/g, "#");
+const r3 = (n: number) => Math.round(n * 1000) / 1000;
+
+/** Chrome by repetition: a line whose digit-masked text and 3-decimal box recur on ≥ max(3, 0.4·pages) pages. */
+function detectChrome(pages: readonly PageWords[]): ChromeLine[] {
+  const seen = new Map<string, { pages: Set<number>; lines: { page: number; line: Line }[] }>();
+  for (const p of pages) {
+    for (const l of p.lines) {
+      if (l.text.length >= 90) continue;
+      const key = `${mask(l.text)}|${r3(l.y)}|${r3(l.x0)}`;
+      const e = seen.get(key) ?? { pages: new Set(), lines: [] };
+      e.pages.add(p.page);
+      e.lines.push({ page: p.page, line: l });
+      seen.set(key, e);
+    }
+  }
+  const threshold = Math.max(3, pages.length * CHROME_PAGE_RATIO);
+  const out: ChromeLine[] = [];
+  for (const e of seen.values()) {
+    if (e.pages.size < threshold) continue;
+    for (const { page, line } of e.lines) {
+      const role = /^(#\s+of\s+#|Page\s+#|#)$/.test(mask(line.text)) ? "page-number" : line.y < 0.5 ? "running-header" : "running-footer";
+      out.push({ page, box: [line.x0, line.y, r4(line.x1 - line.x0), line.h], text: line.text, role });
+    }
+  }
+  return out.sort((a, b) => a.page - b.page || a.box[1] - b.box[1]);
+}
+
+function isChromeWord(chrome: readonly ChromeLine[], page: number, w: Word): boolean {
+  const cx = w.bbox[0] + w.bbox[2] / 2;
+  const cy = w.bbox[1] + w.bbox[3] / 2;
+  return chrome.some((c) => c.page === page && pointInBox(c.box, cx, cy, 0.004));
+}
+
 
 const HERE = dirname(Bun.fileURLToPath(import.meta.url));
 const SYN = join(HERE, "..");

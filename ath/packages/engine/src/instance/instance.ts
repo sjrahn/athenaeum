@@ -195,3 +195,26 @@ export function shortest(hash: string, known: Iterable<string>): string {
   }
   return hash;
 }
+
+/** Every entity name this instance itself has a file for (§14.1), by walking its entities directory. */
+export function ownEntities(i: Instance): string[] {
+  const dir = join(i.root, "graph", "entities");
+  if (!existsSync(dir)) return [];
+  const out: string[] = [];
+  const walk = (d: string) => {
+    for (const n of readdirSync(d, { withFileTypes: true })) {
+      if (n.isDirectory()) walk(join(d, n.name));
+      else if (n.name.endsWith(".jsonl")) out.push(n.name.slice(0, -6));
+    }
+  };
+  walk(dir);
+  return out.sort();
+}
+
+export const entityPath = (i: Instance, name: string): string => {
+  const n = i.config.shard.entities;
+  return join(i.root, "graph", "entities", ...(n ? [name.slice(0, n)] : []), `${name}.jsonl`);
+};
+
+/** Every entity name across the chain. */
+export const entityNames = (i: Instance): string[] => [...new Set(chain(i).flatMap(ownEntities))].sort();

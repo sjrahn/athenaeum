@@ -1,7 +1,7 @@
 // stage.ts — a record's stage, derived and never stored (spec §8.5.3): unread (the projection only), read (readings at
 // some addresses), transcribed (readings attested complete by the latest pass), formed (a tree, attested structure).
 // A structured artifact is at no stage: its parse is its reading and its shape its structure (§8.5.5).
-import { formatOf } from "../formats/format.ts";
+import { formatOf } from "../formats/index.ts";
 import { passOrder, type RecordDoc } from "./document.ts";
 
 export type Stage = "unread" | "read" | "transcribed" | "formed";

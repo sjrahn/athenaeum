@@ -31,7 +31,6 @@ export interface Line {
 }
 
 const LINE_TOLERANCE = 0.004;
-const CHROME_PAGE_RATIO = 0.4;
 const r4 = (n: number) => Math.round(n * 10 ** DECIMALS) / 10 ** DECIMALS;
 
 /** Characters → words and lines for page `index0`. Origin top-left, boxes as fractions of the page. */
@@ -39,19 +38,19 @@ export function pageWords(d: PdfDoc, index0: number): PageWords {
   const m = d.m;
   const page = m.FPDF_LoadPage(d.doc, index0);
   const tp = m.FPDFText_LoadPage(page);
-  // the displayed frame: pdfium's page size is the crop box with the rotation applied; points map into it through
-  // FPDF_PageToDevice at a fine device grid, so a box is normalised in the frame a reader sees
+  // the displayed frame: the crop box (else the media box), the page's rotation applied clockwise in quarter turns;
+  // a point maps into it exactly, normalised 0–1 with the origin top-left
   const width = m.FPDF_GetPageWidthF(page);
   const height = m.FPDF_GetPageHeightF(page);
-  const GRID = 100;
-  const gw = Math.max(1, Math.round(width * GRID));
-  const gh = Math.max(1, Math.round(height * GRID));
   const buf = m.pdfium.wasmExports.malloc(32);
-  const dev = m.pdfium.wasmExports.malloc(8);
-  /** A point in page space → [x, y] in 0–1 of the displayed frame, origin top-left. */
+  const box4 = (get: (p: number, l: number, b: number, r: number, t: number) => boolean) =>
+    get(page, buf, buf + 4, buf + 8, buf + 12) ? [0, 4, 8, 12].map((o) => m.pdfium.getValue(buf + o, "float")) : null;
+  const [cl, cb, cr, ct] = box4(m.FPDFPage_GetCropBox) ?? box4(m.FPDFPage_GetMediaBox) ?? [0, 0, width, height];
+  const rotate = ((m.FPDFPage_GetRotation(page) % 4) + 4) % 4;
   const toFrame = (px: number, py: number): [number, number] => {
-    m.FPDF_PageToDevice(page, 0, 0, gw, gh, 0, px, py, dev, dev + 4); // pdfium adds the page's own /Rotate
-    return [m.pdfium.getValue(dev, "i32") / gw, m.pdfium.getValue(dev + 4, "i32") / gh];
+    const u = (px - cl!) / (cr! - cl! || 1);
+    const v = (ct! - py) / (ct! - cb! || 1);
+    return rotate === 1 ? [1 - v, u] : rotate === 2 ? [1 - u, 1 - v] : rotate === 3 ? [v, 1 - u] : [u, v];
   };
   /** A box in page space (left, bottom, right, top) → [x0, y0, x1, y1] in the frame. */
   const frameBox = (l: number, b: number, r: number, t: number): [number, number, number, number] => {
@@ -131,7 +130,6 @@ export function pageWords(d: PdfDoc, index0: number): PageWords {
     flush();
   } finally {
     m.pdfium.wasmExports.free(buf);
-    m.pdfium.wasmExports.free(dev);
     m.FPDFText_ClosePage(tp);
     m.FPDF_ClosePage(page);
   }
@@ -206,47 +204,6 @@ function splitColumns(words: readonly Word[], box: Box): Word[][] {
 }
 
 export const wordsText = (ws: readonly Word[]): string => ws.map((w) => w.text).join(" ");
-
-export interface ChromeLine {
-  page: number;
-  box: Box;
-  text: string;
-  role: "running-header" | "running-footer" | "page-number";
-}
-
-const mask = (t: string) => t.replace(/\d+/g, "#");
-const r3 = (n: number) => Math.round(n * 1000) / 1000;
-
-/** Chrome by repetition: a line whose digit-masked text and 3-decimal box recur on ≥ max(3, 0.4·pages) pages. */
-export function detectChrome(pages: readonly PageWords[]): ChromeLine[] {
-  const seen = new Map<string, { pages: Set<number>; lines: { page: number; line: Line }[] }>();
-  for (const p of pages) {
-    for (const l of p.lines) {
-      if (l.text.length >= 90) continue;
-      const key = `${mask(l.text)}|${r3(l.y)}|${r3(l.x0)}`;
-      const e = seen.get(key) ?? { pages: new Set(), lines: [] };
-      e.pages.add(p.page);
-      e.lines.push({ page: p.page, line: l });
-      seen.set(key, e);
-    }
-  }
-  const threshold = Math.max(3, pages.length * CHROME_PAGE_RATIO);
-  const out: ChromeLine[] = [];
-  for (const e of seen.values()) {
-    if (e.pages.size < threshold) continue;
-    for (const { page, line } of e.lines) {
-      const role = /^(#\s+of\s+#|Page\s+#|#)$/.test(mask(line.text)) ? "page-number" : line.y < 0.5 ? "running-header" : "running-footer";
-      out.push({ page, box: [line.x0, line.y, r4(line.x1 - line.x0), line.h], text: line.text, role });
-    }
-  }
-  return out.sort((a, b) => a.page - b.page || a.box[1] - b.box[1]);
-}
-
-export function isChromeWord(chrome: readonly ChromeLine[], page: number, w: Word): boolean {
-  const cx = w.bbox[0] + w.bbox[2] / 2;
-  const cy = w.bbox[1] + w.bbox[3] / 2;
-  return chrome.some((c) => c.page === page && pointInBox(c.box, cx, cy, 0.004));
-}
 
 /** Words in a region, banded into lines, in column-aware reading order. */
 export function linesInBox(words: readonly Word[], box: Box): Word[][] {

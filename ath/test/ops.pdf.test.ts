@@ -1,7 +1,7 @@
 // ops.pdf.test.ts — pdf.words@1: words with boxes, lines, words-in-box in reading order, chrome by repetition.
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { allPages, detectChrome, readingOrder, wordsInBox, wordsText } from "@ath/engine/formats/pdf/words.ts";
+import { allPages, readingOrder, wordsInBox, wordsText } from "@ath/engine/formats/pdf/words.ts";
 
 const PY = join(import.meta.dir, "fixtures");
 const read = async (p: string) => new Uint8Array(await Bun.file(p).arrayBuffer());
@@ -35,13 +35,6 @@ describe("pdf.words@1", () => {
     expect(wordsText(readingOrder(mixed, [0, 0, 1, 1]))).toBe("L1 L2 L3 L4 R1 R2 R3 R4");
   });
 
-  test("chrome by repetition: the running header on every page, never the one-off heading", async () => {
-    const pages = await allPages(await read(join(PY, "geometry_pages.pdf")));
-    const chrome = detectChrome(pages);
-    expect(chrome.length).toBe(3);
-    expect(chrome.every((c) => c.text === "RUNNING HEADER" && c.role === "running-header")).toBe(true);
-    expect(chrome.map((c) => c.page)).toEqual([1, 2, 3]);
-  });
   test("the displayed frame: a rotated page, a crop box; text drawn invisible contributes nothing (§7.3.1, §10.6.3)", async () => {
     const pages = await allPages(
       new Uint8Array(await Bun.file(join(import.meta.dir, "..", "..", "testdata", "synthetic", "frames.pdf")).arrayBuffer()),
@@ -56,7 +49,7 @@ describe("pdf.words@1", () => {
     // rotated 90° clockwise: the page's left edge is the top, its top the right; the word runs down the frame
     expect(pages[1]!.words).toEqual([{ text: "Turned", bbox: [0.8746, 0.1672, 0.022, 0.1239] }]);
     // cropped to [100 100 500 700]: x from the crop box's left, y from its top
-    expect(pages[2]!.words).toEqual([{ text: "Cropped", bbox: [0.2527, 0.1372, 0.224, 0.0377] }]);
+    expect(pages[2]!.words).toEqual([{ text: "Cropped", bbox: [0.2526, 0.1372, 0.224, 0.0377] }]);
     expect(pages[3]!.words.map((w) => w.text)).toEqual(["Shown"]);
   });
 });

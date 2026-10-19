@@ -14,7 +14,8 @@ import {
   parseContentType,
   parseMessage,
 } from "@ath/engine/formats/mail/parse.ts";
-import { blocks, spanText, textAt } from "@ath/engine/formats/mail/text.ts";
+import { spanText, textAt } from "@ath/engine/formats/mail/text.ts";
+import { select, selectParse } from "@ath/engine/select/select.ts";
 import { TESTDATA } from "./harness.ts";
 
 const FIX = join(import.meta.dir, "fixtures");
@@ -51,7 +52,6 @@ describe("rfc822 parse", () => {
     expect(utf8.decode(bytes.subarray(nested.bodyStart, nested.bodyStart + 40))).toBe("Message-ID: <synthetic-nested-0001@athen");
     const body = m.parts[0]!;
     expect(spanText(m, body, body.bodyStart, body.bodyEnd).startsWith("This is the reply-text body")).toBe(true);
-    expect(blocks(m, body).map((b) => b.kind)).toEqual(["paragraph"]);
     const a = await intrinsicsOf(bytes, "message/rfc822");
     expect(a.value).toMatchObject({
       op: "rfc822.intrinsics@1",
@@ -79,10 +79,11 @@ describe("rfc822 parse", () => {
     expect(utf8.decode(ms[0]!.bytes)).toContain("\r\nFrom here it looks fine.\r\n");
     expect(utf8.decode(unstuff(new TextEncoder().encode(">>From x\n>From y\nFrom z\n")))).toBe(">From x\nFrom y\nFrom z\n");
     const m2 = parseMessage(ms[1]!.bytes);
-    expect(blocks(m2, m2.root).map((b) => b.kind)).toEqual(["paragraph", "quote", "signature"]);
-    const [p, q, s] = blocks(m2, m2.root);
-    expect(textAt(m2, p!.start, p!.end)).toBe("Café au lait.");
-    expect(textAt(m2, q!.start, q!.end)).toBe("> Hello.");
-    expect(textAt(m2, s!.start, s!.end)).toBe("--\nB.");
+    // a quote and a signature are a shape's line rules over the decoded body, not the tooling's kinds
+    const sp = selectParse(ms[1]!.bytes, "message/rfc822")!;
+    expect(select(sp, { blank: true }).map((n) => n.text)).toEqual(["Café au lait. ", "> Hello.", "-- \r\nB."]);
+    expect(select(sp, { lines: "^>" }).map((n) => n.text)).toEqual(["> Hello."]);
+    expect(select(sp, { from: "^-- $" }).map((n) => n.text)).toEqual(["-- \r\nB.\r\n\n"]);
+    expect(textAt(m2, m2.root.bodyStart, m2.root.bodyEnd)).toContain("> Hello.");
   });
 });
