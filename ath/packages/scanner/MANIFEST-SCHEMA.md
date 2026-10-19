@@ -83,7 +83,8 @@ PRAGMA user_version = 3;
 CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 -- keys: 'schema'='3', 'scanner'=<version that created this state.sqlite>,
 --       'root'=<absolute scanned root, informational — paths are root-relative>,
---       'created_at'=<ISO-8601 UTC, set once at creation, never rewritten>
+--       'created_at'=<ISO-8601 UTC, set once at creation, never rewritten>,
+--       'host'=<the scanning host's name, set once at creation; absent from older manifests>
 
 CREATE TABLE identities (
   dev INTEGER NOT NULL, ino INTEGER NOT NULL,
@@ -270,6 +271,10 @@ tree is a normal complete generation, not a special case.
 
 ## Changelog
 
+- **Informational addition** (2026-10-18) — `meta` gained `host`, the scanning host's name, written
+  once at creation. Additive — no `SCHEMA_VERSION` change; a reader of an older manifest falls back
+  to its own host name. It is the `host` of the per-file testimony (spec §18.5.2) that
+  `ath-scan <root> --testimony <path>` prints and `ath ingest` keeps for a file of an observed tree.
 - **Informational addition** (2026-08-18) — `ScanSummary` (`generations.summary_json`) gained
   `directReads` and `directFallbacks` fields: counts from `--byte-path unraid` (see README.md's
   "unRAID direct byte path"), the number of files hashed via a resolved backing disk path vs.

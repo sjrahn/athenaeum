@@ -19,7 +19,7 @@ import { effectiveRules } from "@ath/engine/vocab/rules.ts";
 import { pin } from "@ath/engine/vocab/terms.ts";
 import type { KitCtx } from "@ath/kit/types.ts";
 import { resolver } from "./artifacts.ts";
-import { custodyIndex, localStore } from "./context.ts";
+import { custodyIndex } from "./context.ts";
 import { viewer } from "./view.ts";
 
 export interface Graph {
@@ -37,8 +37,7 @@ export interface Graph {
 
 export async function openGraph(ctx: KitCtx, inst: Instance): Promise<Graph> {
   const index = custodyIndex(ctx);
-  const store = localStore(ctx);
-  const res = resolver(inst, store, index);
+  const res = resolver(ctx, inst, index);
   const vw = viewer(inst, res.resolve);
   const v = vw.vocab.vocab;
   const held = holdings(inst);
@@ -54,7 +53,10 @@ export async function openGraph(ctx: KitCtx, inst: Instance): Promise<Graph> {
               (r) => r.bytes,
               () => null,
             )
-          : store.get("testimony", h).catch(() => null);
+          : res.resolve(h, "testimony").then(
+              (r) => r.bytes,
+              () => null,
+            );
       bytesMemo.set(k, p);
     }
     return p;

@@ -15,6 +15,7 @@ import { blake3Factory } from "./hasher.ts";
 import { Logger, type LogLevel } from "./log.ts";
 import { compact, DEFAULT_CONCURRENCY, DEFAULT_NATIVE_CONCURRENCY, DEFAULT_NATIVE_THRESHOLD, formatSummary, scan } from "./scanner.ts";
 import { DEFAULT_IGNORE_PATTERNS, MANIFEST_DIRNAME, MANIFEST_FILENAME, SCANNER_VERSION, SCHEMA_VERSION } from "./schema.ts";
+import { fileTestimony, observationOf } from "./testimony.ts";
 
 const HELP = `ath-scan ${SCANNER_VERSION} — residence scanner (manifest schema v${SCHEMA_VERSION})
 
@@ -22,6 +23,7 @@ USAGE
   ath-scan <root> [options]           incremental scan (first run on a root = cold full pass)
   ath-scan <root> --bench             benchmark hash vs read throughput; write no manifest
   ath-scan <root> --compact           fold the journal into a fresh snapshot
+  ath-scan <root> --testimony <path>  print what the published manifest observed of one file, as testimony
 
 OPTIONS
   --full                 force a re-hash of every file (ignore the stat cache AND all seeding —
@@ -132,6 +134,7 @@ const OPTIONS = {
   concurrency: { type: "string" },
   bench: { type: "boolean", default: false },
   compact: { type: "boolean", default: false },
+  testimony: { type: "string" },
   "manifest-dir": { type: "string" },
   "seed-from": { type: "string", multiple: true },
   b3sum: { type: "string" },
@@ -221,6 +224,13 @@ async function main(): Promise<number> {
 
   if (values.compact) {
     await compact(root, manifestDir, log);
+    return 0;
+  }
+
+  if (values.testimony !== undefined) {
+    const o = observationOf(manifestDir, values.testimony);
+    if (!o) die(`the published manifest lists no path ${values.testimony}`);
+    process.stdout.write(fileTestimony(o));
     return 0;
   }
 

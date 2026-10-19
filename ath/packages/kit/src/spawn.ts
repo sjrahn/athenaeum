@@ -17,12 +17,14 @@ export interface RunResult {
 /** Run a local binary to completion. A missing binary is EXTERNAL (71), so is a non-zero exit unless `allowFail`. */
 export function runLocal(argv: readonly string[], o: { stdin?: Uint8Array; allowFail?: boolean; cwd?: string } = {}): RunResult {
   const bin = argv[0]!;
-  if (!Bun.which(bin)) throw new AthError("EXTERNAL", `${bin} is not on PATH`);
-  const r = Bun.spawnSync([...argv], {
+  const exe = Bun.which(bin, { PATH: process.env.PATH ?? "" });
+  if (!exe) throw new AthError("EXTERNAL", `${bin} is not on PATH`);
+  const r = Bun.spawnSync([exe, ...argv.slice(1)], {
     stdin: o.stdin ? new Blob([o.stdin as unknown as ArrayBuffer]) : undefined,
     stdout: "pipe",
     stderr: "pipe",
     cwd: o.cwd,
+    env: process.env,
   });
   const res: RunResult = { code: r.exitCode, stdout: new Uint8Array(r.stdout), stderr: r.stderr.toString() };
   if (r.exitCode !== 0 && !o.allowFail)

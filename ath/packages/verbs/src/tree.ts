@@ -11,7 +11,7 @@ import { byDesignators, byPosition, type TreeScope } from "@ath/engine/structure
 import { defineCommand } from "@ath/kit/define.ts";
 import { AthError } from "@ath/kit/errors.ts";
 import { resolver } from "./artifacts.ts";
-import { custodyIndex, instanceOf, localStore } from "./context.ts";
+import { custodyIndex, instanceOf } from "./context.ts";
 import { viewer } from "./view.ts";
 
 const row = z.object({
@@ -61,7 +61,7 @@ export const treeCommand = defineCommand({
     const inst = instanceOf(ctx);
     const index = custodyIndex(ctx);
     try {
-      const vw = viewer(inst, resolver(inst, localStore(ctx), index).resolve);
+      const vw = viewer(inst, resolver(ctx, inst, index).resolve);
       const hash = resolvePrefix(a.subject, new Set([...holdings(inst).keys(), ...vw.containers.keys()]));
       const view = await vw.view(hash);
       const tree: TreeScope[] = view.tree.kind === "stored" ? (view.tree.scopes as Scope[]) : (view.tree.scopes as DScope[]).map(flat);

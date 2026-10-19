@@ -1,0 +1,64 @@
+#!/usr/bin/env bun
+// A stand-in for rclone in the custody tests: a remote `fake:<dir>` is that directory. It answers the commands the
+// rclone driver uses — lsjson, cat, rcat, moveto, deletefile, about — as rclone does, exiting 3 where rclone finds
+// nothing. FAKE_RCLONE_DOWN=1 makes every remote unreachable.
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
+
+const [cmd, ...rest] = process.argv.slice(2);
+const args = rest.filter((a) => !a.startsWith("-"));
+const local = (r: string) => {
+  const m = /^fake:(.*)$/.exec(r);
+  if (!m) {
+    process.stderr.write(`not a fake remote: ${r}\n`);
+    process.exit(2);
+  }
+  return m[1]!;
+};
+if (process.env.FAKE_RCLONE_DOWN === "1") {
+  process.stderr.write("remote unreachable\n");
+  process.exit(1);
+}
+const miss = () => {
+  process.stderr.write("directory not found\n");
+  process.exit(3);
+};
+const walk = (d: string, base: string, out: { Path: string; Name: string; Size: number }[]) => {
+  for (const n of readdirSync(d, { withFileTypes: true })) {
+    const p = join(d, n.name);
+    if (n.isDirectory()) walk(p, base, out);
+    else out.push({ Path: relative(base, p), Name: n.name, Size: statSync(p).size });
+  }
+  return out;
+};
+const p = args[0] ? local(args[0]) : "";
+switch (cmd) {
+  case "lsjson":
+    if (!existsSync(p)) miss();
+    process.stdout.write(JSON.stringify(statSync(p).isDirectory() ? walk(p, p, []) : [{ Path: p, Name: p.split("/").pop(), Size: statSync(p).size }]));
+    break;
+  case "cat":
+    if (!existsSync(p)) miss();
+    process.stdout.write(readFileSync(p));
+    break;
+  case "rcat":
+    mkdirSync(dirname(p), { recursive: true });
+    writeFileSync(p, new Uint8Array(await Bun.stdin.arrayBuffer()));
+    break;
+  case "moveto": {
+    const to = local(args[1]!);
+    mkdirSync(dirname(to), { recursive: true });
+    renameSync(p, to);
+    break;
+  }
+  case "deletefile":
+    if (!existsSync(p)) miss();
+    rmSync(p);
+    break;
+  case "about":
+    process.stdout.write(JSON.stringify({ used: 0, free: 1e12 }));
+    break;
+  default:
+    process.stderr.write(`unknown command ${cmd}\n`);
+    process.exit(2);
+}

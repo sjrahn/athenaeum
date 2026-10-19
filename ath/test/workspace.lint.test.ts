@@ -12,7 +12,7 @@ const ALLOWED: Record<string, string[]> = {
   engine: ["kit", "contracts"],
   custody: ["kit", "contracts"],
   scanner: ["kit"],
-  verbs: ["kit", "contracts", "engine", "custody"],
+  verbs: ["kit", "contracts", "engine", "custody", "scanner"],
   daemon: ["kit", "contracts"],
   cli: ["kit", "contracts", "verbs", "daemon"],
 };

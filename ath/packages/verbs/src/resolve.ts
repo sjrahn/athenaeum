@@ -16,7 +16,7 @@ import { defineCommand } from "@ath/kit/define.ts";
 import { AthError } from "@ath/kit/errors.ts";
 import { writeAtomic } from "@ath/kit/fs.ts";
 import { resolver } from "./artifacts.ts";
-import { custodyIndex, instanceOf, localStore } from "./context.ts";
+import { custodyIndex, instanceOf } from "./context.ts";
 
 const contract = defineContract({
   key: "resolve",
@@ -59,7 +59,7 @@ export const resolveCommand = defineCommand({
     let address = parseAddress(m[2] ?? "whole");
     const index = custodyIndex(ctx);
     try {
-      const { resolve } = resolver(inst, localStore(ctx), index);
+      const { resolve } = resolver(ctx, inst, index);
       let got = await resolve(hash);
       // an asset never said anything about has no record: its intrinsics are the format's, sniffed by the name its
       // container gives it (§10.1.3)

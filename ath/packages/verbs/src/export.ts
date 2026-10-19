@@ -20,7 +20,7 @@ import { parseLines } from "@ath/kit/canonical.ts";
 import { defineCommand } from "@ath/kit/define.ts";
 import { AthError } from "@ath/kit/errors.ts";
 import { resolver } from "./artifacts.ts";
-import { custodyIndex, instanceOf, localStore } from "./context.ts";
+import { custodyIndex, instanceOf } from "./context.ts";
 import { viewer } from "./view.ts";
 
 export const exportMarkdown = defineCommand({
@@ -39,7 +39,7 @@ export const exportMarkdown = defineCommand({
     const inst = instanceOf(ctx);
     const index = custodyIndex(ctx);
     try {
-      const res = resolver(inst, localStore(ctx), index);
+      const res = resolver(ctx, inst, index);
       const vw = viewer(inst, res.resolve);
       const hash = resolvePrefix(a.subject, new Set([...holdings(inst).keys(), ...vw.containers.keys()]));
       const view = await vw.view(hash);

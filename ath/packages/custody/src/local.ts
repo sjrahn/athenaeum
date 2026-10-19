@@ -2,7 +2,7 @@
 // `artifacts/` and `testimony/` laid out by hash, its id written into the store itself so the store is recognised
 // wherever it is. A put writes under a temporary name, verifies the BLAKE3 as the bytes are written, and renames
 // into place (§18.3.1); a read verifies again (§18.1). The local store holds without persisting: it is evictable.
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
+import { constants, copyFileSync, existsSync, linkSync, mkdirSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { AthError } from "@ath/kit/errors.ts";
 import { fsyncDir, writeAtomic, writeTemp } from "@ath/kit/fs.ts";
@@ -20,6 +20,16 @@ export interface LocalStore {
   put(tree: Tree, hash: string, bytes: Uint8Array): Promise<boolean>;
   /** The bytes, verified against their hash, or null when the store does not hold them. */
   get(tree: Tree, hash: string): Promise<Uint8Array | null>;
+  /** Place a file of an observed tree by the first link method the filesystem supports, else by copy (§18.5.3); the
+   * placed file is verified before it takes its name. Returns how, or `present` when the store already holds it. */
+  link(
+    tree: Tree,
+    hash: string,
+    src: string,
+    methods: readonly ("reflink" | "hardlink")[],
+  ): Promise<"reflink" | "hardlink" | "copy" | "present">;
+  /** Remove a copy (eviction, or bytes found not to be their hash). */
+  remove(tree: Tree, hash: string): void;
 }
 
 const ID_FILE = "store.yaml";
@@ -58,6 +68,33 @@ export function openLocalStore(dir: string): LocalStore {
       fsyncDir(dirname(p));
       return true;
     },
+    async link(tree, hash, src, methods) {
+      const p = path(tree, hash);
+      if (existsSync(p)) return "present";
+      mkdirSync(dirname(p), { recursive: true });
+      const tmp = `${p}.${process.pid}.tmp`;
+      let how: "reflink" | "hardlink" | "copy" = "copy";
+      for (const m of methods) {
+        try {
+          if (m === "reflink") copyFileSync(src, tmp, constants.COPYFILE_FICLONE_FORCE);
+          else linkSync(src, tmp);
+          how = m;
+          break;
+        } catch {
+          rmSync(tmp, { force: true });
+        }
+      }
+      // a hardlink shares the observed file's inode: its mode is the observed file's, and is left alone
+      if (how === "copy") copyFileSync(src, tmp);
+      if ((await blake3Hex(new Uint8Array(readFileSync(tmp)))) !== hash) {
+        rmSync(tmp, { force: true });
+        throw new AthError("CONFLICT", `${src} no longer hashes to ${hash}`);
+      }
+      renameSync(tmp, p);
+      fsyncDir(dirname(p));
+      return how;
+    },
+    remove: (tree, hash) => rmSync(path(tree, hash), { force: true }),
     async get(tree, hash) {
       const p = path(tree, hash);
       if (!existsSync(p)) return null;

@@ -1,6 +1,16 @@
 // index.ts — every verb of spec §19.5, registered by group. A verb is a contract over engine and custody functions;
 // nothing here decides what the system means.
 import type { Registry } from "@ath/kit/registry.ts";
+import {
+  custodyInventory,
+  custodyPlan,
+  custodyReconcile,
+  custodyRemove,
+  custodyReport,
+  custodyStatus,
+  custodyVerify,
+  custodyWhere,
+} from "./custody.ts";
 import { entityMerge, entityRename, entitySplit } from "./entity.ts";
 import { exportGraph, exportMarkdown } from "./export.ts";
 import { ingestCommand } from "./ingest.ts";
@@ -12,6 +22,7 @@ import { holdingsCommand, provenanceCommand, recordCommand, showCommand, sortCom
 import { resolveCommand } from "./resolve.ts";
 import { relevantCommand, ruleAccept, ruleDecline, ruleDefer, ruleDistrust, ruleRevoke, ruleSeek, rulingsCommand } from "./rule.ts";
 import { serveCommand } from "./serve.ts";
+import { storeAdd, storeList } from "./store.ts";
 import { treeCommand } from "./tree.ts";
 import { checkCommand, verifyCommand } from "./verify.ts";
 import { vocabAdd, vocabCheck, vocabEdit, vocabList, vocabPin, vocabRemove, vocabRules, vocabShow } from "./vocab.ts";
@@ -43,6 +54,20 @@ export function registerVerbs(r: Registry): void {
   for (const c of [exportMarkdown, exportGraph, serveCommand(r)]) r.register(c);
   r.registerGroup("vocab", "the forms, shapes, kinds and properties");
   for (const c of [vocabList, vocabShow, vocabRules, vocabPin, vocabCheck, vocabAdd, vocabEdit, vocabRemove]) r.register(c);
+  r.registerGroup("store", "the stores the instance declares");
+  for (const c of [storeAdd, storeList]) r.register(c);
+  r.registerGroup("custody", "where the holdings reside, and keeping them as the policies say");
+  for (const c of [
+    custodyInventory,
+    custodyVerify,
+    custodyStatus,
+    custodyPlan,
+    custodyReconcile,
+    custodyWhere,
+    custodyReport,
+    custodyRemove,
+  ])
+    r.register(c);
   r.register(whoamiCommand);
   r.register(logCommand);
 }

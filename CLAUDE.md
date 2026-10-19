@@ -26,7 +26,8 @@ gaps still owed.
   records, vocabularies, passes, the graph) and `custody` (stores, the index,
   reconcile) ← `verbs` (§19.5) ← `cli`; `daemon` (`athd`, kit and contracts
   only, handed the registry); `scanner` (the residence scanner, spec §18.5,
-  its manifest its own versioned contract: `packages/scanner/MANIFEST-SCHEMA.md`).
+  its manifest its own versioned contract: `packages/scanner/MANIFEST-SCHEMA.md`;
+  `verbs` takes its per-file testimony from it).
   `test/workspace.lint.test.ts` pins the package graph. No network to
   acquire: bytes are ingested from disk; producers live outside.
 - `testdata/` — the regression library: `ontology/` (the regression ontology a

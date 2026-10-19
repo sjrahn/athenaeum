@@ -1,6 +1,6 @@
 // resolve.ts — resolution (spec §18.8): a BLAKE3 resolves through whichever route holds it, cheapest first — the
-// local store, the other stores by declared cost, the constituent route (the container resolved, then the constituent
-// extracted) — and every read is verified (§18.1). The first route whose bytes verify wins; if none does, resolution
+// local store, the other managed stores by declared cost, observed trees, the constituent route (the container
+// resolved, then the constituent extracted), then the stores of every base — and every read is verified (§18.1). The first route whose bytes verify wins; if none does, resolution
 // fails. Resolution reports the route it took, nested through containers, and every other residence the index knows.
 // Custody knows no format: the containers of a hash and the extraction of a constituent are handed in.
 import { AthError } from "@ath/kit/errors.ts";
@@ -16,8 +16,10 @@ export interface Readable {
 }
 
 export interface ResolveDeps {
-  /** The stores to try, cheapest first. */
+  /** The stores to try before the constituent route, cheapest first. */
   stores: Readable[];
+  /** The stores to try after it: the bases' (§18.8.1). */
+  later?: Readable[];
   /** The held containers that list `hash`, with its path in each. */
   containersOf(hash: string): { container: string; path: string }[];
   /** A constituent's bytes, decoded from its container's bytes; null when the container has no such path. */
@@ -52,22 +54,27 @@ export async function resolveHash(
     (deps.index?.copies(hash) ?? [])
       .filter((c) => c.store !== taken)
       .map((c) => ({ store: c.store, state: c.state, verified_at: c.verified_at }));
-  for (const s of deps.stores) {
-    let b: Uint8Array | null;
-    try {
-      b = await s.get(tree, hash);
-    } catch (e) {
-      tried.push(`${s.name}: ${(e as Error).message}`);
-      continue;
+  const fromStores = async (stores: readonly Readable[]): Promise<Resolved | null> => {
+    for (const s of stores) {
+      let b: Uint8Array | null;
+      try {
+        b = await s.get(tree, hash);
+      } catch (e) {
+        tried.push(`${s.name}: ${(e as Error).message}`);
+        continue;
+      }
+      if (!b) continue;
+      if ((await blake3Hex(b)) !== hash) {
+        tried.push(`${s.name}: its copy does not verify`);
+        continue;
+      }
+      return { bytes: b, trace: { hash, route: "store", store: { id: s.id, name: s.name, tags: s.tags }, also: also(s.id) } };
     }
-    if (!b) continue;
-    if ((await blake3Hex(b)) !== hash) {
-      tried.push(`${s.name}: its copy does not verify`);
-      continue;
-    }
-    return { bytes: b, trace: { hash, route: "store", store: { id: s.id, name: s.name, tags: s.tags }, also: also(s.id) } };
-  }
-  for (const c of deps.containersOf(hash)) {
+    return null;
+  };
+  const direct = await fromStores(deps.stores);
+  if (direct) return direct;
+  for (const c of tree === "artifacts" ? deps.containersOf(hash) : []) {
     if (seen.has(c.container)) continue;
     let outer: Resolved;
     try {
@@ -83,6 +90,8 @@ export async function resolveHash(
     }
     return { bytes: b, trace: { hash, route: "constituent", within: { path: c.path, container: outer.trace }, also: also() } };
   }
+  const later = await fromStores(deps.later ?? []);
+  if (later) return later;
   throw new AthError("NOT_FOUND", `no route resolves ${hash}${tried.length ? `:\n  ${tried.join("\n  ")}` : ""}`, { tried });
 }
 

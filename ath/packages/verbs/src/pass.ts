@@ -24,7 +24,7 @@ import { AthError } from "@ath/kit/errors.ts";
 import { blake3Hex } from "@ath/kit/hash.ts";
 import type { KitCtx } from "@ath/kit/types.ts";
 import { resolver } from "./artifacts.ts";
-import { custodyIndex, instanceOf, localStore } from "./context.ts";
+import { custodyIndex, instanceOf } from "./context.ts";
 import { entityFileHash, kindsOfEntity, nextEntityPass, signEntityLines, writeEntity } from "./entity-pass.ts";
 import { openGraph } from "./graph.ts";
 import { viewer } from "./view.ts";
@@ -40,7 +40,7 @@ function stateOf(ctx: KitCtx): string {
 async function subjectOf(ctx: KitCtx, inst: Instance, subject: string): Promise<string> {
   const index = custodyIndex(ctx);
   try {
-    const vw = viewer(inst, resolver(inst, localStore(ctx), index).resolve);
+    const vw = viewer(inst, resolver(ctx, inst, index).resolve);
     return resolvePrefix(subject, new Set([...holdings(inst).keys(), ...vw.containers.keys()]));
   } finally {
     index.close();
@@ -113,7 +113,7 @@ export const passOpen = defineCommand({
       const index = custodyIndex(ctx);
       let vocab: string;
       try {
-        vocab = await pin(viewer(inst, resolver(inst, localStore(ctx), index).resolve).vocab.vocab, "graph");
+        vocab = await pin(viewer(inst, resolver(ctx, inst, index).resolve).vocab.vocab, "graph");
       } finally {
         index.close();
       }
@@ -139,7 +139,7 @@ export const passOpen = defineCommand({
     const index = custodyIndex(ctx);
     let vocab: string;
     try {
-      vocab = await pin(viewer(inst, resolver(inst, localStore(ctx), index).resolve).vocab.vocab, "corpus");
+      vocab = await pin(viewer(inst, resolver(ctx, inst, index).resolve).vocab.vocab, "corpus");
     } finally {
       index.close();
     }
@@ -357,7 +357,7 @@ export const passSign = defineCommand({
       throw new AthError("CONFLICT", `the record changed since ${a.id} was opened; abandon it and open a pass against the current record`);
     const index = custodyIndex(ctx);
     try {
-      const res = resolver(inst, localStore(ctx), index);
+      const res = resolver(ctx, inst, index);
       const vw = viewer(inst, res.resolve);
       const view = await vw.view(hash);
       const { record, problems } = applyStaged(ownRecord(inst, hash), view.intrinsics, s, verify, ctx.wall.date());
@@ -522,7 +522,7 @@ export const readingsCommand = defineCommand({
     const hash = await subjectOf(ctx, inst, a.subject);
     const index = custodyIndex(ctx);
     try {
-      const res = resolver(inst, localStore(ctx), index);
+      const res = resolver(ctx, inst, index);
       const vw = viewer(inst, res.resolve);
       const view = await vw.view(hash);
       if (!view.record) throw new AthError("NOT_FOUND", `${hash} has no record`);

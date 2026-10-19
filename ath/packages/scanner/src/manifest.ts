@@ -14,6 +14,7 @@
 
 import { Database } from "bun:sqlite";
 import { copyFile, mkdir, open, rename, rm, stat } from "node:fs/promises";
+import { hostname } from "node:os";
 import { join } from "node:path";
 import type { Logger } from "./log.ts";
 import {
@@ -264,6 +265,7 @@ export class Manifest {
       insMeta.run("scanner", SCANNER_VERSION);
       insMeta.run("root", rootAbs);
       insMeta.run("created_at", now);
+      insMeta.run("host", hostname());
     } else {
       const uv = db.query<{ user_version: bigint }, []>("PRAGMA user_version").get();
       const found = uv ? Number(uv.user_version) : -1;
