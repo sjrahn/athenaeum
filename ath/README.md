@@ -1,39 +1,41 @@
 # ath — the specification's reference implementation
 
-Bun/TypeScript. Implements `spec/athenaeum.md` (conformance and the gaps still owed: `CONFORMANCE.md`) on a
-layer of sorted JSONL claim files: `ontology/`, `corpus/`, `ledger/`. One grammar, intrinsic addresses, derived
-everything. No network: `ath` ingests bytes already on disk and may shell out to local binaries (tesseract,
-pdftotext); producers live outside it.
+A Bun/TypeScript workspace implementing `spec/athenaeum.md` (what conforms and what is owed: `CONFORMANCE.md`). The
+`ath` CLI, the `athd` host daemon and the residence scanner share one registry of verbs, one envelope and one set of
+gates, on the foundations of the `ita` CLI. Nothing here acquires: artifacts and testimony are handed in from disk.
 
 ```
 bun install
-bun run src/main.ts whoami            # or: bun run build && dist/ath whoami
+bin/ath whoami                        # or: bun run build && dist/ath whoami
 ```
 
-## Layout
+## Packages
 
-- `contracts/` — one declaration per command: args (zod), argv shape, output (zod). Help and `--schema` derive from it.
-- `src/kit/` — the dispatcher and nothing Athenaeum-specific: registry (longest-prefix word resolution), caller
-  profiles (owner at a terminal · agent under a Claude session or off-terminal · reader), tiers (read · write · admin),
-  gates, the `--json` envelope, closed error codes, events, history, locks. Modelled on the `ita` CLI's kit.
-- `src/engine/` — the contract: lines, addresses, layers, ontology, derivation ops, trees, lints, L7, verify, harvest,
-  export, serve. Never imports the kit except its error type.
-- `src/commands/` — thin: parse → engine → data (+ a text renderer).
-- `test/` — `bun test`; `test/harness.ts` runs the CLI in-process; the regression set runs over committed synthetic fixtures.
+| package | holds | may import |
+|---|---|---|
+| `contracts` | `defineContract` (zod args, argv shape, zod data); help and `--schema` derive from it | zod |
+| `kit` | the dispatcher, registry, callers and profiles (from the process tree), tiers and gates, the envelope and exit codes, events, locks, history and the journal in host state, XDG host paths, the canonical line, BLAKE3, atomic writes | contracts |
+| `engine` | what an instance is: formats (sniffing, intrinsics, constituents, surfaces, hints), addresses, records, testimony, vocabularies, passes, the graph, checks, export | kit, contracts |
+| `custody` | stores and drivers, the host index, policies, reconcile, resolution | kit, contracts |
+| `scanner` | the residence scanner (`ath-scan`): an observed tree's manifest, its own versioned contract (`MANIFEST-SCHEMA.md`) | kit |
+| `verbs` | every verb of §19.5: a contract over engine and custody functions | kit, contracts, engine, custody |
+| `daemon` | `athd`: the verbs over a unix socket, the custody schedule; handed the registry | kit, contracts |
+| `cli` | `main.ts`: the registry and the real environment | kit, contracts, verbs, daemon |
 
-## A layer
+`test/workspace.lint.test.ts` pins the graph. Imports between packages go through `@ath/<package>/<path>`.
 
-`ath layer init <dir> [--extends <foundation>]` writes `athenaeum.yaml` (`successor: true`, `name`, `layer: foundation|extension`,
-`extends`, `tier`) and the three trees. Subjects are files: `ontology/<term>.claims.jsonl`, `corpus/<blake3>.claims.jsonl`
-(+ `.owner.jsonl`), `ledger/<slug>.claims.jsonl`; bytes live in `corpus/bytes/<ab>/<blake3>` (gitignored). A subject's
-view is the union of its files down the chain; writes go to the top layer; a corpus identity a lower layer holds is
-never written above it. `testdata/ontology/` carries the regression ontology a foundation starts from.
+## Host state
+
+Nothing the tool keeps for itself is in a repository (§5.6): the local store under `$XDG_DATA_HOME/athenaeum/`, the
+custody index and each instance's staging, locks, journal and history under `$XDG_STATE_HOME/athenaeum/`, the access
+and host files under `$XDG_CONFIG_HOME/athenaeum/`, the daemon's socket under `$XDG_RUNTIME_DIR/athenaeum/`.
 
 ## Conventions
 
-Global flags come before the command's words: `ath --json --root PATH --profile P --now ISO <words> [args]`.
-Exit codes: 0 ok · 1 a verdict · 64 usage · 66 not found · 70 internal · 71 external tool · 73 refused write ·
-75 busy · 77 denied · 78 config. A verdict (lint errors, a failed verify) is an ok envelope with `exit_code: 1`.
-An admin command confirms at a terminal and never runs under `--json`.
+Global flags come before the verb's words: `ath --json --root PATH --profile P --now ISO <words> [args]`. Exit codes:
+0 ok · 1 a verdict · 64 usage · 66 not found · 69 the daemon is not running · 70 internal · 71 external tool · 73 a
+refused write · 75 busy · 77 denied · 78 config. A verdict is an ok envelope with `exit_code: 1`. An admin verb is
+confirmed at a terminal and never runs under `--json`. Every instant is whole-second UTC; `--now` moves only what a
+verb reports, never a receipt, a pass, a ruling or a removal.
 
-Gates: `bun run check` (typecheck, biome, tests); `bun run build && dist/ath whoami`.
+Gates: `bun run check` (tsc, biome, tests; run with `TMPDIR` off a small tmpfs); `bun run build && dist/ath whoami`.

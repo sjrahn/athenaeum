@@ -1,12 +1,13 @@
 // kit.dispatch.test.ts — runCli end to end over a small fake registry: envelope, verdicts, usage, gates, help, schema.
 import { describe, expect, test } from "bun:test";
-import { writeFileSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { defineContract, z } from "../contracts/index.ts";
-import { defineCommand } from "../src/kit/define.ts";
-import { AthError } from "../src/kit/errors.ts";
-import { readHistory } from "../src/kit/history.ts";
-import { createRegistry } from "../src/kit/registry.ts";
+import { defineContract, z } from "@ath/contracts";
+import { defineCommand } from "@ath/kit/define.ts";
+import { AthError } from "@ath/kit/errors.ts";
+import { readHistory } from "@ath/kit/history.ts";
+import { createRegistry } from "@ath/kit/registry.ts";
+import { hostPaths, instanceState } from "@ath/kit/xdg.ts";
 import { ath, scratch } from "./harness.ts";
 
 function fakeRegistry() {
@@ -37,7 +38,7 @@ function fakeRegistry() {
   );
   r.register(
     defineCommand({
-      meta: { summary: "writes", tier: "write", mutating: true, locks: ["corpus"] },
+      meta: { summary: "writes", tier: "write", mutating: true, locks: ["repository"] },
       contract: defineContract({ key: "greet-write", args: z.object({}), argv: {}, data: z.object({ wrote: z.boolean() }) }),
       run: () => ({ data: { wrote: true } }),
     }),
@@ -142,16 +143,21 @@ describe("dispatch", () => {
     expect(underJson.code).toBe(77);
   });
 
-  test("locks need a root; a write with a root takes and releases its lock, and history records it", async () => {
+  test("locks need an instance; a write takes and releases its lock in host state, and history records it there", async () => {
     const noRoot = await ath(["greet", "write"], { registry: reg, env: { ATH_ACTOR: "t" }, cwd: scratch() });
     expect(noRoot.code).toBe(78);
     const root = scratch();
     writeFileSync(join(root, "athenaeum.yaml"), "name: t\n");
+    expect((await ath(["greet", "write"], { registry: reg, env: { ATH_ACTOR: "t" }, cwd: root })).code).toBe(78); // no id
+    const id = "0f4c2a8e-7b1d-4e5a-9c3f-6d2e8b1a4c70";
+    writeFileSync(join(root, "athenaeum.yaml"), `id: ${id}\nname: t\n`);
     const ok = await ath(["greet", "write"], { registry: reg, env: { ATH_ACTOR: "t" }, cwd: root });
     expect(ok.code).toBe(0);
     const again = await ath(["greet", "write"], { registry: reg, env: { ATH_ACTOR: "t" }, cwd: root });
     expect(again.code).toBe(0);
-    const h = readHistory(root);
+    const state = instanceState(hostPaths(process.env), id);
+    expect(existsSync(join(root, ".ath"))).toBe(false);
+    const h = readHistory(state);
     expect(h.length).toBe(2);
     expect(h[0]).toMatchObject({ cmd: "greet-write", exit: 0, actor: "t", profile: "agent" });
   });
@@ -172,7 +178,7 @@ describe("dispatch", () => {
 
   test("--now fixes the clock", async () => {
     const r = await ath(["--json", "--now", "2026-10-13T00:00:00Z", "whoami"]);
-    expect((r.json() as { data: { now: string } }).data.now).toBe("2026-10-13T00:00:00.000Z");
+    expect((r.json() as { data: { now: string } }).data.now).toBe("2026-10-13T00:00:00Z");
     expect((await ath(["--now", "nope", "whoami"])).code).toBe(64);
   });
 });

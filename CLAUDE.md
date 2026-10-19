@@ -19,14 +19,16 @@ gaps still owed.
 ## Layout
 
 - `spec/athenaeum.md` — the specification.
-- `ath/` — the `ath` CLI (Bun/TypeScript): the specification's reference
-  implementation, on the model of the `ita` CLI (contracts + kit + engine +
-  commands). No network: bytes are ingested from disk; producers live outside.
-  Templates a new layer is scaffolded from (`ath layer init`) live at
-  `ath/templates/` — agent briefs included: edit them THERE; layers hold copies.
-- `scanner/` — the residence scanner (Bun/TypeScript): host-side manifest
-  publisher for attached locations (spec §18.5). Its manifest format is its
-  own versioned contract (`scanner/MANIFEST-SCHEMA.md`).
+- `ath/` — the tooling (Bun/TypeScript workspace), the specification's
+  reference implementation on the foundations of the `ita` CLI: `packages/`
+  `contracts` (zod contracts) ← `kit` (dispatch, gates, envelope, locks,
+  journal, host paths, canonical lines) ← `engine` (formats, addresses,
+  records, vocabularies, passes, the graph) and `custody` (stores, the index,
+  reconcile) ← `verbs` (§19.5) ← `cli`; `daemon` (`athd`, kit and contracts
+  only, handed the registry); `scanner` (the residence scanner, spec §18.5,
+  its manifest its own versioned contract: `packages/scanner/MANIFEST-SCHEMA.md`).
+  `test/workspace.lint.test.ts` pins the package graph. No network to
+  acquire: bytes are ingested from disk; producers live outside.
 - `testdata/` — the regression library: `ontology/` (the regression ontology a
   standalone instance starts from, a root term per mime), `exemplars.yaml` (one artifact
   per mime: file, blake3, mime, root) + `seed.ts` (a gitignored scratch layer),

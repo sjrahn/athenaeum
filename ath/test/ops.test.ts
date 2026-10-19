@@ -1,12 +1,12 @@
-// ops.test.ts — the byte-fact ops: sniff, csv.parse@1 with byte spans, html attest and the capture banner, image
-// headers, the zip roster, pdf attest.
+// ops.test.ts — the format decoders: sniff, csv.parse@1 with byte spans, html intrinsics, image headers, the zip
+// roster, pdf intrinsics.
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { csvSurface, parseCsv } from "../src/engine/ops/csv/parse.ts";
-import { byteMap, parseHtml, select, spanOf } from "../src/engine/ops/html/dom.ts";
-import { attest } from "../src/engine/ops/index.ts";
-import { sniffMime } from "../src/engine/ops/sniff.ts";
-import { TESTDATA } from "./layers.ts";
+import { csvSurface, parseCsv } from "@ath/engine/formats/csv/parse.ts";
+import { byteMap, parseHtml, select, spanOf } from "@ath/engine/formats/html/dom.ts";
+import { attest } from "@ath/engine/formats/index.ts";
+import { sniffMime } from "@ath/engine/formats/sniff.ts";
+import { TESTDATA } from "./harness.ts";
 
 const FIX = join(import.meta.dir, "fixtures");
 const PY = join(import.meta.dir, "fixtures");
@@ -87,20 +87,11 @@ describe("html", () => {
     expect(new TextDecoder().decode(bytes.subarray(bs.start, bs.end))).toBe('<div class="bbWrapper">héllo <b>wörld</b><br>line two</div>');
     expect(byteMap("a𝑃b")).toEqual(new Uint32Array([0, 1, 5, 5, 6]));
   });
-  test("attests title, generator from the XenForo root, and the capture banner as captured_from", async () => {
+  test("attests the encoding, the title and the standard meta names; a capture banner is not the format's", async () => {
     const a = await attest(await read(join(FIX, "small.html")), "text/html");
-    expect(a.value).toMatchObject({
-      mime: "text/html",
-      encoding: "utf-8",
-      title: "Ünïcode · thread | Example Forum",
-      generator: "XF (data-app public, data-version abc123)",
-    });
-    expect(a.capturedFrom).toEqual({
-      origin: "example.com",
-      uri: "https://www.example.com/threads/test-thread.123/",
-      via: "capture",
-      snapshot: "2026-06-07T14:03:19Z",
-    });
+    expect(a.value).toMatchObject({ mime: "text/html", encoding: "utf-8", title: "Ünïcode · thread | Example Forum" });
+    expect(a.value.generator).toBeUndefined();
+    expect(Object.keys(a)).toEqual(["value"]);
   });
 });
 

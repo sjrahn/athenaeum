@@ -1,7 +1,7 @@
 // ops.pdf.test.ts — pdf.words@1: words with boxes, lines, words-in-box in reading order, chrome by repetition.
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { allPages, detectChrome, readingOrder, wordsInBox, wordsText } from "../src/engine/ops/pdf/words.ts";
+import { allPages, detectChrome, readingOrder, wordsInBox, wordsText } from "@ath/engine/formats/pdf/words.ts";
 
 const PY = join(import.meta.dir, "fixtures");
 const read = async (p: string) => new Uint8Array(await Bun.file(p).arrayBuffer());

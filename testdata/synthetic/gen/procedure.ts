@@ -13,10 +13,10 @@
 //   bun testdata/synthetic/gen/procedure.ts [--no-render]   (typst 0.15 on PATH; fonts are typst's bundled ones)
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { fmt } from "../../../ath/src/engine/model/address.ts";
-import { squash } from "../../../ath/src/engine/norm/text.ts";
-import { allPages, detectChrome, isChromeWord, type PageWords, type Word } from "../../../ath/src/engine/ops/pdf/words.ts";
-import { blake3Hex, bodyRev } from "../../../ath/src/lib/hash.ts";
+import { fmt } from "../../../ath/packages/engine/src/address/address.ts";
+import { allPages, detectChrome, isChromeWord, type PageWords, type Word } from "../../../ath/packages/engine/src/formats/pdf/words.ts";
+import { squash } from "../../../ath/packages/engine/src/norm/text.ts";
+import { blake3Hex, short as bodyRev } from "../../../ath/packages/kit/src/hash.ts";
 
 const HERE = dirname(Bun.fileURLToPath(import.meta.url));
 const SYN = join(HERE, "..");

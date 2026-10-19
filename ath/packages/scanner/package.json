@@ -1,0 +1,13 @@
+{
+  "name": "@ath/scanner",
+  "version": "0.4.1",
+  "description": "Residence scanner: keeps an on-share BLAKE3 manifest of an observed tree (spec §18.5); its manifest is its own versioned contract (MANIFEST-SCHEMA.md).",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "ath-scan": "./src/cli.ts"
+  },
+  "exports": {
+    "./*": "./src/*"
+  }
+}

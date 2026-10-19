@@ -2,32 +2,45 @@
   "name": "ath",
   "type": "module",
   "private": true,
-  "devDependencies": {
-    "@biomejs/biome": "^2.5.15",
-    "@types/bun": "^1.4.3"
+  "version": "0.2.0",
+  "description": "The Athenaeum's reference tooling: the ath CLI, the athd host daemon and the residence scanner (spec/athenaeum.md).",
+  "workspaces": [
+    "packages/*"
+  ],
+  "bin": {
+    "ath": "./bin/ath",
+    "athd": "./bin/athd",
+    "ath-scan": "./packages/scanner/src/cli.ts"
   },
   "dependencies": {
+    "@ath/cli": "workspace:*",
+    "@ath/contracts": "workspace:*",
+    "@ath/engine": "workspace:*",
+    "@ath/kit": "workspace:*",
+    "@ath/scanner": "workspace:*",
+    "@ath/verbs": "workspace:*",
     "@embedpdf/pdfium": "^2.15.1",
     "css-select": "^7.0.0",
+    "domhandler": "^6.0.1",
     "hash-wasm": "^4.12.0",
     "htmlparser2": "10.0.0",
     "parse5": "^8.0.1",
     "parse5-htmlparser2-tree-adapter": "^8.0.1",
     "zod": "^4.6.7"
   },
-  "version": "0.1.0-successor",
-  "description": "Athenaeum tooling: the successor contract's reference implementation (ingest, ontology, trees, lints, verify, harvest, export, serve).",
-  "bin": {
-    "ath": "./src/main.ts"
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.15",
+    "@types/bun": "^1.4.3",
+    "typescript": "7.0.2"
   },
   "scripts": {
-    "start": "bun run src/main.ts",
+    "start": "bun run packages/cli/src/main.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
     "format": "biome format --write .",
     "check": "bun run typecheck && bun run lint && bun test",
-    "build": "bun build --compile --target=bun-linux-x64 ./src/main.ts --outfile dist/ath",
-    "build:arm64": "bun build --compile --target=bun-linux-arm64 ./src/main.ts --outfile dist/ath-arm64"
+    "build": "bun build --compile --target=bun-linux-x64 ./packages/cli/src/main.ts --outfile dist/ath && bun build --compile --target=bun-linux-x64 ./packages/scanner/src/cli.ts --outfile dist/ath-scan",
+    "build:arm64": "bun build --compile --target=bun-linux-arm64 ./packages/cli/src/main.ts --outfile dist/ath-arm64 && bun build --compile --target=bun-linux-arm64 ./packages/scanner/src/cli.ts --outfile dist/ath-scan-arm64"
   }
 }

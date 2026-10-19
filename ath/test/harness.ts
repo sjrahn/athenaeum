@@ -2,11 +2,11 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildRegistry } from "../src/commands/index.ts";
-import { type DispatchDeps, runCli } from "../src/kit/dispatch.ts";
-import type { Registry } from "../src/kit/registry.ts";
-import type { SessionIdentity } from "../src/kit/types.ts";
-import { captureIo } from "../src/lib/io.ts";
+import { buildRegistry } from "@ath/cli/main.ts";
+import { type DispatchDeps, runCli } from "@ath/kit/dispatch.ts";
+import { captureIo } from "@ath/kit/io.ts";
+import type { Registry } from "@ath/kit/registry.ts";
+import type { SessionIdentity } from "@ath/kit/types.ts";
 
 export interface RunOpts {
   cwd?: string;
@@ -30,7 +30,16 @@ export async function ath(argv: string[], o: RunOpts = {}): Promise<RunOut> {
   const deps: DispatchDeps = {
     registry: o.registry ?? buildRegistry(),
     io,
-    env: { HOME: process.env.HOME, USER: "tester", ATH_TEST: "1", ...(o.env ?? {}) },
+    env: {
+      HOME: process.env.HOME,
+      XDG_DATA_HOME: process.env.XDG_DATA_HOME,
+      XDG_STATE_HOME: process.env.XDG_STATE_HOME,
+      XDG_CONFIG_HOME: process.env.XDG_CONFIG_HOME,
+      XDG_RUNTIME_DIR: process.env.XDG_RUNTIME_DIR,
+      USER: "tester",
+      ATH_TEST: "1",
+      ...(o.env ?? {}),
+    },
     cwd: o.cwd ?? process.cwd(),
     tty: o.tty ?? false,
     session: () => o.session ?? null,
@@ -54,3 +63,6 @@ export function scratch(prefix = "ath-test-"): string {
 export function cleanupScratch(): void {
   for (const d of scratchDirs.splice(0)) rmSync(d, { recursive: true, force: true });
 }
+
+/** The repository's testdata/ (the regression library). */
+export const TESTDATA = join(import.meta.dir, "..", "..", "testdata");

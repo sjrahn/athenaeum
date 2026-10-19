@@ -1,0 +1,12 @@
+intrinsics: {op: jpeg.intrinsics@1, mime: image/jpeg, bytes: 47268, width: 900, height: 420}
+receipts:
+  - {actor: reader-a, received: "2026-03-20T09:04:00Z", name: sign.jpg}
+passes:
+  p1: {by: reader-a, verify: reader-b, vocab: b3:2eaa4a632e961e81, date: "2026-03-20", attests: [readings]}
+readings:
+  bbox=0.0667,0.1786,0.6022,0.1548:
+    text: RETURNS ONLY
+  bbox=0.0667,0.4643,0.4556,0.1024:
+    text: Bay 12 - Depot 7
+  bbox=0.0667,0.6976,0.6467,0.1071:
+    text: No parking 7am to 6pm

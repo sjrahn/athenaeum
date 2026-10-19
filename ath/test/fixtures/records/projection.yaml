@@ -1,0 +1,5 @@
+intrinsics: {op: zip.intrinsics@1, mime: application/zip, bytes: 13759, constituents: [{path: Harbour plans/Mooring plan 2026.pdf, blake3: "0c4efa1371eeacce3467e37e8af4cbabda275d74461cf25cb6dbf2dc68c24865", kind: asset}, {path: Harbour plans/Berth list.csv, blake3: "7ce98d2c8bf71eae6ce2ac944cca99c1a84e8bf5c4d64d2a653aab11f6780964", kind: asset}, {path: Harbour plans/Notes.md, blake3: "35e3bab19ac918e3f7fed8953fdffa9767aa1d46a796a33cb39a037172701b96", kind: asset}, {path: Harbour plans/Quay photo.png, blake3: "09364dc38bdf1f0fd7ded6fe4150b55835f240c56de753c843e441f7397b6bcc", kind: asset}]}
+receipts:
+  - {actor: reader-a, received: "2026-03-20T09:02:00Z", name: drive-folder.zip}
+origins:
+  - {producer: {tool: google-drive-export, version: "2026.03", at: "2026-03-18T16:00:00Z"}, source: {account: ada.abbott@example.invalid, folder: Harbour plans}, via: export, coverage: "the folder, whole", part: "001"}

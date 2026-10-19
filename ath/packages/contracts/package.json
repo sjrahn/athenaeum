@@ -1,0 +1,9 @@
+{
+  "name": "@ath/contracts",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*"
+  }
+}

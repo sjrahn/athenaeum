@@ -1,10 +1,14 @@
 {
   "compilerOptions": {
-    "lib": ["ESNext"],
+    "lib": [
+      "ESNext"
+    ],
     "target": "ESNext",
     "module": "Preserve",
     "moduleDetection": "force",
-    "types": ["bun"],
+    "types": [
+      "bun"
+    ],
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
@@ -16,7 +20,40 @@
     "noImplicitOverride": true,
     "noUnusedLocals": true,
     "noUnusedParameters": false,
-    "noPropertyAccessFromIndexSignature": false
+    "noPropertyAccessFromIndexSignature": false,
+    "paths": {
+      "@ath/*": [
+        "./packages/*/src/index.ts"
+      ],
+      "@ath/contracts/*": [
+        "./packages/contracts/src/*"
+      ],
+      "@ath/kit/*": [
+        "./packages/kit/src/*"
+      ],
+      "@ath/engine/*": [
+        "./packages/engine/src/*"
+      ],
+      "@ath/custody/*": [
+        "./packages/custody/src/*"
+      ],
+      "@ath/scanner/*": [
+        "./packages/scanner/src/*"
+      ],
+      "@ath/verbs/*": [
+        "./packages/verbs/src/*"
+      ],
+      "@ath/daemon/*": [
+        "./packages/daemon/src/*"
+      ],
+      "@ath/cli/*": [
+        "./packages/cli/src/*"
+      ]
+    }
   },
-  "include": ["src", "test", "contracts"]
+  "include": [
+    "packages",
+    "test",
+    "types.d.ts"
+  ]
 }

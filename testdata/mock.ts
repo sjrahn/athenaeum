@@ -11,10 +11,13 @@ import { spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { attesterFor } from "../ath/src/engine/ops/registry.ts";
-import "../ath/src/engine/ops/index.ts";
-import { sniffMime } from "../ath/src/engine/ops/sniff.ts";
-import { blake3Hex } from "../ath/src/lib/hash.ts";
+import "../ath/packages/engine/src/formats/index.ts";
+import { attesterFor } from "../ath/packages/engine/src/formats/registry.ts";
+import { sniffMime } from "../ath/packages/engine/src/formats/sniff.ts";
+import { emitRecord, type Reading, type RecordDoc as Rec, type Scope } from "../ath/packages/engine/src/record/document.ts";
+import { emptyVocabulary, pin as vocabPin, serializeTerm, type Vocab } from "../ath/packages/engine/src/vocab/terms.ts";
+import { canonicalLine, sortedValue as sortKeys } from "../ath/packages/kit/src/canonical.ts";
+import { blake3Hex, short } from "../ath/packages/kit/src/hash.ts";
 
 const HERE = import.meta.dir;
 const SYN = join(HERE, "synthetic");
@@ -23,28 +26,8 @@ const OUT = join(HERE, "mock");
 const DATE = "2026-03-20";
 type J = Record<string, unknown>;
 
-// ── canonical form (§6.4.2): id|at, pred, every other key in code-point order, then ev, authorship last ─────────
-const AUTH = ["by", "pass"];
-const sortKeys = (v: unknown): unknown =>
-  Array.isArray(v)
-    ? v.map(sortKeys)
-    : v && typeof v === "object"
-      ? Object.fromEntries(
-          Object.keys(v as J)
-            .sort()
-            .map((k) => [k, sortKeys((v as J)[k])]),
-        )
-      : v;
-const canon = (line: J): string => {
-  const head = ["id", "pred"].filter((k) => k in line);
-  const tail = ["ev", ...AUTH].filter((k) => k in line);
-  const mid = Object.keys(line)
-    .filter((k) => !head.includes(k) && !tail.includes(k))
-    .sort();
-  return JSON.stringify(Object.fromEntries([...head, ...mid, ...tail].map((k) => [k, sortKeys(line[k])])));
-};
-const jsonl = (lines: J[]) =>
-  `${[...new Set(lines.map(canon))].sort().join("\n")}\n`;
+/** Entity lines and rulings: canonical, one per content, sorted (the tool sorts them by identity, §6.4.1). */
+const jsonl = (lines: J[]) => `${[...new Set(lines.map(canonicalLine))].sort().join("\n")}\n`;
 const write = (path: string, text: string | Uint8Array) => {
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, text);
@@ -57,55 +40,7 @@ const yaml = (o: J, indent = ""): string =>
         : `${indent}${k}: ${Array.isArray(v) ? `[${v.join(", ")}]` : v}\n`,
     )
     .join("");
-const rev = async (body: unknown) => `b3:${(await blake3Hex(typeof body === "string" ? body : JSON.stringify(body))).slice(0, 16)}`;
-
-// ── records (§8.2): one document, keys in a fixed order, written in one style ────────────────────────────────────
-type Reading = { text?: string; cells?: string[][]; tex?: string };
-type Scope = Reading & { form: string | string[]; at: string; scopes?: Scope[]; [field: string]: unknown };
-type Rec = { intrinsics: J; receipts?: J[]; origins?: J[]; shape?: string; chrome?: J[]; passes?: Record<string, J>; readings?: Record<string, Reading>; scopes?: Scope[] };
-const ASPECTS = ["cells", "tex", "text"];
-const WORDS = /^(true|false|yes|no|null|on|off|y|n|~)$/i;
-const plainOk = (v: string, flow: boolean) => /^[A-Za-z][^\n]*$/.test(v) && !/: | #/.test(v) && !/[\s:]$/.test(v) && !WORDS.test(v) && !(flow && /[,[\]{}]/.test(v));
-const scalar = (v: unknown, flow = false) => (typeof v === "string" ? (plainOk(v, flow) ? v : JSON.stringify(v)) : JSON.stringify(v));
-const flow = (v: unknown): string =>
-  Array.isArray(v) ? `[${v.map(flow).join(", ")}]` : v && typeof v === "object" ? `{${Object.entries(v as J).map(([k, x]) => `${scalar(k, true)}: ${flow(x)}`).join(", ")}}` : scalar(v, true);
-/** A block mapping of scalars, multi-line strings as literal blocks, anything nested in flow style. */
-const block = (o: J, ind: string) =>
-  Object.entries(o)
-    .filter(([, v]) => v !== undefined)
-    .map(([k, v]) => (typeof v === "string" && v.includes("\n") ? `${ind}${scalar(k)}: |-\n${v.split("\n").map((l) => `${ind}  ${l}`).join("\n")}\n` : `${ind}${scalar(k)}: ${typeof v === "string" ? scalar(v) : flow(v)}\n`))
-    .join("");
-const scopeKeys = ({ form, at, scopes: _, ...rest }: Scope): J => {
-  const fields = Object.entries(rest).filter(([k]) => !ASPECTS.includes(k)).sort(([a], [b]) => (a < b ? -1 : 1));
-  const reading = Object.entries(rest).filter(([k]) => ASPECTS.includes(k));
-  return { form, at, ...Object.fromEntries(fields), ...Object.fromEntries(reading) };
-};
-const scopesYaml = (list: Scope[], ind: string): string =>
-  list.map((sc) => `${ind}- ${block(scopeKeys(sc), `${ind}  `).trimStart()}${sc.scopes?.length ? `${ind}  scopes:\n${scopesYaml(sc.scopes, `${ind}    `)}` : ""}`).join("");
-/** Addresses in canonical order (§7.4.2): page, then y, then x, then byte start. */
-const addrKey = (at: string) => {
-  const q = Object.fromEntries(at.split("&").map((kv) => kv.split("=") as [string, string]));
-  const [x = 0, y = 0] = (q.bbox ?? "0,0").split(",").map(Number);
-  return [Number(q.page ?? 0), y, x, Number((q.bytes ?? q.t ?? "0").split(",")[0])];
-};
-const byAddr = (a: string, b: string) => {
-  const [ka, kb] = [addrKey(a), addrKey(b)];
-  return ka.map((v, i) => v - kb[i]!).find((d) => d !== 0) ?? 0;
-};
-function recordYaml(r: Rec): string {
-  let out = `intrinsics: ${flow(r.intrinsics)}\n`;
-  if (r.receipts?.length) out += `receipts:\n${r.receipts.map((e) => `  - ${flow(e)}\n`).join("")}`; // absent on an asset: its provenance is its container's (§9.6)
-  if (r.origins?.length) out += `origins:\n${r.origins.map((e) => `  - ${flow(e)}\n`).join("")}`;
-  if (r.shape) out += `shape: ${scalar(r.shape)}\n`;
-  if (r.chrome) out += `chrome:\n${r.chrome.map((c) => `  - ${flow(c)}\n`).join("")}`;
-  if (r.passes) out += `passes:\n${Object.entries(r.passes).map(([id, pass]) => `  ${id}: ${flow(pass)}\n`).join("")}`;
-  if (r.readings) {
-    out += "readings:\n";
-    for (const at of Object.keys(r.readings).sort(byAddr)) out += `  ${scalar(at)}:\n${block(Object.fromEntries(Object.entries(r.readings[at]!).sort()), "    ")}`;
-  }
-  if (r.scopes) out += `scopes:\n${scopesYaml(r.scopes, "  ")}`;
-  return out;
-}
+const rev = (body: unknown) => short(body);
 
 // ── subjects (§7.1): the full hash, everywhere it is stored; a prefix is a terminal shortcut only ─────────────────
 const A = (full: string) => `ath://${full}`;
@@ -115,7 +50,6 @@ const HOST = join(OUT, "host");
 const keep = (tree: "artifacts" | "testimony", full: string, bytes: Uint8Array) =>
   write(join(HOST, "data/athenaeum", tree, full.slice(0, 2), full), bytes);
 
-type Vocab = "forms" | "shapes" | "kinds" | "properties";
 class Instance {
   /** Terms by `<vocabulary>/<name>`: forms, kinds and properties are separate name spaces. */
   terms = new Map<string, J[]>();
@@ -138,13 +72,15 @@ class Instance {
     const key = `${v}/${name}`;
     this.terms.set(key, [...(this.terms.get(key) ?? []), ...lines]);
   }
-  /** The pin of one vocabulary (§11.8): term files in name order, each preceded by its name, lines sorted. */
-  async pin(vocab: "corpus" | "graph", base?: Instance) {
-    const want = (key: string) => (vocab === "corpus") === (key.startsWith("forms/") || key.startsWith("shapes/"));
-    const all = new Map<string, J[]>();
-    for (const inst of [base, this].filter(Boolean) as Instance[]) for (const [k, ls] of inst.terms) if (want(k)) all.set(k, [...(all.get(k) ?? []), ...ls]);
-    const text = [...all.keys()].sort().map((n) => `${n}\n${jsonl(all.get(n)!)}`).join("");
-    return `b3:${(await blake3Hex(text)).slice(0, 16)}`;
+  /** The pin of one vocabulary (§11.8), the engine's recipe over this instance's terms and its base's. */
+  async pin(side: "corpus" | "graph", base?: Instance) {
+    const v = emptyVocabulary();
+    for (const inst of [base, this].filter(Boolean) as Instance[])
+      for (const [k, ls] of inst.terms) {
+        const [vocab, name] = k.split("/") as [Vocab, string];
+        v[vocab].set(name, [...(v[vocab].get(name) ?? []), ...ls]);
+      }
+    return vocabPin(v, side);
   }
   /** A pass's judgments laid over the projection ingest wrote (§8.1). */
   judge(full: string, doc: Omit<Rec, "intrinsics" | "receipts" | "origins">) {
@@ -177,10 +113,10 @@ class Instance {
     write(join(this.dir, "athenaeum.yaml"), yaml(this.config));
     for (const [k, ls] of this.terms) {
       const [v, name] = k.split("/") as [Vocab, string];
-      write(join(this.dir, { forms: "corpus/forms", shapes: "corpus/shapes", kinds: "graph/kinds", properties: "graph/properties" }[v], `${name}.jsonl`), jsonl(ls));
+      write(join(this.dir, { forms: "corpus/forms", shapes: "corpus/shapes", kinds: "graph/kinds", properties: "graph/properties" }[v], `${name}.jsonl`), serializeTerm(ls));
     }
     for (const [full, doc] of this.records) {
-      write(join(this.dir, "corpus/records", full.slice(0, 2), `${full}.yaml`), recordYaml(pinned([doc])[0] as Rec));
+      write(join(this.dir, "corpus/records", full.slice(0, 2), `${full}.yaml`), emitRecord(pinned([doc as unknown as J])[0] as unknown as Rec));
     }
     for (const [n, ls] of this.entities) write(join(this.dir, "graph/entities", n.slice(0, 2), `${n}.jsonl`), jsonl(pinned(ls)));
     for (const [n, s] of this.stores) write(join(this.dir, "stores", `${n}.yaml`), yaml(s));

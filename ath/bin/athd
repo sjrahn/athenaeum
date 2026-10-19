@@ -1,0 +1,3 @@
+#!/bin/sh
+# athd — the host daemon: ath daemon run.
+exec "$(dirname "$(readlink -f "$0")")/ath" daemon run "$@"

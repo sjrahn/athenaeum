@@ -1,0 +1,9 @@
+{
+  "name": "@ath/kit",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*"
+  }
+}

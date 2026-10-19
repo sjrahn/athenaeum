@@ -1,6 +1,6 @@
 // kit.identity.test.ts — Claude ancestry from a fake process tree and session files.
 import { describe, expect, test } from "bun:test";
-import { claudeSession, type IdentityDeps, parsePsTable, walkAncestors } from "../src/kit/identity.ts";
+import { claudeSession, type IdentityDeps, parsePsTable, walkAncestors } from "@ath/kit/identity.ts";
 
 function deps(tree: Record<number, number>, sessions: Record<string, string>): IdentityDeps {
   return {

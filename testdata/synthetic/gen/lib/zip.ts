@@ -1,5 +1,5 @@
 // zip.ts — a deterministic zip writer for the twins: fixed DOS timestamps, store (0), deflate (8) or zstd (93, what
-// Discord's exporter writes), UTF-8 names, no zip64. The engine's reader (ath/src/engine/ops/zip/roster.ts) is the
+// Discord's exporter writes), UTF-8 names, no zip64. The engine's reader (ath/packages/engine/src/formats/zip/roster.ts) is the
 // other half; this writer never lives in the engine.
 import { deflateRawSync } from "node:zlib";
 

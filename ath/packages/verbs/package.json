@@ -1,0 +1,9 @@
+{
+  "name": "@ath/verbs",
+  "type": "module",
+  "private": true,
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*"
+  }
+}

@@ -1,0 +1,609 @@
+intrinsics: {op: pdf.intrinsics@1, mime: application/pdf, bytes: 121640, page_count: 8, pdf_version: "1.7", page_size_pt: [595.28, 841.89], info: {Title: Procedure to estimate heat loss from insulated pipework over a reporting period, Author: Harbour Standards Office, Creator: Typst 0.15.1}}
+receipts:
+  - {actor: reader-a, received: "2026-03-20T09:01:00Z", name: procedure.pdf}
+origins:
+  - {producer: {tool: page-capture, version: "4.2", at: "2026-03-19T21:52:00Z", host: capture-box}, source: {uri: https://standards.harbour.example.invalid/hl-02/02.1/procedure.pdf}, context: the heat-loss procedure the office publishes}
+chrome:
+  - {repeats: {pages: 8, share: 1}, mask: digits, box: 2, roles: {page-number: "Page # of #"}}
+passes:
+  p1: {by: reader-a, verify: reader-b, vocab: b3:3fd518909c63f6fd, date: "2026-03-20", attests: [readings, structure]}
+scopes:
+  - form: cover-page
+    at: page=1
+    scopes:
+      - form: label
+        at: page=1&bbox=0.1432,0.1007,0.2526,0.0081
+        text: HARBOUR STANDARDS OFFICE
+      - form: label
+        at: page=1&bbox=0.1433,0.1928,0.0591,0.0103
+        text: HL-02
+      - form: label
+        at: page=1&bbox=0.144,0.4271,0.3028,0.0201
+        text: Calculation procedure
+      - form: heading
+        at: page=1&bbox=0.1435,0.5031,0.6121,0.0975
+        level: 0
+        text: Procedure to estimate heat loss from insulated pipework over a reporting period
+      - form: label
+        at: page=1&bbox=0.1429,0.6906,0.0901,0.0087
+        text: Version 02.1
+      - form: figure
+        at: page=1&bbox=0.1429,0.8316,0.1905,0.0673
+  - form: table-of-contents
+    at: page=2
+    scopes:
+      - form: table
+        at: page=2&bbox=0.1429,0.1,0.7138,0.3402
+        layout: grid
+        scopes:
+          - form: caption
+            at: page=2&bbox=0.1429,0.0969,0.1829,0.019
+            text: Table of contents
+          - form: row
+            at: page=2&bbox=0.1429,0.1262,0.7143,0.0162
+            cells: ["1.", Introduction, "3"]
+          - form: row
+            at: page=2&bbox=0.1731,0.1463,0.684,0.0162
+            cells: ["1.1.", Background, "3"]
+          - form: row
+            at: page=2&bbox=0.1429,0.1663,0.7143,0.0162
+            cells: ["2.", "Scope, applicability and entry into force", "3"]
+          - form: row
+            at: page=2&bbox=0.1731,0.1864,0.684,0.0162
+            cells: ["2.1.", Scope and applicability, "3"]
+          - form: row
+            at: page=2&bbox=0.1731,0.2065,0.684,0.0162
+            cells: ["2.2.", Entry into force, "3"]
+          - form: row
+            at: page=2&bbox=0.1429,0.2265,0.7143,0.0162
+            cells: ["3.", Definitions, "3"]
+          - form: row
+            at: page=2&bbox=0.1429,0.2466,0.7143,0.0162
+            cells: ["4.", Parameters, "3"]
+          - form: row
+            at: page=2&bbox=0.1429,0.2667,0.7143,0.0162
+            cells: ["5.", Calculation procedure, "4"]
+          - form: row
+            at: page=2&bbox=0.1731,0.2867,0.684,0.0162
+            cells: ["5.1.", Heat loss from a pipe run, "4"]
+          - form: row
+            at: page=2&bbox=0.1731,0.3068,0.684,0.0162
+            cells: ["5.2.", Surface heat transfer coefficient, "4"]
+          - form: row
+            at: page=2&bbox=0.1731,0.3269,0.684,0.0162
+            cells: ["5.3.", Annual total and uncertainty allowance, "5"]
+          - form: row
+            at: page=2&bbox=0.1429,0.3469,0.7143,0.0162
+            cells: ["6.", Data and parameters, "6"]
+          - form: row
+            at: page=2&bbox=0.1731,0.367,0.684,0.0162
+            cells: ["6.1.", Data and parameters not monitored, "6"]
+          - form: row
+            at: page=2&bbox=0.1731,0.3871,0.684,0.0162
+            cells: ["6.2.", Data and parameters monitored, "6"]
+          - form: row
+            at: page=2&bbox=0.1731,0.4072,0.684,0.0162
+            cells: ["6.3.", Monitoring plan, "7"]
+          - form: row
+            at: page=2&bbox=0.1429,0.4272,0.7143,0.0162
+            cells: ["7.", Document information, "8"]
+  - form: heading
+    at: page=3&bbox=0.145,0.1118,0.1574,0.0119
+    level: 1
+    num: "1."
+    text: Introduction
+    scopes:
+      - form: heading
+        at: page=3&bbox=0.1447,0.1529,0.1443,0.0135
+        level: 2
+        num: "1.1."
+        text: Background
+        scopes:
+          - form: paragraph
+            at: page=3&bbox=0.1429,0.1803,0.6623,0.0537
+            num: "1."
+            text: This procedure provides steps to estimate the heat lost from a run of insulated pipework over a reporting period, from the measured surface temperature of the insulation and the ambient temperature of the space the run passes through.
+          - form: paragraph
+            at: page=3&bbox=0.1436,0.2455,0.6692,0.0336
+            num: "2."
+            text: It is intended for operators who report thermal losses of a distribution network against a baseline and who hold measurements at the segment level only.
+          - form: paragraph
+            at: page=3&bbox=0.143,0.2906,0.6964,0.0737
+            num: "3."
+            text: Earlier versions of this procedure treated the surface coefficient as a single default. Since version 02.0 the radiative part is calculated from the emissivity of the cladding, which matters for bright metal cladding in cold spaces, where the default overstated the loss by up to a fifth.
+  - form: heading
+    at: page=3&bbox=0.1438,0.3901,0.4468,0.0156
+    level: 1
+    num: "2."
+    text: Scope, applicability and entry into force
+    scopes:
+      - form: heading
+        at: page=3&bbox=0.1436,0.4311,0.2459,0.0134
+        level: 2
+        num: "2.1."
+        text: Scope and applicability
+        scopes:
+          - form: paragraph
+            at: page=3&bbox=0.1434,0.4585,0.7022,0.0536
+            num: "4."
+            text: This procedure applies to runs of pipework carrying a heated fluid where every segment is wrapped in an insulation of known thickness and conductivity, and where the surface temperature of each segment is measured at least monthly.
+          - form: paragraph
+            at: page=3&bbox=0.143,0.5237,0.6984,0.0336
+            num: "5."
+            text: The procedure does not apply to buried pipework, to segments whose insulation is wet or damaged, or to runs shorter than twenty metres in total.
+          - form: paragraph
+            at: page=3&bbox=0.143,0.5689,0.7055,0.0536
+            num: "6."
+            text: Where a run passes through more than one space, the operator shall split it at the boundary and treat each part as a run of its own, with the ambient temperature of the space it passes through. A fitting at the boundary belongs to the part upstream of it.
+      - form: heading
+        at: page=3&bbox=0.1436,0.641,0.1799,0.0134
+        level: 2
+        num: "2.2."
+        text: Entry into force
+        scopes:
+          - form: paragraph
+            at: page=3&bbox=0.1436,0.6684,0.7081,0.0335
+            num: "7."
+            text: The date of entry into force is the date of publication of this version by the Office. It applies to reporting periods starting on or after that date.
+  - form: heading
+    at: page=3&bbox=0.1439,0.7277,0.1409,0.0119
+    level: 1
+    num: "3."
+    text: Definitions
+    scopes:
+      - form: paragraph
+        at: page=3&bbox=0.1432,0.7618,0.7102,0.0336
+        num: "8."
+        text: The definitions contained in the glossary of the Office apply. A segment is a straight length of pipe between two fittings; a run is an ordered sequence of segments.
+      - form: paragraph
+        at: page=3&bbox=0.1433,0.807,0.7116,0.0536
+        num: "9."
+        text: The surface temperature of a segment is the temperature of the outer face of its insulation or cladding, measured at the middle of the segment. The ambient temperature is the air temperature of the space at mid-height, away from heat sources.
+  - form: heading
+    at: page=3&bbox=0.1434,0.887,0.1431,0.0112
+    level: 1
+    num: "4."
+    text: Parameters
+    scopes:
+      - form: paragraph
+        at: page=4&bbox=0.1447,0.1003,0.5983,0.0135
+        num: "10."
+        text: "This procedure provides steps to determine the following parameters:"
+      - form: table
+        at: page=4&bbox=0.1534,0.1305,0.6083,0.0939
+        layout: grid
+        scopes:
+          - form: caption
+            at: page=4&bbox=0.2955,0.211,0.4082,0.0134
+            text: "Table 1: Parameters determined by this procedure"
+          - form: row
+            at: page=4&bbox=0.1534,0.1305,0.3023,0.0128
+            cells: [Parameter, SI unit, Description]
+          - form: row
+            at: page=4&bbox=0.1539,0.1488,0.482,0.016
+            cells: ["$Q_{L,k,y}$", GJ/yr, Heat lost from pipe run k in year y]
+          - form: row
+            at: page=4&bbox=0.1539,0.168,0.4588,0.0161
+            cells: ["$Q_{T,y}$", GJ/yr, Heat lost from all runs in year y]
+          - form: row
+            at: page=4&bbox=0.1539,0.1873,0.6078,0.016
+            cells: ["$Q_{U,y}$", GJ/yr, Heat loss reported with the uncertainty allowance]
+  - form: heading
+    at: page=4&bbox=0.1441,0.2502,0.2589,0.0156
+    level: 1
+    num: "5."
+    text: Calculation procedure
+    scopes:
+      - form: heading
+        at: page=4&bbox=0.1439,0.2913,0.2672,0.0134
+        level: 2
+        num: "5.1."
+        text: Heat loss from a pipe run
+        scopes:
+          - form: paragraph
+            at: page=4&bbox=0.1436,0.3187,0.7061,0.0536
+            num: "11."
+            text: "The heat lost from pipe run k in year y is the sum over its segments of the product of the outer surface area, the surface heat transfer coefficient and the temperature difference to the ambient, over the hours of operation, as follows:"
+          - form: equation
+            at: page=4&bbox=0.2842,0.3844,0.572,0.0293
+            label: Equation (1)
+            tex: Q_{L,k,y} = \sum_{i} A_{i,k,y} \times U_{i,y} \times \Delta T_{i,y} \times t_{y}
+          - form: paragraph
+            at: page=4&bbox=0.1429,0.4286,0.0589,0.0102
+            text: "Where:"
+          - form: definition-list
+            at: page=4&bbox=0.15,0.4571,0.6974,0.123
+            scopes:
+              - form: definition
+                at: page=4&bbox=0.1506,0.4571,0.4382,0.0162
+                cells: ["$Q_{L,k,y}$", "=", Heat lost from pipe run k in year y (GJ/yr)]
+              - form: definition
+                at: page=4&bbox=0.1503,0.4741,0.6788,0.033
+                cells: ["$A_{i,k,y}$", "=", Outer surface area of the insulation of segment i of pipe run k in year y (m2)]
+              - form: definition
+                at: page=4&bbox=0.1509,0.5105,0.6212,0.0162
+                cells: ["$U_{i,y}$", "=", Surface heat transfer coefficient of segment i in year y (W/m2 K)]
+              - form: definition
+                at: page=4&bbox=0.1505,0.5276,0.6969,0.0334
+                cells: ["$\\Delta T_{i,y}$", "=", Difference between the surface temperature of segment i and the ambient temperature in year y (K)]
+              - form: definition
+                at: page=4&bbox=0.15,0.564,0.4405,0.0161
+                cells: ["$t_{y}$", "=", Hours of operation of the run in year y (h)]
+      - form: heading
+        at: page=4&bbox=0.1439,0.6001,0.325,0.0102
+        level: 2
+        num: "5.2."
+        text: Surface heat transfer coefficient
+        scopes:
+          - form: paragraph
+            at: page=4&bbox=0.1433,0.6275,0.7043,0.0737
+            num: "12."
+            text: The surface heat transfer coefficient combines convection and radiation from the outer face of the insulation. Where no site measurement of the convective part is available, the default convective coefficient of the Office applies and the radiative part is calculated from the emissivity of the cladding, as follows:[^1]
+          - form: footnote
+            at: page=4&bbox=0.1435,0.8764,0.6474,0.0254
+            mark: "1"
+            text: The default convective coefficient is published in the Office's table of defaults and revised annually.
+          - form: equation
+            at: page=4&bbox=0.3154,0.7134,0.5408,0.0178
+            label: Equation (2)
+            tex: U_{i,y} = h_{i,y} + 4 \times \epsilon_{i} \times \sigma \times T_{s,i,y}^{3}
+          - form: paragraph
+            at: page=4&bbox=0.1429,0.7462,0.0589,0.0102
+            text: "Where:"
+          - form: definition-list
+            at: page=4&bbox=0.1501,0.7747,0.6736,0.0676;page=5&bbox=0.1501,0.1037,0.4611,0.033
+            scopes:
+              - form: definition
+                at: page=4&bbox=0.1509,0.7747,0.6105,0.0161
+                cells: ["$U_{i,y}$", "=", Surface heat transfer coefficient of segment i in year y (W/m2 K)]
+              - form: definition
+                at: page=4&bbox=0.1507,0.7917,0.673,0.033
+                cells: ["$h_{i,y}$", "=", Convective heat transfer coefficient at the surface of segment i in year y (W/m2 K)]
+              - form: definition
+                at: page=4&bbox=0.1501,0.8281,0.5327,0.0142
+                cells: ["$\\epsilon_{i}$", "=", Emissivity of the cladding of segment i (dimensionless)]
+              - form: definition
+                at: page=5&bbox=0.1503,0.1037,0.3982,0.0131
+                cells: ["$\\sigma$", "=", Stefan-Boltzmann constant (W/m2 K4)]
+              - form: definition
+                at: page=5&bbox=0.1501,0.1206,0.4611,0.0161
+                cells: ["$T_{s,i,y}$", "=", Surface temperature of segment i in year y (K)]
+          - form: paragraph
+            at: page=5&bbox=0.1434,0.1497,0.6606,0.0335
+            num: "13."
+            text: "The temperature difference of a segment is the difference between its surface temperature and the ambient temperature of the space:"
+          - form: equation
+            at: page=5&bbox=0.3621,0.1954,0.4941,0.016
+            label: Equation (3)
+            tex: "\\Delta T_{i,y} = T_{s,i,y} - T_{a,y}"
+          - form: paragraph
+            at: page=5&bbox=0.1429,0.2263,0.0589,0.0102
+            text: "Where:"
+          - form: definition-list
+            at: page=5&bbox=0.1501,0.2549,0.691,0.0694
+            scopes:
+              - form: definition
+                at: page=5&bbox=0.1505,0.2549,0.6906,0.0335
+                cells: ["$\\Delta T_{i,y}$", "=", Difference between the surface temperature of segment i and the ambient temperature in year y (K)]
+              - form: definition
+                at: page=5&bbox=0.1501,0.2913,0.4655,0.0161
+                cells: ["$T_{s,i,y}$", "=", Surface temperature of segment i in year y (K)]
+              - form: definition
+                at: page=5&bbox=0.1501,0.3082,0.4728,0.0161
+                cells: ["$T_{a,y}$", "=", Ambient temperature of the space in year y (K)]
+      - form: heading
+        at: page=5&bbox=0.1439,0.3442,0.397,0.0134
+        level: 2
+        num: "5.3."
+        text: Annual total and uncertainty allowance
+        scopes:
+          - form: paragraph
+            at: page=5&bbox=0.1433,0.3717,0.6648,0.0335
+            num: "14."
+            text: "The heat lost from all runs is the sum of the losses of the individual runs. The reported figure carries an uncertainty allowance, as follows:"
+          - form: equation
+            at: page=5&bbox=0.3236,0.4173,0.5326,0.0296
+            label: Equation (4)
+            tex: Q_{U,y} = (1 + u_{y}) \times \sum_{k} Q_{L,k,y}
+          - form: paragraph
+            at: page=5&bbox=0.1429,0.4618,0.0589,0.0102
+            text: "Where:"
+          - form: definition-list
+            at: page=5&bbox=0.1502,0.4903,0.6429,0.0499
+            scopes:
+              - form: definition
+                at: page=5&bbox=0.1506,0.4903,0.6425,0.0162
+                cells: ["$Q_{U,y}$", "=", Heat loss reported with the uncertainty allowance in year y (GJ/yr)]
+              - form: definition
+                at: page=5&bbox=0.1502,0.5072,0.4358,0.0161
+                cells: ["$u_{y}$", "=", Uncertainty allowance in year y (fraction)]
+              - form: definition
+                at: page=5&bbox=0.1506,0.524,0.4382,0.0162
+                cells: ["$Q_{L,k,y}$", "=", Heat lost from pipe run k in year y (GJ/yr)]
+          - form: paragraph
+            at: page=5&bbox=0.1433,0.5532,0.7006,0.032
+            num: "15."
+            text: "The uncertainty allowance is determined by the measurement arrangement of the run, as follows:"
+          - form: list
+            at: page=5&bbox=0.1437,0.5981,0.7051,0.1311
+            scopes:
+              - form: list-item
+                at: page=5&bbox=0.1437,0.5981,0.7051,0.0322
+                num: "(a)"
+                text: Where every segment carries a calibrated surface sensor read at least weekly, the allowance is 0.05;
+              - form: list-item
+                at: page=5&bbox=0.1437,0.6468,0.6196,0.0322
+                num: "(b)"
+                text: Where the surface temperature is measured monthly with a hand-held instrument, the allowance is 0.10;
+              - form: list-item
+                at: page=5&bbox=0.1437,0.6955,0.6173,0.0337
+                num: "(c)"
+                text: In all other cases the allowance is 0.20, and the operator shall state the arrangement in the report.
+          - form: paragraph
+            at: page=5&bbox=0.1434,0.7444,0.6521,0.0334
+            num: "16."
+            text: Figure 1 shows the segments of a run and the positions at which the surface temperature is measured.
+          - form: figure
+            at: page=5&bbox=0.2316,0.8252,0.537,0.0135
+            scopes:
+              - form: caption
+                at: page=5&bbox=0.3217,0.8796,0.3566,0.0135
+                text: "Figure 1: Segments of an insulated pipe run"
+  - form: heading
+    at: page=6&bbox=0.1439,0.1,0.2425,0.0156
+    level: 1
+    num: "6."
+    text: Data and parameters
+    scopes:
+      - form: heading
+        at: page=6&bbox=0.1437,0.141,0.3612,0.0135
+        level: 2
+        num: "6.1."
+        text: Data and parameters not monitored
+        scopes:
+          - form: paragraph
+            at: page=6&bbox=0.1436,0.1684,0.7008,0.0335
+            num: "17."
+            text: "The following parameters are determined once at the start of the reporting period and kept fixed:"
+          - form: table
+            at: page=6&bbox=0.1433,0.2134,0.6994,0.2561
+            layout: key-value
+            num: "1"
+            scopes:
+              - form: caption
+                at: page=6&bbox=0.1433,0.2134,0.2226,0.0103
+                text: Data / Parameter table 1.
+              - form: row
+                at: page=6&bbox=0.1532,0.2433,0.3751,0.0159
+                cells: ["Data / parameter:", "$A_{i,k,y}$"]
+              - form: row
+                at: page=6&bbox=0.1532,0.2632,0.3525,0.0095
+                cells: ["Data unit:", m2]
+              - form: row
+                at: page=6&bbox=0.1532,0.2813,0.6434,0.0335
+                cells: ["Description:", Outer surface area of the insulation of segment i of pipe run k]
+              - form: row
+                at: page=6&bbox=0.1535,0.3203,0.6892,0.0135
+                cells: ["Source of data:", "Design drawings of the run, or a site survey"]
+              - form: row
+                at: page=6&bbox=0.1532,0.339,0.6698,0.0337
+                cells: ["Measurement procedures (if any):", Calculated from the outer diameter of the insulation and the length of the segment]
+              - form: row
+                at: page=6&bbox=0.1532,0.3781,0.6586,0.0134
+                cells: ["Monitoring frequency:", Once at the start of the reporting period]
+              - form: row
+                at: page=6&bbox=0.1537,0.397,0.651,0.0303
+                cells: ["QA/QC procedures:", Cross-check against the as-built survey where one exists]
+              - form: row
+                at: page=6&bbox=0.153,0.4359,0.6659,0.0336
+                cells: ["Any comment:", Segments shorter than one metre may be merged with a neighbour]
+          - form: table
+            at: page=6&bbox=0.1433,0.4856,0.6793,0.2159
+            layout: key-value
+            num: "2"
+            scopes:
+              - form: caption
+                at: page=6&bbox=0.1433,0.4856,0.2226,0.0103
+                text: Data / Parameter table 2.
+              - form: row
+                at: page=6&bbox=0.1532,0.5162,0.3426,0.0133
+                cells: ["Data / parameter:", "$\\epsilon_{i}$"]
+              - form: row
+                at: page=6&bbox=0.1532,0.5347,0.4475,0.0102
+                cells: ["Data unit:", Dimensionless]
+              - form: row
+                at: page=6&bbox=0.1532,0.5535,0.648,0.0135
+                cells: ["Description:", Emissivity of the cladding of segment i]
+              - form: row
+                at: page=6&bbox=0.1535,0.5724,0.6662,0.0304
+                cells: ["Source of data:", "Manufacturer's data sheet, or the Office's table of defaults"]
+              - form: row
+                at: page=6&bbox=0.1532,0.6112,0.4433,0.0136
+                cells: ["Measurement procedures (if any):", Not measured]
+              - form: row
+                at: page=6&bbox=0.1532,0.6303,0.6586,0.0134
+                cells: ["Monitoring frequency:", Once at the start of the reporting period]
+              - form: row
+                at: page=6&bbox=0.1537,0.6491,0.6689,0.0304
+                cells: ["QA/QC procedures:", Use the default where the data sheet does not state a value]
+              - form: row
+                at: page=6&bbox=0.153,0.6887,0.3345,0.0128
+                cells: ["Any comment:", "-"]
+      - form: heading
+        at: page=6&bbox=0.1437,0.7248,0.3254,0.0135
+        level: 2
+        num: "6.2."
+        text: Data and parameters monitored
+        scopes:
+          - form: paragraph
+            at: page=6&bbox=0.1431,0.7523,0.7012,0.0335
+            num: "18."
+            text: "The following parameters are measured during the reporting period. Readings are kept in the operating log with the date, the instrument and the person taking them:"
+          - form: table
+            at: page=6&bbox=0.1433,0.7972,0.6893,0.0971;page=7&bbox=0.153,0.1049,0.6701,0.1506
+            layout: key-value
+            num: "3"
+            scopes:
+              - form: caption
+                at: page=6&bbox=0.1433,0.7972,0.2227,0.0103
+                text: Data / Parameter table 3.
+              - form: row
+                at: page=6&bbox=0.1532,0.8277,0.3703,0.0153
+                cells: ["Data / parameter:", "$T_{s,i,y}$"]
+              - form: row
+                at: page=6&bbox=0.1532,0.847,0.3411,0.0095
+                cells: ["Data unit:", K]
+              - form: row
+                at: page=6&bbox=0.1532,0.8651,0.6794,0.0135
+                cells: ["Description:", Surface temperature of segment i in year y]
+              - form: row
+                at: page=6&bbox=0.1535,0.884,0.4747,0.0103
+                cells: ["Source of data:", Site measurement]
+              - form: row
+                at: page=7&bbox=0.1532,0.1049,0.659,0.0337
+                cells: ["Measurement procedures (if any):", Contact sensor or hand-held infrared instrument at the middle of the segment]
+              - form: row
+                at: page=7&bbox=0.1532,0.144,0.654,0.0336
+                cells: ["Monitoring frequency:", At least monthly; weekly where the allowance of paragraph 13(a) is claimed]
+              - form: row
+                at: page=7&bbox=0.1537,0.1829,0.6694,0.0505
+                cells: ["QA/QC procedures:", Instruments calibrated annually; readings outside the range of the instrument discarded]
+              - form: row
+                at: page=7&bbox=0.153,0.242,0.6663,0.0135
+                cells: ["Any comment:", Readings during shutdowns are excluded]
+          - form: table
+            at: page=7&bbox=0.1433,0.2716,0.6966,0.1958
+            layout: key-value
+            num: "4"
+            scopes:
+              - form: caption
+                at: page=7&bbox=0.1433,0.2716,0.2226,0.0103
+                text: Data / Parameter table 4.
+              - form: row
+                at: page=7&bbox=0.1532,0.3021,0.3609,0.0153
+                cells: ["Data / parameter:", "$T_{a,y}$"]
+              - form: row
+                at: page=7&bbox=0.1532,0.3214,0.3411,0.0095
+                cells: ["Data unit:", K]
+              - form: row
+                at: page=7&bbox=0.1532,0.3395,0.6867,0.0134
+                cells: ["Description:", Ambient temperature of the space in year y]
+              - form: row
+                at: page=7&bbox=0.1535,0.3584,0.4747,0.0103
+                cells: ["Source of data:", Site measurement]
+              - form: row
+                at: page=7&bbox=0.1532,0.3771,0.682,0.0337
+                cells: ["Measurement procedures (if any):", Shielded thermometer at the mid-height of the space]
+              - form: row
+                at: page=7&bbox=0.1532,0.4162,0.617,0.0135
+                cells: ["Monitoring frequency:", At the time of each surface reading]
+              - form: row
+                at: page=7&bbox=0.1537,0.4351,0.5902,0.0134
+                cells: ["QA/QC procedures:", Instruments calibrated annually]
+              - form: row
+                at: page=7&bbox=0.153,0.4546,0.3345,0.0128
+                cells: ["Any comment:", "-"]
+          - form: table
+            at: page=7&bbox=0.1433,0.4836,0.6837,0.2359
+            layout: key-value
+            num: "5"
+            scopes:
+              - form: caption
+                at: page=7&bbox=0.1433,0.4836,0.2226,0.0103
+                text: Data / Parameter table 5.
+              - form: row
+                at: page=7&bbox=0.1532,0.5142,0.3435,0.0152
+                cells: ["Data / parameter:", "$t_{y}$"]
+              - form: row
+                at: page=7&bbox=0.1532,0.5327,0.3389,0.0102
+                cells: ["Data unit:", h]
+              - form: row
+                at: page=7&bbox=0.1532,0.5515,0.6498,0.0135
+                cells: ["Description:", Hours of operation of the run in year y]
+              - form: row
+                at: page=7&bbox=0.1535,0.5704,0.4415,0.0135
+                cells: ["Source of data:", Operating log]
+              - form: row
+                at: page=7&bbox=0.1532,0.5892,0.6738,0.0505
+                cells: ["Measurement procedures (if any):", Hours during which the fluid temperature at the inlet exceeded the ambient by more than ten kelvin]
+              - form: row
+                at: page=7&bbox=0.1532,0.6483,0.4402,0.0135
+                cells: ["Monitoring frequency:", Continuously]
+              - form: row
+                at: page=7&bbox=0.1537,0.6672,0.6337,0.0335
+                cells: ["QA/QC procedures:", Log reconciled with the plant control system quarterly]
+              - form: row
+                at: page=7&bbox=0.153,0.7067,0.3345,0.0128
+                cells: ["Any comment:", "-"]
+      - form: heading
+        at: page=7&bbox=0.1437,0.7429,0.185,0.0135
+        level: 2
+        num: "6.3."
+        text: Monitoring plan
+        scopes:
+          - form: paragraph
+            at: page=7&bbox=0.1447,0.7703,0.5266,0.0135
+            num: "19."
+            text: "The monitoring plan of the operator shall state, for each run:"
+          - form: list
+            at: page=7&bbox=0.1437,0.7952,0.6876,0.0909
+            scopes:
+              - form: list-item
+                at: page=7&bbox=0.1437,0.7952,0.5664,0.0137
+                num: "(a)"
+                text: The segments of the run with their lengths and outer diameters;
+              - form: list-item
+                at: page=7&bbox=0.1437,0.8239,0.6105,0.0136
+                num: "(b)"
+                text: The instrument used for each surface reading and its calibration date;
+              - form: list-item
+                at: page=7&bbox=0.1437,0.8525,0.6876,0.0336
+                num: "(c)"
+                text: The measurement arrangement claimed under paragraph 13 and the allowance applied.
+          - form: paragraph
+            at: page=8&bbox=0.143,0.1003,0.6909,0.0335
+            num: "20."
+            text: Deviations from the plan during the reporting period shall be listed in the report with their effect on the uncertainty allowance.
+  - form: heading
+    at: page=8&bbox=0.1443,0.1596,0.2698,0.0119
+    level: 1
+    num: "7."
+    text: Document information
+    scopes:
+      - form: paragraph
+        at: page=8&bbox=0.1431,0.1937,0.1378,0.0134
+        text: "Revision history:"
+      - form: table
+        at: page=8&bbox=0.1529,0.2239,0.6877,0.1297
+        layout: grid
+        scopes:
+          - form: row
+            at: page=8&bbox=0.1529,0.2239,0.3605,0.0128
+            cells: [Version, Date, Description]
+          - form: row
+            at: page=8&bbox=0.1537,0.2422,0.6273,0.0536
+            cells: ["02.1", "12 March 2026", Uncertainty allowance restated as a fraction; parameter tables aligned with the monitoring guidance]
+          - form: row
+            at: page=8&bbox=0.1537,0.3012,0.6869,0.0304
+            cells: ["02.0", "3 September 2024", Radiative part of the surface coefficient added; figure of a run added]
+          - form: row
+            at: page=8&bbox=0.1537,0.3402,0.3798,0.0134
+            cells: ["01.0", "21 May 2021", Initial adoption]
+      - form: definition-list
+        at: page=8&bbox=0.1498,0.3842,0.5892,0.0558
+        scopes:
+          - form: definition
+            at: page=8&bbox=0.1496,0.3816,0.2551,0.0162
+            cells: [Decision class, Regulatory]
+          - form: definition
+            at: page=8&bbox=0.1496,0.3957,0.2478,0.0162
+            cells: [Document type, Procedure]
+          - form: definition
+            at: page=8&bbox=0.1496,0.4098,0.2462,0.0162
+            cells: [Business function, Reporting]
+          - form: definition
+            at: page=8&bbox=0.1496,0.424,0.5903,0.0162
+            cells: [Keywords, "heat loss, insulation, pipework, surface temperature"]
+  - form: end-mark
+    at: page=8&bbox=0.4756,0.4937,0.0526,0.0009
+    text: "- - - - -"

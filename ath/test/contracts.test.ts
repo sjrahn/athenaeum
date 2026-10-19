@@ -1,6 +1,6 @@
 // contracts.test.ts — defineContract's declaration checks and parseArgv's token rules.
 import { describe, expect, test } from "bun:test";
-import { ContractUsageError, defineContract, parseArgv, usageText, z } from "../contracts/index.ts";
+import { ContractUsageError, defineContract, parseArgv, usageText, z } from "@ath/contracts";
 
 const c = defineContract({
   key: "t-cmd",
