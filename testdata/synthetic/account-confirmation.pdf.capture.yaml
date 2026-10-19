@@ -1,8 +1,0 @@
-# provenance of a local file, as the producer leaves it beside the bytes (D-sidecar)
-origin: banking-document
-via: export
-origin_fields:
-  institution: Example Building Society
-  document_type: account-confirmation
-  account_kind: current
-  account_ref: "****5678"

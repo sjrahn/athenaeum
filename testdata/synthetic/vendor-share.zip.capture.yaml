@@ -1,8 +1,0 @@
-# provenance of a local export, as the producer leaves it beside the bytes (D-sidecar)
-origin: vendor-download
-via: export
-origin_fields:
-  vendor: Example Boards
-  category: HL series downloads
-  share_cid: 00000000c0de
-  retrieved_at: "2026-02-02T11:00:00Z"

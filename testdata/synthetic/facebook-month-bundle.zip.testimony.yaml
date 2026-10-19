@@ -1,0 +1,11 @@
+subject: b3:e82abeed5b994c8ac3fcc048ef9a9ef56fdf9be485e06ad1bbee88df815f50bb
+producer:
+  tool: facebook-export-bundle
+  version: "1"
+  at: "2026-04-02T00:00:00Z"
+source:
+  period: "2026-03"
+  account: eli.hale
+  exported_at: "2026-04-02"
+  source_export: facebook-eli.hale-2026-04-02.zip
+via: export

@@ -1,0 +1,14 @@
+subject: b3:6d4a69b2935ac22f1eb8e5b3236448a1a2e07bdc6ed51aa00cfc3b744ce430e8
+producer:
+  tool: owner-statement
+  version: "1"
+  at: "2026-03-12T21:40:00Z"
+source:
+  channel: talk
+  channel_ref: "2026-03-12-evening"
+  authored_at: "2026-03-12T21:40:00Z"
+  target: mooring plan
+  recorded_by: assistant
+  transform: verbatim
+  redacted: none
+via: upload

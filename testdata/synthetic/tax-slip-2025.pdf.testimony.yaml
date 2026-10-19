@@ -1,0 +1,12 @@
+subject: b3:9c7ac767810beee6fbb6c41dd874ed5915d70026c8c054ae42be7332d6ba0ae4
+producer:
+  tool: tax-slip
+  version: "1"
+  at: "2026-03-02T00:00:00Z"
+source:
+  slip_type: remuneration
+  tax_year: 2025
+  issuer: Harbour Stores Ltd
+  slip_status: original
+  as_of: "2026-03-02"
+via: export

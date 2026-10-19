@@ -1,0 +1,10 @@
+subject: b3:8c73633d06364efe3dd483cb1fceebccae53dbbbc43586ea3bc704827c1fada9
+producer:
+  tool: google-timeline-export
+  version: "1"
+  at: "2026-04-01T00:00:00Z"
+source:
+  account: ada.abbott@example.invalid
+  device: Phone 12
+  exported_at: "2026-04-01"
+via: export

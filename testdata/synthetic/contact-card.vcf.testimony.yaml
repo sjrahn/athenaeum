@@ -1,0 +1,9 @@
+subject: b3:75eee68fdbadde02da00b5004924dc771245aca6a4b864b0b257cf254d9844fe
+producer:
+  tool: icloud-contacts-card
+  version: "1"
+  at: "2026-03-01T00:00:00Z"
+source:
+  account: ada.abbott@example.invalid
+  exported_at: "2026-03-01"
+via: export

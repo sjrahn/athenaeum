@@ -12,7 +12,7 @@
 //   takeout  a Google Takeout slice (Fit TCX, Contacts, Maps, Keep, Calendar, the archive browser)
 //   drive    a Drive download job (a flat folder of documents)
 //   profile  a harvested profile year in the owner's export layout
-// Every bundle gets a `.capture.yaml` in its origin's shape. Fictional everything; generated prose and numbers.
+// Every bundle gets its testimony beside it (`testimony.ts`), in the contract's shape. Fictional everything; generated prose and numbers.
 //
 //   bun testdata/synthetic/gen/bundles2.ts [--only amazon,uber,health,unraid,obsidian,vendor,claude,bank,camera,takeout,drive,profile]
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -20,6 +20,7 @@ import { dirname, join } from "node:path";
 import { png } from "./lib/png.ts";
 import { FIRST, LAST, int, lcg, paragraph, pick, sentence } from "./lib/rand.ts";
 import { dosStamp, zip, type ZipEntry } from "./lib/zip.ts";
+import { writeTestimony } from "./testimony.ts";
 
 const HERE = dirname(Bun.fileURLToPath(import.meta.url));
 const SYN = join(HERE, "..");
@@ -29,7 +30,6 @@ const out = (name: string, bytes: Uint8Array) => {
   writeFileSync(join(SYN, name), bytes);
   console.log(`wrote ${name} (${bytes.length} bytes)`);
 };
-const sidecar = (name: string, body: string) => writeFileSync(join(SYN, `${name}.capture.yaml`), `# provenance of a local export, as the producer leaves it beside the bytes (D-sidecar)\n${body}`);
 const run = (cmd: string[]) => {
   const r = Bun.spawnSync(cmd, { stdout: "pipe", stderr: "pipe" });
   if (r.exitCode !== 0) throw new Error(`${cmd[0]}: ${r.stderr.toString()}`);
@@ -89,7 +89,7 @@ const gens: Record<string, () => void> = {
       { path: "readme.txt", bytes: e("Your data request. Each folder holds one category as CSV. Fictional delivery for the regression suite.\n"), dos: dos(3, 10) },
     ];
     out("orders-delivery.zip", zip(entries));
-    sidecar("orders-delivery.zip", `origin: amazon-export\nvia: export\norigin_fields:\n  category: Your Orders\n  delivery: Request My Data 2026-03-10\n  exported_at: "2026-03-10"\n  exported_at_basis: delivery email\n  account: harbour.orders@example.invalid\n`);
+    void writeTestimony("orders-delivery.zip");
   },
   uber() {
     const r = lcg(202);
@@ -103,7 +103,7 @@ const gens: Record<string, () => void> = {
       { path: "README.txt", bytes: e("This archive holds the personal data you requested, one CSV per category.\nFictional export for the regression suite.\n"), dos: dos(3, 12) },
     ];
     out("rides-export.zip", zip(entries));
-    sidecar("rides-export.zip", `origin: uber-export\nvia: export\norigin_fields:\n  request_id: 00000000-0000-4000-8000-00000000c0de\n  account: ada.abbott@example.invalid\n`);
+    void writeTestimony("rides-export.zip");
   },
   health() {
     const r = lcg(203);
@@ -137,7 +137,7 @@ const gens: Record<string, () => void> = {
       { path: "apple_health_export/clinical-records/Immunization-00000000-0000-4000-8000-00000000c0de.json", bytes: e(`${JSON.stringify({ resourceType: "Immunization", id: "00000000-0000-4000-8000-00000000c0de", status: "completed", vaccineCode: { text: "Seasonal influenza" }, occurrenceDateTime: "2025-10-12" }, null, 2)}\n`), dos: dos(4, 1) },
     ];
     out("health-export.zip", zip(entries));
-    sidecar("health-export.zip", `origin: apple-health-export\nvia: export\norigin_fields:\n  exported_at: "2026-04-01T07:00:00Z"\n  account: ada.abbott@example.invalid\n  device: Phone 12\n`);
+    void writeTestimony("health-export.zip");
   },
   unraid() {
     const r = lcg(204);
@@ -154,7 +154,7 @@ const gens: Record<string, () => void> = {
     entries.push({ path: `${d}/logs/syslog.txt`, bytes: e(Array.from({ length: 80 }, (_, i) => `Mar 12 0${i % 9}:${String(i % 60).padStart(2, "0")}:00 lantern kernel: ${pick(r, ["md: sync done", "eth0: link up", "emhttpd: shcmd (1): /etc/rc.d/rc.docker start", "nginx: worker started"])}`).join("\n")), dos: dos(3, 12) });
     entries.push({ path: `${d}/${host}-diagnostics.txt`, bytes: e("Diagnostics generated 2026-03-12 09:15 by a fictional homelab host for the regression suite.\n"), dos: dos(3, 12) });
     out("host-diagnostics.zip", zip(entries));
-    sidecar("host-diagnostics.zip", `origin: host-diagnostic\nvia: export\norigin_fields:\n  host: lantern\n  system: unraid 7.0.0\n  command: diagnostics\n  produced_at: "2026-03-12T09:15:00Z"\n  produced_on: lantern\n  actor: owner\n  redacted: none\n`);
+    void writeTestimony("host-diagnostics.zip");
   },
   obsidian() {
     const r = lcg(205);
@@ -172,7 +172,7 @@ const gens: Record<string, () => void> = {
       { path: "Harbour/clippings/Harbour notice.md", bytes: e(`---\nsource: https://example.invalid/notices/2026-03\nclipped: 2026-03-14\n---\n\n${paragraph(r)}\n`), dos: dos(3, 14) },
     ];
     out("vault-subtree.zip", zip(entries));
-    sidecar("vault-subtree.zip", `origin: obsidian-vault\nvia: export\norigin_fields:\n  vault_name: Harbour\n  vault_root: ~/Documents/Harbour\n  subtree: /\n  host: lantern\n  exported_at: "2026-03-14T20:00:00Z"\n  note_count: 7\n  excluded: [.trash]\n  command: corpus assemble\n  actor: owner\n  redacted: none\n`);
+    void writeTestimony("vault-subtree.zip");
   },
   vendor() {
     const r = lcg(206);
@@ -197,7 +197,7 @@ const gens: Record<string, () => void> = {
       { path: "Readme.txt", bytes: e("Download share of a fictional vendor, assembled for the regression suite.\n"), dos: dos(2, 2) },
     ];
     out("vendor-share.zip", zip(entries));
-    sidecar("vendor-share.zip", `origin: vendor-download\nvia: export\norigin_fields:\n  vendor: Example Boards\n  category: HL series downloads\n  share_cid: 00000000c0de\n  retrieved_at: "2026-02-02T11:00:00Z"\n`);
+    void writeTestimony("vendor-share.zip");
   },
   claude() {
     const r = lcg(207);
@@ -216,14 +216,14 @@ const gens: Record<string, () => void> = {
       { path: `${sid}/workflow-state.json`, bytes: e(`${JSON.stringify({ phase: "done", steps: 3 }, null, 2)}\n`), method: 93, dos: dos(3, 20) },
     ];
     out("agent-session.zip", zip(entries));
-    sidecar("agent-session.zip", `origin: claude-code-session\nvia: export\norigin_fields:\n  session_id: ${sid}\n  host: lantern\n  project_dir: /home/owner/work/harbour\n  cwd: /home/owner/work/harbour\n  claude_code_version: 2.1.0\n  record_count: 46\n  message_count: 40\n  subagent_count: 1\n  captured_at: "2026-03-20T11:00:00Z"\n  activity_start: "2026-03-20T10:00:00Z"\n  activity_end: "2026-03-20T10:04:33Z"\n`);
+    void writeTestimony("agent-session.zip");
   },
   bank() {
     const r = lcg(208);
     const entries: ZipEntry[] = [];
     for (let m = 1; m <= 12; m++) entries.push({ path: `2025/Statement-2025-${String(m).padStart(2, "0")}.pdf`, bytes: statementPdf(r, m, "Ada Abbott", "00-00-00 12345678"), dos: dos(1, 15) });
     out("statements-year.zip", zip(entries));
-    sidecar("statements-year.zip", `origin: bank-statement\nvia: export\norigin_fields:\n  institution: Example Building Society\n  product: Everyday account\n  account_ref: "****5678"\n  account_kind: current\n  statement_date: monthly\n  coverage: 2025\n`);
+    void writeTestimony("statements-year.zip");
   },
   camera() {
     rmSync(TMP, { recursive: true, force: true });
@@ -284,7 +284,7 @@ const gens: Record<string, () => void> = {
     entries.push({ path: "PRIVATE/M4ROOT/CLIP/C0001M01.XML", bytes: e(`<?xml version="1.0" encoding="UTF-8"?>\n<NonRealTimeMeta xmlns="urn:schemas-professionalDisc:nonRealTimeMeta:ver.2.20" lastUpdate="2026-03-02T10:14:00Z"><TargetMaterial umidRef="060A2B340101010501010D4313000000"/><Duration value="25"/><CreationDate value="2026-03-02T10:14:00Z"/><Device manufacturer="Sony" modelName="ILCE-7CM2" serialNo="0000000"/><VideoFormat><VideoFrame videoCodec="AVC_3840_2160_HP@L51" captureFps="25p"/></VideoFormat></NonRealTimeMeta>\n`), dos: dos(3, 2) });
     entries.push({ path: "PRIVATE/M4ROOT/MEDIAPRO.XML", bytes: e(`<?xml version="1.0" encoding="UTF-8"?>\n<MediaProfile xmlns="http://xmlns.sony.net/pro/metadata/mediaprofile" version="1.00"><Contents><Material uri="./CLIP/C0001.MP4" type="MP4"/></Contents></MediaProfile>\n`), dos: dos(3, 2) });
     out("card-dump.zip", zip(entries));
-    sidecar("card-dump.zip", `origin: camera-sd-dump\nvia: export\norigin_fields:\n  card_uuid: 0000-C0DE\n  card_filesystem: exfat\n  card_capacity_bytes: 128000000000\n  reader: usb\n  copied_at: "2026-03-02T18:00:00Z"\n  copy_method: rsync\n  dump_file_count: 9\n  dump_bytes: 0\n  excluded: []\n  already_held: 0\n  command: corpus assemble\n  actor: owner\n  redacted: none\n`);
+    void writeTestimony("card-dump.zip");
     rmSync(TMP, { recursive: true, force: true });
   },
   takeout() {
@@ -303,7 +303,7 @@ const gens: Record<string, () => void> = {
       { path: "Takeout/Saved/Favourite places.csv", bytes: csv([["Title", "Note", "URL"], ["Harbour", "", "https://maps.example.invalid/?cid=1"]]), dos: dos(4, 1) },
     ];
     out("takeout-slice.zip", zip(entries));
-    sidecar("takeout-slice.zip", `origin: google-takeout\nvia: export\norigin_fields:\n  account: ada.abbott@example.invalid\n  exported_at: "2026-04-01T03:00:00Z"\n  services: [Fit, Contacts, Maps, Keep, Calendar, Saved]\n  part: "001"\n  job: takeout-20260401T030000Z\n`);
+    void writeTestimony("takeout-slice.zip");
   },
   drive() {
     const r = lcg(211);
@@ -314,7 +314,7 @@ const gens: Record<string, () => void> = {
       { path: "Harbour plans/Quay photo.png", bytes: png(32, 20, (x, y) => [x * 7, 120, y * 10]), method: 0, dos: dos(3, 18) },
     ];
     out("drive-folder.zip", zip(entries));
-    sidecar("drive-folder.zip", `origin: google-drive-export\nvia: export\norigin_fields:\n  account: ada.abbott@example.invalid\n  folder: Harbour plans\n  exported_at: "2026-03-18T16:00:00Z"\n  coverage: the folder, whole\n  part: "001"\n`);
+    void writeTestimony("drive-folder.zip");
   },
   profile() {
     const r = lcg(212);
@@ -326,7 +326,7 @@ const gens: Record<string, () => void> = {
       { path: "your_facebook_activity/posts/media/videos/0.mp4", bytes: new Uint8Array(readFileSync(join(SYN, "countdown.mp4"))), method: 0, dos: dos(4, 2) },
     ];
     out("profile-year.zip", zip(entries));
-    sidecar("profile-year.zip", `origin: facebook-profile-year\nvia: export\norigin_fields:\n  profile: bo.calder\n  profile_id: "100000000000001"\n  profile_name: Bo Calder\n  year: 2026\n  captured_at: "2026-04-02T09:00:00Z"\n  harvester: harvest 1.4\n  converter: convert 1.4\n  redacted: none\n  counts: {posts: 6, comments: 5, photos: 3, videos: 1}\n  short: false\n`);
+    void writeTestimony("profile-year.zip");
   },
 };
 const only = process.argv.includes("--only") ? process.argv[process.argv.indexOf("--only") + 1]!.split(",") : Object.keys(gens);

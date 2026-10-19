@@ -1,0 +1,12 @@
+subject: b3:e635ad727152ed032d8bbde3a56a2f97b5821b42da9c1b851408162cf6c28d23
+producer:
+  tool: amazon-export
+  version: "1"
+  at: "2026-03-10T00:00:00Z"
+source:
+  category: Your Orders
+  delivery: Request My Data 2026-03-10
+  exported_at: "2026-03-10"
+  exported_at_basis: delivery email
+  account: harbour.orders@example.invalid
+via: export

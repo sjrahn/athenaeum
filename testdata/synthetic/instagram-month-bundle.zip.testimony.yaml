@@ -1,0 +1,11 @@
+subject: b3:2997cc1236fc3fa8ac6010cb8fe4818accb914d8a0efb8dbc60b0bda07939135
+producer:
+  tool: instagram-export-bundle
+  version: "1"
+  at: "2026-04-02T00:00:00Z"
+source:
+  period: "2026-03"
+  account: eli.judd
+  exported_at: "2026-04-02"
+  source_export: instagram-eli.judd-2026-04-02.zip
+via: export

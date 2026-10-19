@@ -1,0 +1,11 @@
+subject: b3:7b2edf118bd04aca3b665e230b1a75ef9925130d30e249671b53390aa8b5efa5
+producer:
+  tool: banking-document
+  version: "1"
+  at: "2026-03-20T00:00:00Z"
+source:
+  institution: Example Building Society
+  document_type: account-confirmation
+  account_kind: current
+  account_ref: "****5678"
+via: export

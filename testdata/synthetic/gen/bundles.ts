@@ -7,7 +7,7 @@
 //   imessage a week of iMessage conversation pages (lib: conversation-page.ts)
 //   proton   a Proton Mail export month (`<id>.eml` + `<id>.metadata.json` pairs)
 //   photos   a photo-library period batch (originals, sidecar JSON, an edited render, a clip)
-// Every bundle gets a `.capture.yaml` in its origin's shape. Fictional accounts; generated chatter; rasters from
+// Every bundle gets its testimony beside it (`testimony.ts`), in the contract's shape. Fictional accounts; generated chatter; rasters from
 // lib/png.ts, the gif and mp4 from the committed synthetic files, HEIC/JPG/MOV from heif-enc, ImageMagick, ffmpeg.
 //
 //   bun testdata/synthetic/gen/bundles.ts [--only meta,gchat,imessage,proton,photos]
@@ -18,6 +18,7 @@ import { qp } from "./mailing.ts";
 import { png } from "./lib/png.ts";
 import { FIRST, LAST, int, lcg, pick, sentence } from "./lib/rand.ts";
 import { dosStamp, zip, type ZipEntry } from "./lib/zip.ts";
+import { writeTestimony } from "./testimony.ts";
 
 const HERE = dirname(Bun.fileURLToPath(import.meta.url));
 const SYN = join(HERE, "..");
@@ -27,7 +28,6 @@ const out = (name: string, bytes: Uint8Array | string) => {
   writeFileSync(join(SYN, name), bytes);
   console.log(`wrote ${name}${typeof bytes === "string" ? "" : ` (${bytes.length} bytes)`}`);
 };
-const sidecar = (name: string, body: string) => writeFileSync(join(SYN, `${name}.capture.yaml`), `# provenance of a local export, as the producer leaves it beside the bytes (D-sidecar)\n${body}`);
 const run = (cmd: string[]) => {
   const r = Bun.spawnSync(cmd, { stdout: "pipe", stderr: "pipe" });
   if (r.exitCode !== 0) throw new Error(`${cmd[0]}: ${r.stderr.toString()}`);
@@ -109,7 +109,7 @@ function meta(app: "facebook" | "instagram" | "threads") {
   }
   const acct = `${me.toLowerCase().replace(" ", ".")}`;
   out(`${app}-month-bundle.zip`, zip(entries));
-  sidecar(`${app}-month-bundle.zip`, `origin: ${app}-export-bundle\nvia: export\norigin_fields:\n  period: "2026-03"\n  account: ${acct}\n  exported_at: "2026-04-02"\n  source_export: ${app}-${acct}-2026-04-02.zip\n`);
+  void writeTestimony(`${app}-month-bundle.zip`);
   out(`${app}-thread.json`, standalone!);
 }
 
@@ -153,7 +153,7 @@ function gchat() {
     { path: "Groups/Space AAAAx1y2z3w/group_info.json", bytes: sp.info, dos: dos(31) },
   ];
   out("chat-month-bundle.zip", zip(entries));
-  sidecar("chat-month-bundle.zip", `origin: google-chat-export-bundle\nvia: export\norigin_fields:\n  period: "2026-03"\n  account: ${email(people[0]!)}\n  exported_at: "2026-04-01T03:00:00Z"\n  source_export: takeout-20260401T030000Z-001.zip\n`);
+  void writeTestimony("chat-month-bundle.zip");
   out("chat-space.json", space("Space BBBBq9r8s7t", people.slice(0, 3), 36, false).messages); // distinct bytes from the bundle's
 }
 
@@ -166,7 +166,7 @@ function imessage() {
     entries.push({ path: `${handle}.html`, bytes: e(conversationPage(handle, name(r), "2026-03", 100 + i, 12 + i * 6)), dos: dos(29) });
   }
   out("messages-week-bundle.zip", zip(entries));
-  sidecar("messages-week-bundle.zip", `origin: imessage-export-bundle\nvia: export\norigin_fields:\n  period: 2026-W13\n  exported_at: "2026-03-30T04:00:00Z"\n  assembled_from: imessage-exporter 3.0.0 + inliner 1.2\n`);
+  void writeTestimony("messages-week-bundle.zip");
 }
 
 // ── Proton Mail export month ────────────────────────────────────────────────────────────────────────────────────────
@@ -198,7 +198,7 @@ function proton() {
     entries.push({ path: `${id}.eml`, bytes: e(eml), dos: dos(1 + i * 4) }, { path: `${id}.metadata.json`, bytes: e(`${JSON.stringify(meta, null, 2)}\n`), dos: dos(1 + i * 4) });
   }
   out("mail-month-bundle.zip", zip(entries));
-  sidecar("mail-month-bundle.zip", `origin: proton-mail-export\nvia: export\norigin_fields:\n  period: "2026-03"\n  account: ${me.toLowerCase().replace(" ", ".")}@proton.example\n  exported_at: "2026-04-03T01:00:00Z"\n  member_count: 6\n  sidecar_count: 6\n  date_axis: Payload.Time\n`);
+  void writeTestimony("mail-month-bundle.zip");
 }
 
 // ── photo-library period batch ──────────────────────────────────────────────────────────────────────────────────────
@@ -238,7 +238,7 @@ function photos() {
   entries.push({ path: "IMG_0006.PNG", bytes: png(32, 32, (x, y) => [x * 8, y * 8, 200]), method: 0, dos: dos(22) });
   entries.push({ path: "IMG_0006.json", bytes: side("IMG_0006.PNG", "00000006-0000-4000-8000-00000000c0de", t + 86400000 * 7, { isscreenshot: true }), dos: dos(22) });
   out("photos-month-bundle.zip", zip(entries));
-  sidecar("photos-month-bundle.zip", `origin: osxphotos-export\nvia: export\norigin_fields:\n  period: "2026-03"\n  account: library@example.invalid\n  exported_at: "2026-04-05T02:00:00Z"\n  coverage: full library\n`);
+  void writeTestimony("photos-month-bundle.zip");
   rmSync(TMP, { recursive: true, force: true });
 }
 

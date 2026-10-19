@@ -9,6 +9,7 @@ import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { png } from "./lib/png.ts";
 import { int, lcg, pick, sentence } from "./lib/rand.ts";
+import { writeTestimony } from "./testimony.ts";
 
 const SYN = join(dirname(Bun.fileURLToPath(import.meta.url)), "..");
 const OUT = join(SYN, "quay-messages.html");
@@ -73,9 +74,6 @@ if (import.meta.main) {
   const PERIOD = "2026-03";
   const html = conversationPage(HANDLE, "Bo Calder", PERIOD, 7700);
   writeFileSync(OUT, html);
-  writeFileSync(
-    `${OUT}.capture.yaml`,
-    `# provenance of a local export, as the producer leaves it beside the bytes (D-sidecar)\norigin: imessage-export\nvia: export\nfetched_at: "2026-04-01T06:00:00Z"\nsnapshot_engine: imessage-exporter 3.0.0\norigin_fields:\n  schema: imessage-export\n  handle: "${HANDLE}"\n  period: "${PERIOD}"\n`,
-  );
+  void writeTestimony("quay-messages.html");
   console.log(`wrote ${OUT} (${html.length} chars) + sidecar`);
 }

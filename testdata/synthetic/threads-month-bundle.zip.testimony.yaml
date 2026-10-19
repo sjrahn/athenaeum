@@ -1,0 +1,11 @@
+subject: b3:a55a755c4e751fbb987eb307ceb4a9111be4f6f133ea4d32bc0aff6896998866
+producer:
+  tool: threads-export-bundle
+  version: "1"
+  at: "2026-04-02T00:00:00Z"
+source:
+  period: "2026-03"
+  account: eli.lowe
+  exported_at: "2026-04-02"
+  source_export: threads-eli.lowe-2026-04-02.zip
+via: export

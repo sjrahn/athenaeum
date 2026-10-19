@@ -1,0 +1,11 @@
+subject: b3:fb67bd410ffd71eb2b161bb3f1aaf4e6cae49c9dc2788726945074b63251e5bc
+producer:
+  tool: google-chat-export-bundle
+  version: "1"
+  at: "2026-04-01T03:00:00Z"
+source:
+  period: "2026-03"
+  account: fay.frost@example.invalid
+  exported_at: "2026-04-01T03:00:00Z"
+  source_export: takeout-20260401T030000Z-001.zip
+via: export

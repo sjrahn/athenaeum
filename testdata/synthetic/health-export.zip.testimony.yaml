@@ -1,0 +1,10 @@
+subject: b3:bc55b3a4d2c117a93f3d02fc4c927d6ad20e202dbe8f9881cbc81e83b8417006
+producer:
+  tool: apple-health-export
+  version: "1"
+  at: "2026-04-01T07:00:00Z"
+source:
+  exported_at: "2026-04-01T07:00:00Z"
+  account: ada.abbott@example.invalid
+  device: Phone 12
+via: export

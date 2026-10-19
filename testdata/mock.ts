@@ -477,7 +477,7 @@ prop(home, "display-name", "string", true);
 prop(home, "length", "decimal", true);
 
 const zipBytes = readFileSync(join(SYN, "drive-folder.zip"));
-const drive = await ingest(home, zipBytes, "drive-folder.zip", readFileSync(join(SYN, "drive-folder.zip.capture.yaml")));
+const drive = await ingest(home, zipBytes, "drive-folder.zip", readFileSync(join(SYN, "drive-folder.zip.testimony.yaml")));
 // a recording: one record, its video and audio tracks listed as parts with their intrinsics; nothing said yet
 await ingest(home, readFileSync(join(SYN, "harbour-clip.mov")), "harbour-clip.mov", null);
 const part = (suffix: string) => drive.parts.find((p) => p.path.endsWith(suffix))!;

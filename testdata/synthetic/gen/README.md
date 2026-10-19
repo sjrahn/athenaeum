@@ -11,16 +11,16 @@ tier"). Run from the repo root.
 | `plain.ts` | `countdown.mp4` | ffmpeg (libx264 + aac) | no (encoder, muxer timestamps) |
 | `plain.ts` | `till-receipt.typ`, `till-receipt.pdf` | typst 0.15.1 | yes |
 | `thread.ts` | `harbourboard-thread.html` | the script itself | yes |
-| `conversation-page.ts` | `quay-messages.html` + `.capture.yaml` | the script itself (`lib/png.ts` for the inlined images) | yes |
+| `conversation-page.ts` | `quay-messages.html` + `.testimony.yaml` | the script itself (`lib/png.ts` for the inlined images) | yes |
 | `manual-page.ts` | `pump-service-manual.html` | the script itself | yes |
-| `bundles.ts` | `facebook-/instagram-/threads-month-bundle.zip`, `*-thread.json`, `chat-month-bundle.zip`, `chat-space.json`, `messages-week-bundle.zip`, `mail-month-bundle.zip`, each with a `.capture.yaml` | the script itself (`lib/zip.ts`, `lib/png.ts`; the gif and mp4 members are the committed synthetic files) | yes |
+| `bundles.ts` | `facebook-/instagram-/threads-month-bundle.zip`, `*-thread.json`, `chat-month-bundle.zip`, `chat-space.json`, `messages-week-bundle.zip`, `mail-month-bundle.zip`, each with a `.testimony.yaml` | the script itself (`lib/zip.ts`, `lib/png.ts`; the gif and mp4 members are the committed synthetic files) | yes |
 | `bundles.ts` | `photos-month-bundle.zip` | heif-enc, ImageMagick, ffmpeg for the originals | no (encoders) |
-| `bundles2.ts` | `orders-delivery.zip`, `rides-export.zip`, `health-export.zip`, `host-diagnostics.zip`, `vault-subtree.zip`, `vendor-share.zip`, `agent-session.zip`, `takeout-slice.zip`, `profile-year.zip`, each with a `.capture.yaml` | the script itself (`lib/zip.ts`, `lib/png.ts`; typst for the PDFs inside) | yes |
+| `bundles2.ts` | `orders-delivery.zip`, `rides-export.zip`, `health-export.zip`, `host-diagnostics.zip`, `vault-subtree.zip`, `vendor-share.zip`, `agent-session.zip`, `takeout-slice.zip`, `profile-year.zip`, each with a `.testimony.yaml` | the script itself (`lib/zip.ts`, `lib/png.ts`; typst for the PDFs inside) | yes |
 | `bundles2.ts` | `statements-year.zip`, `drive-folder.zip` | typst 0.15.1 for the PDFs | yes |
 | `bundles2.ts` | `card-dump.zip` | hand-written TIFF-shaped ARW; heif-enc and ffmpeg for the HIF and the clip | no (encoders) |
 | `media.ts` | `harbour-clip.mov`, `phone-clip.3gp`, `stream.h264`, `stream.h265`, `stream.ivf`, `tone.opus`, `tone.aac`, `tone.mp3`, `animation.gif`, `subtitled.mp4` | ffmpeg (libx264, libx265, libaom-av1, libopus, aac, lame) | no (encoders) |
 | `media.ts` | `scan.tiff`, `still.avif`, `favicon.ico` | ImageMagick 7 | no (encoder) |
-| `documents.ts` | `statement-2026-03.pdf`, `tax-slip-2025.pdf`, `policy-schedule.pdf`, `account-confirmation.pdf`, `chart-printout.pdf`, `design-export.pdf` (each with a `.capture.yaml`) | typst 0.15.1 | yes |
+| `documents.ts` | `statement-2026-03.pdf`, `tax-slip-2025.pdf`, `policy-schedule.pdf`, `account-confirmation.pdf`, `chart-printout.pdf`, `design-export.pdf` (each with a `.testimony.yaml`) | typst 0.15.1 | yes |
 | `documents.ts` | `regatta-roles.docx`, `owner-statement.md`, `contact-card.vcf`, `sms-2026-03.ndjson`, `location-history.json`, `tidewatch.css`, `tidewatch.ts`, `tidewatch.py`, `harbour-events.ics`, `walk.gpx` | the script itself | yes |
 | `pages.ts` | `harbour-article.html`, `rope-product.html`, `order-detail.html`, `cottage-listing.html` | the script itself | yes |
 | `odds.ts` | `reference.zim`, `region.osm.pbf`, `bracket.FCStd`, `notes.txt.gz` | the script itself (`lib/zip.ts`, node zlib) | yes |

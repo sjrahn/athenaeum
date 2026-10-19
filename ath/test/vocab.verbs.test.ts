@@ -97,11 +97,12 @@ describe("tree", () => {
       { pred: "select", val: { selector: "Harbour plans/*.pdf", form: "attachment" } },
     );
     const work = scratch();
-    for (const f of ["facebook-thread.json", "drive-folder.zip", "drive-folder.zip.capture.yaml"])
+    for (const f of ["facebook-thread.json", "drive-folder.zip", "drive-folder.zip.testimony.yaml"])
       copyFileSync(join(SYN, f), join(work, f));
     expect((await ath(["--root", root, "ingest", "facebook-thread.json"], { env, cwd: work })).code).toBe(0);
     expect(
-      (await ath(["--root", root, "ingest", "drive-folder.zip", "--testimony", "drive-folder.zip.capture.yaml"], { env, cwd: work })).code,
+      (await ath(["--root", root, "ingest", "drive-folder.zip", "--testimony", "drive-folder.zip.testimony.yaml"], { env, cwd: work }))
+        .code,
     ).toBe(0);
     const t = await ath(["--json", "tree", "b3387f88"], { env, cwd: root });
     expect(t.code, t.stdout).toBe(0);

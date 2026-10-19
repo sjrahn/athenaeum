@@ -1,8 +1,10 @@
-# provenance of a local export, as the producer leaves it beside the bytes (D-sidecar)
-origin: camera-sd-dump
-via: export
-origin_fields:
-  card_uuid: 0000-C0DE
+subject: b3:08ac924b1b01e9f58d9c8b5908e0e52d13127273948fae6b658c286f1f0723bf
+producer:
+  tool: camera-sd-dump
+  version: "1"
+  at: "2026-03-02T18:00:00Z"
+source:
+  card_uuid: "0000-C0DE"
   card_filesystem: exfat
   card_capacity_bytes: 128000000000
   reader: usb
@@ -15,3 +17,4 @@ origin_fields:
   command: corpus assemble
   actor: owner
   redacted: none
+via: export

@@ -1,0 +1,10 @@
+subject: b3:7c75a49d830b525cef5f156a47057e5e922e729365e02d53df7aa161a8a7198f
+producer:
+  tool: imessage-export-bundle
+  version: "1"
+  at: "2026-03-30T04:00:00Z"
+source:
+  period: "2026-W13"
+  exported_at: "2026-03-30T04:00:00Z"
+  assembled_from: imessage-exporter 3.0.0 + inliner 1.2
+via: export

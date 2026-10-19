@@ -62,7 +62,7 @@ export const ingestCommand = defineCommand({
     tier: "write",
     mutating: true,
     locks: ["repository", "index"],
-    examples: ["ath ingest statement-03.pdf", "ath ingest photo.jpg --testimony photo.capture.yaml"],
+    examples: ["ath ingest statement-03.pdf", "ath ingest photo.jpg --testimony capture.yaml"],
   },
   contract,
   async run(ctx, a) {
@@ -120,7 +120,7 @@ export const ingestCommand = defineCommand({
         for (const t of explicit)
           if (!t.used && (t.subject === `b3:${hash}` || a.files.length === 1)) {
             t.used = true;
-            delivered.push(t);
+            if (!delivered.some((d) => d.path === t.path)) delivered.push(t);
           }
         // admission: every delivered testimony, before anything is placed
         const problems: string[] = [];

@@ -64,8 +64,8 @@ describe("instance init", () => {
 describe("ingest", () => {
   test("a container with its testimony: admitted, placed, receipted, and its record written with the projection", async () => {
     const root = await init(join(scratch(), "household"));
-    const work = stage("drive-folder.zip", "drive-folder.zip.capture.yaml");
-    const r = await ath(["--json", "--root", root, "ingest", "drive-folder.zip", "--testimony", "drive-folder.zip.capture.yaml"], {
+    const work = stage("drive-folder.zip", "drive-folder.zip.testimony.yaml");
+    const r = await ath(["--json", "--root", root, "ingest", "drive-folder.zip", "--testimony", "drive-folder.zip.testimony.yaml"], {
       env,
       cwd: work,
     });
@@ -82,7 +82,7 @@ describe("ingest", () => {
     expect(existsSync(join(host.data, "artifacts", "da", ZIP))).toBe(true);
     const t = out[0]!.testimony[0]!.hash;
     expect(readFileSync(join(host.data, "testimony", t.slice(0, 2), t), "utf8")).toBe(
-      readFileSync(join(SYN, "drive-folder.zip.capture.yaml"), "utf8"),
+      readFileSync(join(SYN, "drive-folder.zip.testimony.yaml"), "utf8"),
     );
     const receipt = JSON.parse(readFileSync(join(host.data, "testimony", out[0]!.receipt.slice(0, 2), out[0]!.receipt), "utf8"));
     expect(Object.keys(receipt)).toEqual(["actor", "artifact", "instance", "name", "received", "testimony"]);
@@ -91,12 +91,12 @@ describe("ingest", () => {
       artifact: ZIP,
       name: "drive-folder.zip",
       received: "2026-03-20T09:00:00Z",
-      testimony: [{ hash: t, name: "drive-folder.zip.capture.yaml" }],
+      testimony: [{ hash: t, name: "drive-folder.zip.testimony.yaml" }],
     });
 
     // met again, with the same testimony: a second receipt, no second origin
     const again = json<{ results: { status: string }[] }>(
-      await ath(["--json", "--root", root, "ingest", "drive-folder.zip", "--testimony", "drive-folder.zip.capture.yaml"], {
+      await ath(["--json", "--root", root, "ingest", "drive-folder.zip", "--testimony", "drive-folder.zip.testimony.yaml"], {
         env,
         cwd: work,
         wall: () => new Date("2026-03-21T10:00:00Z"),
@@ -160,28 +160,28 @@ describe("ingest", () => {
 
   test("a testimony that does not follow the contract, or is about another artifact, refuses its file and places nothing", async () => {
     const root = await init(join(scratch(), "strict"));
-    const work = stage(
-      "account-confirmation.pdf",
-      "account-confirmation.pdf.capture.yaml",
-      "drive-folder.zip.capture.yaml",
-      "procedure.pdf",
-    );
-    const old = await ath(
-      ["--json", "--root", root, "ingest", "account-confirmation.pdf", "--testimony", "account-confirmation.pdf.capture.yaml"],
-      { env, cwd: work },
-    );
+    // a host of its own, so nothing another test placed is mistaken for something placed here
+    const h = scratch();
+    const own = { ...env, XDG_DATA_HOME: join(h, "data"), XDG_STATE_HOME: join(h, "state"), XDG_CONFIG_HOME: join(h, "config") };
+    const work = stage("account-confirmation.pdf", "drive-folder.zip.testimony.yaml", "procedure.pdf");
+    // a sidecar in a shape before the contract: an origin and its fields, no subject and no producer
+    writeFileSync(join(work, "old-sidecar.yaml"), "origin: banking-document\nvia: export\norigin_fields:\n  account_kind: current\n");
+    const old = await ath(["--json", "--root", root, "ingest", "account-confirmation.pdf", "--testimony", "old-sidecar.yaml"], {
+      env: own,
+      cwd: work,
+    });
     expect(old.code).toBe(73);
     const e = json<never>(old).error!;
     expect(e.code).toBe("CONFLICT");
     expect(e.message).toContain("`producer` is required");
-    const other = await ath(["--json", "--root", root, "ingest", "procedure.pdf", "--testimony", "drive-folder.zip.capture.yaml"], {
-      env,
+    const other = await ath(["--json", "--root", root, "ingest", "procedure.pdf", "--testimony", "drive-folder.zip.testimony.yaml"], {
+      env: own,
       cwd: work,
     });
     expect(other.code).toBe(73);
     expect(json<never>(other).error!.message).toContain("not the artifact it was delivered with");
     expect(existsSync(join(root, "corpus/records/5e"))).toBe(false);
-    const host = hostPaths(process.env);
+    const host = hostPaths(own);
     expect(existsSync(join(host.data, "artifacts", "5e", "5e6e497d934498fc49229ba8c594684114a1213426bc1ad0113718ae72794269"))).toBe(false);
   });
 
@@ -196,8 +196,8 @@ describe("an extension over a base at its pin", () => {
   test("the base read from git at the pinned commit; the extension's record of a base's artifact holds only its own receipts and origins", async () => {
     const top = scratch();
     const ref = await init(join(top, "reference"));
-    const work = stage("drive-folder.zip", "drive-folder.zip.capture.yaml");
-    const into = await ath(["--root", ref, "ingest", "drive-folder.zip", "--testimony", "drive-folder.zip.capture.yaml"], {
+    const work = stage("drive-folder.zip", "drive-folder.zip.testimony.yaml");
+    const into = await ath(["--root", ref, "ingest", "drive-folder.zip", "--testimony", "drive-folder.zip.testimony.yaml"], {
       env,
       cwd: work,
     });
@@ -220,7 +220,7 @@ describe("an extension over a base at its pin", () => {
     git(ref, "add", "-A");
     git(ref, "commit", "-q", "-m", "later");
     const again = json<{ results: { status: string; record: string }[] }>(
-      await ath(["--json", "ingest", "drive-folder.zip"], { env: { ...env, ATHENAEUM_ROOT: home }, cwd: work }),
+      await ath(["--json", "ingest", "drive-folder.zip"], { env: { ...env, ATHENAEUM_ROOT: home }, cwd: stage("drive-folder.zip") }),
     );
     expect(again.data.results[0]).toMatchObject({ status: "met again", record: `corpus/records/da/${ZIP}.yaml` });
     const own = readFileSync(join(home, again.data.results[0]!.record), "utf8");

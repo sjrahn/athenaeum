@@ -1,9 +1,0 @@
-# provenance of a local export, as the producer leaves it beside the bytes (D-sidecar)
-origin: imessage-export
-via: export
-fetched_at: "2026-04-01T06:00:00Z"
-snapshot_engine: imessage-exporter 3.0.0
-origin_fields:
-  schema: imessage-export
-  handle: "+44 7700 900456"
-  period: "2026-03"

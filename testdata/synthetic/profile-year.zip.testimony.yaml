@@ -1,0 +1,21 @@
+subject: b3:96d4f9ff048b937ff9db93f4e58e02e624609166887f4bce07a4033b16ef7a00
+producer:
+  tool: facebook-profile-year
+  version: "1"
+  at: "2026-04-02T09:00:00Z"
+source:
+  profile: bo.calder
+  profile_id: "100000000000001"
+  profile_name: Bo Calder
+  year: 2026
+  captured_at: "2026-04-02T09:00:00Z"
+  harvester: harvest 1.4
+  converter: convert 1.4
+  redacted: none
+  counts:
+    posts: 6
+    comments: 5
+    photos: 3
+    videos: 1
+  short: false
+via: export

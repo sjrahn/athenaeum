@@ -1,0 +1,13 @@
+subject: b3:f993a31d5faf7e08e823ea80b554c6085665e3034a0335b1b1d7d7e0487ce53a
+producer:
+  tool: bank-statement
+  version: "1"
+  at: "2026-03-20T00:00:00Z"
+source:
+  institution: Example Building Society
+  product: Everyday account
+  account_ref: "****5678"
+  account_kind: current
+  statement_date: monthly
+  coverage: 2025
+via: export

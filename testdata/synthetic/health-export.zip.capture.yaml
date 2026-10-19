@@ -1,7 +1,0 @@
-# provenance of a local export, as the producer leaves it beside the bytes (D-sidecar)
-origin: apple-health-export
-via: export
-origin_fields:
-  exported_at: "2026-04-01T07:00:00Z"
-  account: ada.abbott@example.invalid
-  device: Phone 12

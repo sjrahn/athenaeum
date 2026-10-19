@@ -1,7 +1,0 @@
-# provenance of a local file, as the producer leaves it beside the bytes (D-sidecar)
-origin: sms-backup
-via: export
-origin_fields:
-  contact_name: Bo Calder
-  handle: "+44 7700 900456"
-  period: "2026-03"

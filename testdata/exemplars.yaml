@@ -40,7 +40,7 @@
   mime: text/html
   root: imessage-conversation
   shape: conversation-page
-  note: the twin of an iMessage conversation page (imessage-exporter layout) — 40 message blocks with sender, timestamp link, bubble text, two inlined attachments, a reply, tapbacks, an edit table, a link card; provenance in quay-messages.html.capture.yaml (gen/conversation-page.ts)
+  note: the twin of an iMessage conversation page (imessage-exporter layout) — 40 message blocks with sender, timestamp link, bubble text, two inlined attachments, a reply, tapbacks, an edit table, a link card; provenance in quay-messages.html.testimony.yaml (gen/conversation-page.ts)
 
 - file: pump-service-manual.html
   blake3: 7d848c4f9fb5e9cb7cc1cab1d765ba9dd88f28f5f191e810ddcde657c3c4dc9b
@@ -163,7 +163,7 @@
   mime: application/zip
   root: facebook-export-bundle
   shape: export-bundle
-  note: the twin of a Messenger month slice — inbox and filtered threads as message_1.json beside photos, gifs and videos, an event index and an album index; provenance in its .capture.yaml (gen/bundles.ts)
+  note: the twin of a Messenger month slice — inbox and filtered threads as message_1.json beside photos, gifs and videos, an event index and an album index; provenance in its .testimony.yaml (gen/bundles.ts)
 
 - file: instagram-month-bundle.zip
   blake3: 2997cc1236fc3fa8ac6010cb8fe4818accb914d8a0efb8dbc60b0bda07939135
@@ -461,7 +461,7 @@
   mime: application/pdf
   root: pdf
   shape: pdf-statement
-  note: "the twin of a loose monthly statement (gen/documents.ts, typst); provenance in its .capture.yaml"
+  note: "the twin of a loose monthly statement (gen/documents.ts, typst); provenance in its .testimony.yaml"
 
 - file: tax-slip-2025.pdf
   blake3: 9c7ac767810beee6fbb6c41dd874ed5915d70026c8c054ae42be7332d6ba0ae4

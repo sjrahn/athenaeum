@@ -1,0 +1,11 @@
+subject: b3:2940d7706dac5b59e2526b984c358e61b6d15a61f3e9b18ff6eee333c0e78ac3
+producer:
+  tool: osxphotos-export
+  version: "1"
+  at: "2026-04-05T02:00:00Z"
+source:
+  period: "2026-03"
+  account: library@example.invalid
+  exported_at: "2026-04-05T02:00:00Z"
+  coverage: full library
+via: export

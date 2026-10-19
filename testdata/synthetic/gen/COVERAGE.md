@@ -2,7 +2,7 @@
 
 The owner's instance holds ~31,600 artifacts across the shapes below (surveyed 2026-10-16 from the v52 records:
 artifact mime, origin schema, member media types — no content). Every shape gets a generated twin here, with its
-generator kept beside it and, where the shape warrants it, a `<file>.capture.yaml` sidecar in the origin's shape
+generator kept beside it and, where the shape warrants it, a `<file>.testimony.yaml` beside it in the contract's shape (`testimony.ts`)
 (D-sidecar) so provenance folding is exercised across all of them. The suite never needs a real file.
 
 **Level** is what the engine can test today: **a** sniff + attest + lint; **b** container roster, member minting,
@@ -13,7 +13,7 @@ test once the derivation lands.
 | shape (bytes) | corpus origins | mime | ≈count | level | twin | generator | status |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | forum thread capture (XenForo) | web | text/html | 800 | c | harbourboard-thread.html | thread.ts | done |
-| iMessage conversation page (imessage-exporter, attachments inlined) | imessage-export | text/html | 5,900 | c | quay-messages.html (+ .capture.yaml) | conversation-page.ts | done |
+| iMessage conversation page (imessage-exporter, attachments inlined) | imessage-export | text/html | 5,900 | c | quay-messages.html (+ .testimony.yaml) | conversation-page.ts | done |
 | service-manual page (procedures, data tables, figures) | web | text/html | 7,000 | c | pump-service-manual.html | manual-page.ts | done |
 | product / order / listing / article page captures | web | text/html | 600 | c | harbour-article.html, rope-product.html, order-detail.html, cottage-listing.html | pages.ts | done (four roots told by their markup) |
 | Meta conversation (`message_N.json`, photos/ gifs/ videos/ audio/) | facebook-, instagram-, threads-conversation | application/json | 2,900 | a (+b via bundle) | facebook-/instagram-/threads-thread.json; inside the month bundles | bundles.ts | done (classified by container and name; tree is a later ruling) |

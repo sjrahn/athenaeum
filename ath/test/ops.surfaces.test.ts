@@ -38,7 +38,7 @@ describe("surface ops", () => {
     expect(() => parseJson(b)).toThrow();
   });
   test("yaml.text@1: as json.text@1 over the YAML parse; keys are not values", async () => {
-    const b = await read("drive-folder.zip.capture.yaml");
+    const b = await read("drive-folder.zip.testimony.yaml");
     expect(await surfaceAt(new Parses(b), "yaml.text@1", [{ whole: true }])).toBe(
       "b3:da7b858a7acc71ea1953f162369503c564bce9e6ec59ad1b717c6864ccaf34f0\ngoogle-drive-export\n2026.03\n2026-03-18T16:00:00Z\nada.abbott@example.invalid\nHarbour plans\nexport\nthe folder, whole\n001",
     );

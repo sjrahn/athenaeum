@@ -1,8 +1,0 @@
-# provenance of a local export, as the producer leaves it beside the bytes (D-sidecar)
-origin: facebook-export-bundle
-via: export
-origin_fields:
-  period: "2026-03"
-  account: eli.hale
-  exported_at: "2026-04-02"
-  source_export: facebook-eli.hale-2026-04-02.zip

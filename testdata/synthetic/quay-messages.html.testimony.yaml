@@ -1,0 +1,12 @@
+subject: b3:2af1ebd5e916e7c54994c775685203a1b537d98e40484abd4ef5ab9389a88153
+producer:
+  tool: imessage-export
+  version: "3.0.0"
+  at: "2026-04-01T06:00:00Z"
+source:
+  schema: imessage-export
+  handle: "+44 7700 900456"
+  period: "2026-03"
+via: export
+fetched_at: "2026-04-01T06:00:00Z"
+snapshot_engine: imessage-exporter 3.0.0

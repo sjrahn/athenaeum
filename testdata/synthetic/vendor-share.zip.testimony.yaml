@@ -1,0 +1,11 @@
+subject: b3:7fafd3bd49d5586e8ad43ddd00d78dcd76b083599c41268274d70defcf4a013f
+producer:
+  tool: vendor-download
+  version: "1"
+  at: "2026-02-02T11:00:00Z"
+source:
+  vendor: Example Boards
+  category: HL series downloads
+  share_cid: "00000000c0de"
+  retrieved_at: "2026-02-02T11:00:00Z"
+via: export

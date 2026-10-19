@@ -1,0 +1,17 @@
+subject: b3:e0fb7ff7cbf4fe64e2330669e50540eaae1c28118e9ef7213dfcece0f4411967
+producer:
+  tool: obsidian-vault
+  version: "1"
+  at: "2026-03-14T20:00:00Z"
+source:
+  vault_name: Harbour
+  vault_root: "~/Documents/Harbour"
+  subtree: "/"
+  host: lantern
+  exported_at: "2026-03-14T20:00:00Z"
+  note_count: 7
+  excluded: [".trash"]
+  command: corpus assemble
+  actor: owner
+  redacted: none
+via: export

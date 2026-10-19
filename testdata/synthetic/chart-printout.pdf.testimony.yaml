@@ -1,7 +1,9 @@
-# provenance of a local file, as the producer leaves it beside the bytes (D-sidecar)
-origin: health-record
-via: export
-origin_fields:
+subject: b3:24c1477b3562892536c1e39587659065673147397d3eae0f6a47eaa99ad441ec
+producer:
+  tool: health-record
+  version: "1"
+  at: "2026-03-05T10:12:00Z"
+source:
   provider: Quay Medical Practice
   practitioner: Dr B. Calder
   system: ExampleEMR 9
@@ -12,3 +14,4 @@ origin_fields:
   delivered_via: in person
   actor: owner
   redacted: none
+via: export

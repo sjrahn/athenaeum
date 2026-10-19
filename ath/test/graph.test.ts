@@ -39,7 +39,7 @@ async function world() {
   await vocab("kinds", "vessel", { pred: "owes", val: ["display-name"] });
   await vocab("kinds", "standard", { pred: "owes", val: [] });
   const work = scratch();
-  for (const f of ["cottage-listing.html", "drive-folder.zip", "drive-folder.zip.capture.yaml", "sign.jpg", "procedure.pdf"])
+  for (const f of ["cottage-listing.html", "drive-folder.zip", "drive-folder.zip.testimony.yaml", "sign.jpg", "procedure.pdf"])
     copyFileSync(join(SYN, f), join(work, f));
   writeFileSync(
     join(work, "cottage-listing.html.testimony.yaml"),
@@ -47,7 +47,8 @@ async function world() {
   );
   expect((await ath(["--root", root, "ingest", "cottage-listing.html", "sign.jpg", "procedure.pdf"], { env: A, cwd: work })).code).toBe(0);
   expect(
-    (await ath(["--root", root, "ingest", "drive-folder.zip", "--testimony", "drive-folder.zip.capture.yaml"], { env: A, cwd: work })).code,
+    (await ath(["--root", root, "ingest", "drive-folder.zip", "--testimony", "drive-folder.zip.testimony.yaml"], { env: A, cwd: work }))
+      .code,
   ).toBe(0);
   const read = async (subject: string, readings: [string, string][], by = A, ver = B) => {
     const { id } = data<{ id: string }>(await run(["pass", "open", subject.slice(0, 8)], by));

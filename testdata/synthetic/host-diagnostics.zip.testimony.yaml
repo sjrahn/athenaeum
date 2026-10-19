@@ -1,0 +1,14 @@
+subject: b3:755432d18af5c7c13ec1a0b048abe410d403072afbc529373f5e26847e00dc2d
+producer:
+  tool: host-diagnostic
+  version: "1"
+  at: "2026-03-12T09:15:00Z"
+source:
+  host: lantern
+  system: unraid 7.0.0
+  command: diagnostics
+  produced_at: "2026-03-12T09:15:00Z"
+  produced_on: lantern
+  actor: owner
+  redacted: none
+via: export
