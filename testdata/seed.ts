@@ -238,9 +238,10 @@ export async function seed(out: string, run: Runner = inProcess(join(out, "host"
     const [texAt, texBody] = tex!;
     await owner(ref, ["rule", "accept", `${A(proc)}?${texAt}`, "--rev", await short(texBody), "--why", "two-dimensional maths; the hint is in baseline order"]);
     const git = (...args: string[]) => {
-      const r = Bun.spawnSync(["git", ...args], {
+      // no configuration of this host's — signing, line endings, templates — may change the commit the pair pins
+      const r = Bun.spawnSync(["git", "-c", "core.autocrlf=false", "-c", "commit.gpgsign=false", ...args], {
         cwd: ref,
-        env: { ...process.env, GIT_AUTHOR_NAME: "seed", GIT_AUTHOR_EMAIL: "seed@example.invalid", GIT_COMMITTER_NAME: "seed", GIT_COMMITTER_EMAIL: "seed@example.invalid", GIT_AUTHOR_DATE: `${DATE}T09:00:00Z`, GIT_COMMITTER_DATE: `${DATE}T09:00:00Z` },
+        env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1", GIT_AUTHOR_NAME: "seed", GIT_AUTHOR_EMAIL: "seed@example.invalid", GIT_COMMITTER_NAME: "seed", GIT_COMMITTER_EMAIL: "seed@example.invalid", GIT_AUTHOR_DATE: `${DATE}T09:00:00Z`, GIT_COMMITTER_DATE: `${DATE}T09:00:00Z` },
         stdout: "pipe",
         stderr: "pipe",
       });
