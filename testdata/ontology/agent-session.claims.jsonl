@@ -1,3 +1,0 @@
-{"subject":"agent-session","predicate":"refines","value":"export-bundle"}
-{"subject":"agent-session","predicate":"matches","value":{"mime":"application/zip","member":"*/workflow-state.json"}}
-{"subject":"agent-session","predicate":"definition","value":"a captured agent session: the JSONL transcript with its sub-agent transcripts and tool results"}

@@ -1,0 +1,10 @@
+{"pred":"chrome","val":{"selector":".site-header, .site-footer, script, .agent"}}
+{"pred":"definition","val":"listing page"}
+{"pred":"matches","val":{"mime":"text/html","selector":".listing[itemtype=\"https://schema.org/Residence\"]"}}
+{"pred":"select","val":{"attr":"alt","field":"alt","form":"figure","selector":".photos img"}}
+{"pred":"select","val":{"form":"figure","selector":".photos img"}}
+{"pred":"select","val":{"form":"heading","level":0,"selector":"h1.listing-title"}}
+{"pred":"select","val":{"form":"list-item","selector":".rooms li.room"}}
+{"pred":"select","val":{"form":"list-item","selector":"ul.facts li"}}
+{"pred":"select","val":{"form":"paragraph","selector":".description > p"}}
+{"pred":"select","val":{"form":"value","selector":".price .amount"}}

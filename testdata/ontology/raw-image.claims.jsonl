@@ -1,3 +1,0 @@
-{"subject":"raw-image","predicate":"refines","value":"tiff"}
-{"subject":"raw-image","predicate":"definition","value":"a camera raw in a TIFF container (Sony ARW, Adobe DNG)"}
-{"subject":"raw-image","predicate":"matches","value":{"mime":"image/x-sony-arw"}}

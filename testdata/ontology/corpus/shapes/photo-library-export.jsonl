@@ -1,0 +1,3 @@
+{"pred":"definition","val":"a photo-library period batch: originals beside their sidecar JSON, edited renders, clips"}
+{"pred":"matches","val":{"constituent":"IMG_","mime":"application/zip"}}
+{"pred":"refines","val":"export-bundle"}

@@ -1,0 +1,3 @@
+{"pred":"definition","val":"a camera card copied whole: DCIM raw and HIF pairs, PRIVATE/M4ROOT clips with XML sidecars"}
+{"pred":"matches","val":{"constituent":"DCIM/","mime":"application/zip"}}
+{"pred":"refines","val":"export-bundle"}

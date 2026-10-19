@@ -1,7 +1,0 @@
-{"subject":"html","predicate":"refines","value":"document"}
-{"subject":"html","predicate":"definition","value":"an HTML document; html.text@1 is textContent over the byte range with scripts, styles and svg dropped; html.attr@1 <name> and html.title@1 are reached by name"}
-{"subject":"html","predicate":"matches","value":{"mime":"text/html"}}
-{"subject":"html","predicate":"axes","value":["bytes"]}
-{"subject":"html","predicate":"tree","value":"derived — element containment from the parse"}
-{"subject":"html","predicate":"derivation","value":"html.text@1"}
-{"subject":"html","predicate":"convention","value":"chrome is every text run outside the selected terms; listed in the remainder, never stored"}

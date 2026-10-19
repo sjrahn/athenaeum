@@ -1,0 +1,3 @@
+{"pred":"definition","val":"one message of a conversation: who sent it, when, what it carried"}
+{"pred":"field","val":{"name":"author","type":"string"}}
+{"pred":"field","val":{"name":"instant","type":"string"}}

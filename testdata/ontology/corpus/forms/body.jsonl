@@ -1,0 +1,5 @@
+{"pred":"definition","val":"the running text of a message or a post"}
+{"pred":"field","val":{"name":"charset","type":"string"}}
+{"pred":"field","val":{"name":"encoding","type":"string"}}
+{"pred":"field","val":{"name":"part","required":true,"type":"string"}}
+{"pred":"reads","val":"text"}

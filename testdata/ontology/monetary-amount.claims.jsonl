@@ -1,4 +1,0 @@
-{"subject":"monetary-amount","predicate":"refines","value":"column"}
-{"subject":"monetary-amount","predicate":"definition","value":"an amount of money in a column; a value op (strip excel apostrophes, sign negatives) is not yet written, so no derivation is declared"}
-{"subject":"monetary-amount","predicate":"field","value":{"name":"currency","kind":"string | col","required":true}}
-{"subject":"monetary-amount","predicate":"field","value":{"name":"quoting","kind":"enum","options":["none","excel-apostrophe"]}}

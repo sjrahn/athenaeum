@@ -1,4 +1,0 @@
-{"subject":"spine-item","predicate":"refines","value":"unit"}
-{"subject":"spine-item","predicate":"reads","value":"none"}
-{"subject":"spine-item","predicate":"field","value":{"name":"path","kind":"string","required":true}}
-{"subject":"spine-item","predicate":"definition","value":"a route to a member in the spine's reading order"}

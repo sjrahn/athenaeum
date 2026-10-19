@@ -1,3 +1,0 @@
-{"subject":"takeout-slice","predicate":"refines","value":"export-bundle"}
-{"subject":"takeout-slice","predicate":"matches","value":{"mime":"application/zip","member":"Takeout/"}}
-{"subject":"takeout-slice","predicate":"definition","value":"a Google Takeout per-service slice under Takeout/<Service>/"}

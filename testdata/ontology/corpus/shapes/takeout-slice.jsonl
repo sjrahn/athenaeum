@@ -1,0 +1,3 @@
+{"pred":"definition","val":"a Google Takeout per-service slice under Takeout/<Service>/"}
+{"pred":"matches","val":{"constituent":"Takeout/","mime":"application/zip"}}
+{"pred":"refines","val":"export-bundle"}

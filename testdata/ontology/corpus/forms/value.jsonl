@@ -1,0 +1,4 @@
+{"pred":"definition","val":"a short value printed apart from running text"}
+{"pred":"field","val":{"name":"amount","type":"string"}}
+{"pred":"field","val":{"name":"datetime","type":"string"}}
+{"pred":"reads","val":"text"}

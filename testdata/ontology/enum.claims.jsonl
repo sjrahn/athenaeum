@@ -1,2 +1,0 @@
-{"subject":"enum","predicate":"refines","value":"column"}
-{"subject":"enum","predicate":"field","value":{"name":"options","kind":"list","required":true}}

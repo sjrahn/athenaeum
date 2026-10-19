@@ -1,0 +1,3 @@
+{"pred":"definition","val":"a ride-hailing data export: category CSVs beside a readme"}
+{"pred":"matches","val":{"constituent":"Rider/","mime":"application/zip"}}
+{"pred":"refines","val":"export-bundle"}

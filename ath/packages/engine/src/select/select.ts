@@ -211,6 +211,13 @@ function lineRuns(text: string, rule: Record<string, unknown>): [number, number]
 }
 
 /** Every node `selector` names in the parse, in byte (or constituent) order. */
+/** Whether a selector selects anything — an element the parser synthesised, which no byte span holds, included: a
+ * shape's `matches` asks only that the artifact has it (§11.5). */
+export function selects(p: SelectParse, selector: unknown): boolean {
+  if (p.family === "html") return selectAll(String(selector), p.doc.doc.children).some(isTag);
+  return select(p, selector).length > 0;
+}
+
 export function select(p: SelectParse, selector: unknown): Selected[] {
   switch (p.family) {
     case "html":

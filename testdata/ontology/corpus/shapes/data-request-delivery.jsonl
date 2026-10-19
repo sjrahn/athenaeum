@@ -1,0 +1,3 @@
+{"pred":"definition","val":"a retailer data-request category delivery: category CSVs, invoices, proofs of delivery"}
+{"pred":"matches","val":{"constituent":"Retail.OrderHistory.","mime":"application/zip"}}
+{"pred":"refines","val":"export-bundle"}

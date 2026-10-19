@@ -1,3 +1,0 @@
-{"subject":"hevc","predicate":"refines","value":"video"}
-{"subject":"hevc","predicate":"matches","value":{"mime":"video/hevc"}}
-{"subject":"hevc","predicate":"definition","value":"a raw HEVC elementary stream (Annex B), no container"}

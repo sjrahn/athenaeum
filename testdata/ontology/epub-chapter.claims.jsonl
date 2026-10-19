@@ -1,7 +1,0 @@
-{"subject":"epub-chapter","predicate":"refines","value":"html"}
-{"subject":"epub-chapter","predicate":"matches","value":{"mime":"text/html","container":"epub"}}
-{"subject":"epub-chapter","predicate":"select","value":{"selector":"h1","term":"heading","level":0}}
-{"subject":"epub-chapter","predicate":"select","value":{"selector":"h2","term":"heading","level":1}}
-{"subject":"epub-chapter","predicate":"select","value":{"selector":"h3","term":"heading","level":2}}
-{"subject":"epub-chapter","predicate":"select","value":{"selector":"p","term":"paragraph"}}
-{"subject":"epub-chapter","predicate":"select","value":{"selector":"blockquote","term":"quote"}}

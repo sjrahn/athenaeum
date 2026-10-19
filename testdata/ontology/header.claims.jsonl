@@ -1,3 +1,0 @@
-{"subject":"header","predicate":"refines","value":"data"}
-{"subject":"header","predicate":"reads","value":"cells"}
-{"subject":"header","predicate":"lint","value":"every cell names a column the dataset shapes"}

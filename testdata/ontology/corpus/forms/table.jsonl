@@ -1,0 +1,6 @@
+{"pred":"aligns","val":"doco:Table"}
+{"pred":"definition","val":"table"}
+{"pred":"expects","val":["caption","row"]}
+{"pred":"field","val":{"name":"layout","options":["grid","key-value"],"required":true,"type":"enum"}}
+{"pred":"field","val":{"name":"num","pattern":"table (\\d+)\\.$","type":"designator","where":"caption"}}
+{"pred":"reads","val":"none"}

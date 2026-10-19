@@ -1,0 +1,3 @@
+{"pred":"definition","val":"a host diagnostics report: smart/, system/, config/, shares/, logs/"}
+{"pred":"matches","val":{"constituent":"*-diagnostics-*/smart/","mime":"application/zip"}}
+{"pred":"refines","val":"export-bundle"}

@@ -1,6 +1,0 @@
-{"subject":"document","predicate":"refines","value":"unit"}
-{"subject":"document","predicate":"convention","value":"sub/superscripts flattened outside math"}
-{"subject":"document","predicate":"convention","value":"line-break hyphens rejoined"}
-{"subject":"document","predicate":"convention","value":"footnote marks as [^n]"}
-{"subject":"document","predicate":"convention","value":"chrome (same text and box on ≥3 pages) derived, never stored"}
-{"subject":"document","predicate":"aligns","value":"iao:document"}

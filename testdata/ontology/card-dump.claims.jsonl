@@ -1,3 +1,0 @@
-{"subject":"card-dump","predicate":"refines","value":"export-bundle"}
-{"subject":"card-dump","predicate":"matches","value":{"mime":"application/zip","member":"DCIM/"}}
-{"subject":"card-dump","predicate":"definition","value":"a camera card copied whole: DCIM raw and HIF pairs, PRIVATE/M4ROOT clips with XML sidecars"}

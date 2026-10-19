@@ -1,2 +1,0 @@
-{"subject":"shipment-tracking","predicate":"refines","value":"text"}
-{"subject":"shipment-tracking","predicate":"field","value":{"name":"pattern","kind":"string"}}

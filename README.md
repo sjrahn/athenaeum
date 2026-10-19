@@ -57,9 +57,10 @@ an observed tree without hashing it over the wire. Its manifest format is a
 versioned contract
 ([`MANIFEST-SCHEMA.md`](ath/packages/scanner/MANIFEST-SCHEMA.md)).
 
-[`testdata/`](testdata/) is the regression library: the regression ontology,
-a tracked manifest and seeder for a gitignored scratch layer, and the synthetic
-fixtures (a generated twin of every byte shape in the owner's corpus) with their generators.
+[`testdata/`](testdata/) is the regression library: the regression ontology, a
+manifest of the synthetic fixtures (a generated twin of every byte shape in the
+owner's corpus) with their generators, and a seeder that builds a regression
+instance pair with the tool itself.
 
 ## License
 

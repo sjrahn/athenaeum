@@ -1,0 +1,12 @@
+{"pred":"chrome","val":{"selector":".site-header, .site-footer, script"}}
+{"pred":"definition","val":"product page"}
+{"pred":"matches","val":{"mime":"text/html","selector":"[itemtype=\"https://schema.org/Product\"]"}}
+{"pred":"select","val":{"attr":"alt","field":"alt","form":"figure","selector":".gallery img"}}
+{"pred":"select","val":{"attr":"content","field":"amount","form":"value","selector":"[itemprop=\"price\"]"}}
+{"pred":"select","val":{"form":"figure","selector":".gallery img"}}
+{"pred":"select","val":{"form":"heading","level":0,"selector":"[itemprop=\"name\"]"}}
+{"pred":"select","val":{"form":"paragraph","selector":"[itemprop=\"description\"] > p"}}
+{"pred":"select","val":{"form":"review","selector":".review"}}
+{"pred":"select","val":{"form":"row","selector":"table.specs tr"}}
+{"pred":"select","val":{"form":"value","selector":"[itemprop=\"price\"]"}}
+{"pred":"select","val":{"form":"value","selector":"[itemprop=\"sku\"]"}}

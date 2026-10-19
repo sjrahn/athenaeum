@@ -1,3 +1,0 @@
-{"subject":"vault-export","predicate":"refines","value":"export-bundle"}
-{"subject":"vault-export","predicate":"matches","value":{"mime":"application/zip","member":"*/.obsidian/"}}
-{"subject":"vault-export","predicate":"definition","value":"a note-vault subtree with its app config"}

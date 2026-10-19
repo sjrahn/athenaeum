@@ -31,12 +31,14 @@ gaps still owed.
   `test/workspace.lint.test.ts` pins the package graph. No network to
   acquire: bytes are ingested from disk; producers live outside.
 - `testdata/` — the regression library: `ontology/` (the regression ontology a
-  standalone instance starts from, a root term per mime), `exemplars.yaml` (one artifact
-  per mime: file, blake3, mime, root) + `seed.ts` (a gitignored scratch layer),
-  `synthetic/` (committed fixtures and their generators: a twin of every byte
-  shape in the owner's corpus, inventoried in `synthetic/gen/COVERAGE.md`) and
-  `passes/` (the generated pass of the asserted-tree PDF). No private byte is in
-  the set. See `testdata/README.md`.
+  standalone instance starts from, in the vocabularies' own layout), `exemplars.yaml`
+  (every artifact of the set: file, blake3, mime, the shape it classifies as) +
+  `seed.ts` (the regression instance pair, built with the tool's own verbs, pinned by
+  `ath/test/seed.test.ts`), `synthetic/` (committed fixtures, each export with its
+  `<file>.testimony.yaml`, and their generators: a twin of every byte shape in the
+  owner's corpus, inventoried in `synthetic/gen/COVERAGE.md`) and `passes/` (the
+  generated forming pass of the asserted-tree PDF). No private byte is in the set.
+  See `testdata/README.md`.
 
 The v52 Python tooling (`tools/`) is retired on this branch; it lives on the
 `v52` tag and keeps serving the current instance from a worktree of that tag.

@@ -1,7 +1,0 @@
-{"subject":"pdf","predicate":"refines","value":"document"}
-{"subject":"pdf","predicate":"matches","value":{"mime":"application/pdf"}}
-{"subject":"pdf","predicate":"axes","value":["page","bbox"]}
-{"subject":"pdf","predicate":"expects","value":["page"]}
-{"subject":"pdf","predicate":"tree","value":"asserted — in and ord are judgments"}
-{"subject":"pdf","predicate":"physical","value":"page"}
-{"subject":"pdf","predicate":"derivation","value":"pdf.words@1"}

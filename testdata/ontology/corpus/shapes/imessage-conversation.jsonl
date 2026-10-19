@@ -1,0 +1,13 @@
+{"pred":"chrome","val":{"selector":"hr, style, link"}}
+{"pred":"definition","val":"a conversation page as imessage-exporter writes it: one message block per message, sender, timestamp, bubble text, inlined attachments, replies, tapbacks, edit history"}
+{"pred":"matches","val":{"mime":"text/html","selector":"meta[name=\"corpus-origin-schema\"][content=\"imessage-export\"]"}}
+{"pred":"select","val":{"attr":"alt","field":"alt","form":"attachment","selector":"body > div.message > div > div.message_part img"}}
+{"pred":"select","val":{"attr":"title","field":"instant","form":"message","selector":"body > div.message > div > p > span.timestamp > a"}}
+{"pred":"select","val":{"field":"author","form":"message","selector":"body > div.message > div > p > span.sender"}}
+{"pred":"select","val":{"form":"attachment","in":"message","selector":"body > div.message > div > div.message_part img"}}
+{"pred":"select","val":{"form":"bubble","in":"message","selector":"body > div.message > div > div.message_part > span.bubble"}}
+{"pred":"select","val":{"form":"edit-history","in":"message","selector":"body > div.message > div > div.message_part div.edited"}}
+{"pred":"select","val":{"form":"link-card","in":"message","selector":"body > div.message > div > div.message_part div.app"}}
+{"pred":"select","val":{"form":"message","selector":"body > div.message"}}
+{"pred":"select","val":{"form":"quote","in":"message","selector":"body > div.message div.reply span.bubble"}}
+{"pred":"select","val":{"form":"reaction","in":"message","selector":"body > div.message span.tapback"}}

@@ -1,3 +1,0 @@
-{"subject":"message","predicate":"refines","value":"unit"}
-{"subject":"message","predicate":"definition","value":"one message of a conversation: who sent it, when, what it carried"}
-{"subject":"message","predicate":"expects","value":["author","sent-at"]}

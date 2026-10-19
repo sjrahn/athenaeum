@@ -1,8 +1,0 @@
-{"subject":"order-page","predicate":"refines","value":"web-page"}
-{"subject":"order-page","predicate":"matches","value":{"mime":"text/html","selector":"table.order-lines"}}
-{"subject":"order-page","predicate":"select","value":{"selector":"h1.order-title","term":"heading","level":0}}
-{"subject":"order-page","predicate":"select","value":{"selector":"dl.order-meta dd","term":"order-fact"}}
-{"subject":"order-page","predicate":"select","value":{"selector":"table.order-lines tbody tr.line","term":"order-line"}}
-{"subject":"order-page","predicate":"select","value":{"selector":"table.order-lines tfoot tr","term":"spec-row"}}
-{"subject":"order-page","predicate":"select","value":{"selector":".tracking li","term":"tracking-event"}}
-{"subject":"order-page","predicate":"chrome","value":[".site-header",".site-footer","script"]}

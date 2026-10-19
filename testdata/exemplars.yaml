@@ -1,8 +1,7 @@
-# Exemplar library manifest — one artifact per mime (see testdata/README.md).
+# Exemplar library manifest — the regression set, every mime the tool knows (see testdata/README.md).
 #
-# Each entry names bytes the successor tooling (`ath/`) ingests, classifies to a root term of the
-# regression ontology (testdata/ontology/) and lints clean; `ath/test/regression.test.ts` runs
-# every entry and `testdata/seed.ts` seeds them into testdata/instance.
+# Each entry names bytes the tooling (`ath/`) ingests; `ath/test/regression.test.ts` runs every entry
+# and `testdata/seed.ts` ingests them into a scratch instance.
 # `note` is neutral/technical only — no personal filenames, subjects, names, or content
 # descriptions (this file is tracked in a publicly-hostable repo).
 #
@@ -10,71 +9,66 @@
 # "The synthetic tier" in the README): the committed bytes, not a fresh run of a generator under
 # synthetic/gen/, are what the blake3 pins.
 #
-# `root` is the term `whole` manifests by the ontology's `matches` lines; `shape` is the exercise.
+# `classifies` is the shape of the regression ontology (testdata/ontology/) the artifact matches, where one
+# does; `twin` names the byte shape the fixture is a twin of.
 
 # ── documents ─────────────────────────────────────────────────────────────────────────────────────
 
 - file: till-receipt.pdf
   blake3: 53d8d34b5b3f83c9c9f6d54a2f97ec9ba3e0ddbd135ec0898b3172323b4928aa
   mime: application/pdf
-  root: pdf
-  shape: pdf
+  twin: pdf
   note: the twin of the receipt — a single-page till receipt rendered with typst (gen/plain.ts); one page, 64 words, no pass
 
 - file: procedure.pdf
   blake3: 5e6e497d934498fc49229ba8c594684114a1213426bc1ad0113718ae72794269
   mime: application/pdf
-  root: pdf
-  shape: pdf-asserted-tree
+  twin: pdf-asserted-tree
   note: the asserted-tree exemplar — a fictional calculation procedure in the shape of a methodological tool (gen/procedure.ts, typst 0.15.1; whole manifests methodological-tool once its pass is signed) — 8 pages, cover, toc, 17 headings, 4 labelled equations with definition lists, parameter tables, a figure, a footnote, a revision history, chrome; its pass is passes/5e6e497d….p1.jsonl, generated from the same model
 
 - file: harbourboard-thread.html
   blake3: 430c0b0f1239932484a48c43bd1b0c3b069958c6ca73d273f97645d32b8b1d2e
   mime: text/html
-  root: xenforo-thread
-  shape: html-capture
+  classifies: xenforo-thread
+  twin: html-capture
   note: the twin of the thread capture — the v52 banner, html#XF[data-template=thread_view], ten posts with XenForo's attribution, time and quote markup, declared chrome, a script and style blob (gen/thread.ts); 76 scopes by select, quotes linked to their posts
 
 - file: quay-messages.html
   blake3: 2af1ebd5e916e7c54994c775685203a1b537d98e40484abd4ef5ab9389a88153
   mime: text/html
-  root: imessage-conversation
-  shape: conversation-page
+  classifies: imessage-conversation
+  twin: conversation-page
   note: the twin of an iMessage conversation page (imessage-exporter layout) — 40 message blocks with sender, timestamp link, bubble text, two inlined attachments, a reply, tapbacks, an edit table, a link card; provenance in quay-messages.html.testimony.yaml (gen/conversation-page.ts)
 
 - file: pump-service-manual.html
   blake3: 7d848c4f9fb5e9cb7cc1cab1d765ba9dd88f28f5f191e810ddcde657c3c4dc9b
   mime: text/html
-  root: service-manual-page
-  shape: manual-page-capture
+  classifies: service-manual-page
+  twin: manual-page-capture
   note: the twin of a service-manual page capture (single-page application) — banner, breadcrumb chrome, five topics with notices, numbered steps, bullet lists, specification tables, inlined thumbnails with their original src (gen/manual-page.ts)
 
 - file: regatta-mailing.eml
   blake3: 2c694381523f325f5347167ce5e2a07bc3cb51ebfae3df46dc3d209145e9e9be
   mime: message/rfc822
-  root: rfc822
-  shape: message-with-attachments
+  twin: message-with-attachments
   note: the twin of the mailing — multipart/mixed over multipart/alternative, a quoted-printable body with a sigdash, an HTML alternative, xlsx (a minimal OOXML workbook), jpeg and pdf attachments as members (gen/mailing.ts)
 
 - file: synthetic-message.eml
   blake3: b8ed8b5a6f2c8d4a43bc4c72decf59ef7978ae5e1772fd8659c5bc2cd0c0720f
   mime: message/rfc822
-  root: rfc822
-  shape: message-with-nested-message
+  twin: message-with-nested-message
   note: message/rfc822 with a nested message/rfc822 sub-message and a PNG attachment, synthetic
 
 - file: tidewatch-readme.md
   blake3: 44125fc18c8632c7a877015ebea0796aa67fcc03c50eddf9abc837986bc0a355
   mime: text/markdown
-  root: markdown
-  shape: markdown
+  twin: markdown
   note: the twin of the readme — a project readme with headings, lists, fenced blocks and a table (gen/plain.ts)
 
 - file: tidewatch.js
   blake3: a5ff43759b271ec169edfc591e193ccb404b8f48cd10990aa6364baf8327dfb5
   mime: text/javascript
-  root: javascript
-  shape: source-text
+  twin: source-text
   note: the twin of the capture engine — one self-contained script, a few hundred lines (gen/plain.ts)
 
 # ── tabular and structured data ───────────────────────────────────────────────────────────────────
@@ -82,71 +76,62 @@
 - file: amazon-twin.csv
   blake3: 8286ddb3f2df0d2ccc3f960b52eb8c8fba3c83668579b0a45c34b3ab529ce5f5
   mime: text/csv
-  root: amazon-order-history
-  shape: csv-with-header-fingerprint
+  classifies: amazon-order-history
+  twin: csv-with-header-fingerprint
   note: the same 29-column header over fabricated rows; the public twin of the private export
 
 - file: media-manifest.tsv
   blake3: 14db65be2c3fa55c75b7442cd3df07d536ca718aca2c88e5b886fb80e1a30afb
   mime: text/tab-separated-values
-  root: tsv
-  shape: tsv
+  twin: tsv
   note: the twin of the gap manifest — nine columns, 60 fabricated rows, a sparse note column (gen/plain.ts)
 
 - file: address-book.json
   blake3: 02f3976c34f2dc44fa850273c830b1fa765546a059f035889564cbb01a4065a9
   mime: application/json
-  root: json
-  shape: json
+  twin: json
   note: the twin of the address export — an object with one top-level array of 24 fabricated records (gen/plain.ts)
 
 - file: facebook-thread.json
   blake3: b3387f8870076512d5cf1b322e65d2518171504a8236bc1dbe2ea7487d2bd1f8
   mime: application/json
-  root: json
-  shape: conversation-json
+  twin: conversation-json
   note: "the twin of a Messenger conversation export on its own (message_1.json: participants, messages with sender_name, timestamp_ms, content, reactions); classifies as json until a JSON derivation lands (gen/bundles.ts)"
 
 - file: instagram-thread.json
   blake3: 2594c12d16bd23324eb94723d6d0342b1698eb69ef1ceacd903ae26b377e9a98
   mime: application/json
-  root: json
-  shape: conversation-json
+  twin: conversation-json
   note: the twin of an Instagram Direct conversation export on its own (gen/bundles.ts)
 
 - file: threads-thread.json
   blake3: 84bfabe39e134f8c8b2fca0d80a43623e8fc889f04bb15bcc55a10e92af66557
   mime: application/json
-  root: json
-  shape: conversation-json
+  twin: conversation-json
   note: the twin of a Threads conversation export on its own (gen/bundles.ts)
 
 - file: chat-space.json
   blake3: af7713d272f45777c254d6d98e6a16f33f6587f23914d13bfdd9a24af14c8ead
   mime: application/json
-  root: json
-  shape: conversation-json
+  twin: conversation-json
   note: the twin of a Google Chat messages.json on its own — creator, created_date, text, topic ids (gen/bundles.ts)
 
 - file: synthetic-lines.ndjson
   blake3: 23f9810ef7b0af559ed6ed6bf0a788950a6ae0374c2e0364054b7fc504f4f6db
   mime: application/x-ndjson
-  root: ndjson
-  shape: ndjson
+  twin: ndjson
   note: three JSON objects, one per line, synthetic
 
 - file: address-cards.vcf
   blake3: 188b4645aa2fffe0f7c8714a9e2cc904f6ccf403618ef6dc6e0471aabfd367ea
   mime: text/vcard
-  root: vcard
-  shape: vcard-collection
+  twin: vcard-collection
   note: the twin of the contacts export — 30 fabricated vCard 3.0 cards with N, FN, EMAIL, TEL, ADR, REV, UID (gen/plain.ts)
 
 - file: bracket.p21
   blake3: 331e8f6ffd8290d96eba1aa7f71f4a957d816ca731c87c92cf92be4c1e3df8f2
   mime: application/p21
-  root: step
-  shape: step
+  twin: step
   note: the twin of the exchange file — ISO 10303-21 with an IFC4 schema, a project, site, building, storey and one plate (gen/plain.ts)
 
 # ── containers ────────────────────────────────────────────────────────────────────────────────────
@@ -154,155 +139,151 @@
 - file: quay-chat-export.zip
   blake3: 43ccf072e23a9cf6b5d322262fd1649644795ffdcf51099b49941e0623dd6112
   mime: application/zip
-  root: zip
-  shape: zip-zstd-members
+  twin: zip-zstd-members
   note: the twin of the chat export — the exporter's layout, 9 members (json and svg written with zstd, method 93; seven PNGs stored) (gen/chat-export.ts)
 
 - file: facebook-month-bundle.zip
   blake3: e82abeed5b994c8ac3fcc048ef9a9ef56fdf9be485e06ad1bbee88df815f50bb
   mime: application/zip
-  root: facebook-export-bundle
-  shape: export-bundle
+  classifies: facebook-export-bundle
+  twin: export-bundle
   note: the twin of a Messenger month slice — inbox and filtered threads as message_1.json beside photos, gifs and videos, an event index and an album index; provenance in its .testimony.yaml (gen/bundles.ts)
 
 - file: instagram-month-bundle.zip
   blake3: 2997cc1236fc3fa8ac6010cb8fe4818accb914d8a0efb8dbc60b0bda07939135
   mime: application/zip
-  root: instagram-export-bundle
-  shape: export-bundle
+  classifies: instagram-export-bundle
+  twin: export-bundle
   note: the twin of an Instagram month slice — inbox threads with media, a stories index and story media, a post image (gen/bundles.ts)
 
 - file: threads-month-bundle.zip
   blake3: a55a755c4e751fbb987eb307ceb4a9111be4f6f133ea4d32bc0aff6896998866
   mime: application/zip
-  root: threads-export-bundle
-  shape: export-bundle
+  classifies: threads-export-bundle
+  twin: export-bundle
   note: the twin of a Threads month slice — inbox threads, a posts index, settings (gen/bundles.ts)
 
 - file: chat-month-bundle.zip
   blake3: fb67bd410ffd71eb2b161bb3f1aaf4e6cae49c9dc2788726945074b63251e5bc
   mime: application/zip
-  root: google-chat-export-bundle
-  shape: export-bundle
+  classifies: google-chat-export-bundle
+  twin: export-bundle
   note: the twin of a Google Chat month slice — a DM and a space, each messages.json beside group_info.json, one attachment (gen/bundles.ts)
 
 - file: messages-week-bundle.zip
   blake3: 7c75a49d830b525cef5f156a47057e5e922e729365e02d53df7aa161a8a7198f
   mime: application/zip
-  root: imessage-export-bundle
-  shape: export-bundle
+  classifies: imessage-export-bundle
+  twin: export-bundle
   note: the twin of an iMessage week — four conversation pages, one per handle or group (gen/bundles.ts)
 
 - file: mail-month-bundle.zip
   blake3: 23725953b0780d273016a739d228ab1ae7719d0d4c3196ed7756ff318d7b32e7
   mime: application/zip
-  root: proton-mail-export
-  shape: export-bundle
+  classifies: proton-mail-export
+  twin: export-bundle
   note: the twin of a mail export month — six <id>.eml beside <id>.metadata.json, one with an attachment (gen/bundles.ts)
 
 - file: photos-month-bundle.zip
   blake3: 2940d7706dac5b59e2526b984c358e61b6d15a61f3e9b18ff6eee333c0e78ac3
   mime: application/zip
-  root: photo-library-export
-  shape: export-bundle
+  classifies: photo-library-export
+  twin: export-bundle
   note: the twin of a photo-library month batch — HEIC and JPG originals with sidecar JSON, an edited render, a QuickTime clip, a screenshot (gen/bundles.ts; heif-enc, ImageMagick, ffmpeg)
 
 - file: orders-delivery.zip
   blake3: e635ad727152ed032d8bbde3a56a2f97b5821b42da9c1b851408162cf6c28d23
   mime: application/zip
-  root: data-request-delivery
-  shape: export-bundle
+  classifies: data-request-delivery
+  twin: export-bundle
   note: "the twin of a retailer data-request category delivery — order history, returns and digital orders as CSV, an invoice PDF, a proof-of-delivery image, a readme (gen/bundles2.ts)"
 
 - file: rides-export.zip
   blake3: a9fe6816e26e9d640be1839b6152b8e0c98a1db2f59c355af14acb271fe986e1
   mime: application/zip
-  root: rides-export
-  shape: export-bundle
+  classifies: rides-export
+  twin: export-bundle
   note: "the twin of a ride-hailing DSAR export — trips, profile, payment methods, ratings and food orders as CSV beside a readme (gen/bundles2.ts)"
 
 - file: health-export.zip
   blake3: bc55b3a4d2c117a93f3d02fc4c927d6ad20e202dbe8f9881cbc81e83b8417006
   mime: application/zip
-  root: health-export
-  shape: export-bundle
+  classifies: health-export
+  twin: export-bundle
   note: "the twin of a health export — export.xml of samples and a workout, the CDA re-serialisation, an ECG CSV, two GPX routes, a clinical-record JSON (gen/bundles2.ts)"
 
 - file: host-diagnostics.zip
   blake3: 755432d18af5c7c13ec1a0b048abe410d403072afbc529373f5e26847e00dc2d
   mime: application/zip
-  root: host-diagnostics
-  shape: export-bundle
+  classifies: host-diagnostics
+  twin: export-bundle
   note: "the twin of a host diagnostics report — smart/ per disk, system/ listings, config/ and shares/ cfg files, a syslog (gen/bundles2.ts)"
 
 - file: vault-subtree.zip
   blake3: e0fb7ff7cbf4fe64e2330669e50540eaae1c28118e9ef7213dfcece0f4411967
   mime: application/zip
-  root: vault-export
-  shape: export-bundle
+  classifies: vault-export
+  twin: export-bundle
   note: "the twin of a note-vault subtree — notes with frontmatter and wiki links in folders, a daily log, a clipping, an attachment, the app config (gen/bundles2.ts)"
 
 - file: vendor-share.zip
   blake3: 7fafd3bd49d5586e8ad43ddd00d78dcd76b083599c41268274d70defcf4a013f
   mime: application/zip
-  root: vendor-share
-  shape: export-bundle
+  classifies: vendor-share
+  twin: export-bundle
   note: "the twin of a vendor download tree — datasheet and schematic PDFs, a DXF outline, a nested firmware zip, rar, 7z and exe told by magic alone (gen/bundles2.ts)"
 
 - file: agent-session.zip
   blake3: 81f4436b4be4918124484ef6b8441694b5c34be4a2bdfa238644aee94195fbb3
   mime: application/zip
-  root: agent-session
-  shape: export-bundle
+  classifies: agent-session
+  twin: export-bundle
   note: "the twin of a captured agent session — the JSONL transcript, a sub-agent transcript, tool results and workflow state, every member under zstd (gen/bundles2.ts)"
 
 - file: statements-year.zip
   blake3: f993a31d5faf7e08e823ea80b554c6085665e3034a0335b1b1d7d7e0487ce53a
   mime: application/zip
-  root: statement-series
-  shape: export-bundle
+  classifies: statement-series
+  twin: export-bundle
   note: "the twin of a statement year — twelve monthly statement PDFs rendered with typst (gen/bundles2.ts)"
 
 - file: card-dump.zip
   blake3: 08ac924b1b01e9f58d9c8b5908e0e52d13127273948fae6b658c286f1f0723bf
   mime: application/zip
-  root: card-dump
-  shape: export-bundle
+  classifies: card-dump
+  twin: export-bundle
   note: "the twin of a camera card copied whole — DCIM raw (a minimal TIFF-shaped ARW) and HIF pairs, a PRIVATE/M4ROOT clip with its XML sidecars (gen/bundles2.ts; heif-enc, ffmpeg)"
 
 - file: takeout-slice.zip
   blake3: 1d7dc1e96ea93fc2e55b9099393e5907fc1619f49f52a952bea95872c34f3387
   mime: application/zip
-  root: takeout-slice
-  shape: export-bundle
+  classifies: takeout-slice
+  twin: export-bundle
   note: "the twin of a Takeout slice — Fit TCX activities and daily metrics, a contacts vCard, labelled places, a Keep note as HTML and JSON, a calendar, saved places, the archive browser (gen/bundles2.ts)"
 
 - file: drive-folder.zip
   blake3: da7b858a7acc71ea1953f162369503c564bce9e6ec59ad1b717c6864ccaf34f0
   mime: application/zip
-  root: zip
-  shape: export-bundle
+  twin: export-bundle
   note: "the twin of a Drive download job — a flat folder of a PDF, a CSV, a note and an image; no layout to be told by, so it is a zip (gen/bundles2.ts)"
 
 - file: profile-year.zip
   blake3: 96d4f9ff048b937ff9db93f4e58e02e624609166887f4bce07a4033b16ef7a00
   mime: application/zip
-  root: profile-year
-  shape: export-bundle
+  classifies: profile-year
+  twin: export-bundle
   note: "the twin of a harvested profile year in the export layout — posts and comments indexes, post media; told apart from a month slice by its comments_and_reactions/ (gen/bundles2.ts)"
 
 - file: lantern-novel.epub
   blake3: a04764fbe6acb210160ea018f07f3b3e5bdf48a6f3e06c96f60116d54ee9c673
   mime: application/epub+zip
-  root: epub
-  shape: epub
+  twin: epub
   note: the twin of the novel — an EPUB 2 package in calibre's layout with Dublin Core and an ISBN; 52 members, 25 spine items, one chapter of 600 paragraphs (gen/novel.ts)
 
 - file: quay-chat.mbox
   blake3: 7ccea7956323b20d2874a1ec5a035263db53682c6d945ddd46307ecbf12a1587
   mime: application/mbox
-  root: mbox
-  shape: mbox
+  twin: mbox
   note: the twin of the mailbox slice — mboxrd, 358 messages as text/xml + text/html alternatives, two with a text/plain body carrying stuffed From lines (gen/chat-archive.ts)
 
 # ── lossy: images and media ───────────────────────────────────────────────────────────────────────
@@ -310,64 +291,55 @@
 - file: garden.jpg
   blake3: c2bfdcbf54fd1b3269190e688b9b6aebeb4093f4b77b1559600451780a6cf59a
   mime: image/jpeg
-  root: jpeg
-  shape: image-jpeg
+  twin: image-jpeg
   note: the twin of the photograph — a synthesised raster (ImageMagick) with an Exif APP1 segment carrying Orientation 6, written by gen/plain.ts
 
 - file: sign.jpg
   blake3: 6aa934e58bc0dff94e8cb1281ccb0066ff98c9346baca2c72d8764cce6244471
   mime: image/jpeg
-  root: jpeg
-  shape: image-with-printed-text
+  twin: image-with-printed-text
   note: a generated sign with printed text; the image.words@1 proposal exemplar, synthetic
 
 - file: window.png
   blake3: c36c98aafe5fbc3ed57df8c967c13ec6c146b17484059b7e028a60bf9aa89dc0
   mime: image/png
-  root: png
-  shape: image-png
+  twin: image-png
   note: the twin of the screenshot — a window-like raster with text (ImageMagick, gen/plain.ts); IHDR dims attested
 
 - file: synthetic-image.gif
   blake3: d6846ee4361867a32b491f0c73b106af30bc755592ee202d72b97fc5abab50b2
   mime: image/gif
-  root: gif
-  shape: image-gif
+  twin: image-gif
   note: 8×6 single-frame GIF, synthetic (ImageMagick)
 
 - file: synthetic-image.webp
   blake3: 2217e1aa738444c2edb95544d4fb1eccb396a623cfed22cdc2451db8dea1ed50
   mime: image/webp
-  root: webp
-  shape: image-webp
+  twin: image-webp
   note: 8×6 WebP, synthetic (ImageMagick)
 
 - file: synthetic-image.svg
   blake3: 7c72350e64806cebc69812091784f18ced07c57ddfc4310dc8b49c7cbb018962
   mime: image/svg+xml
-  root: svg
-  shape: image-svg
+  twin: image-svg
   note: one rect, synthetic
 
 - file: synthetic-image.heic
   blake3: 262e0308dd19571a31ad5be39fcbff0fc18015feaa221a1a749d7c0624b9d9df
   mime: image/heic
-  root: heic
-  shape: image-heic
+  twin: image-heic
   note: HEIF still image (ftyp heic), synthetic (heif-enc); sniffed by brand
 
 - file: countdown.mp4
   blake3: f5b33fcb4ed482e62d5ea822c2c33cfb7febee77336411ba7ca992282da69115
   mime: video/mp4
-  root: mp4
-  shape: multi-track-media
+  twin: multi-track-media
   note: the twin of the clip — two seconds of h264 test pattern and an aac sine (ffmpeg, gen/plain.ts); sniffed by brand
 
 - file: synthetic-audio.m4a
   blake3: c6e3984ff59bef5dcb77f70723ef25a42d8df3fb3ddd88c0b9310f4de4b23a6d
   mime: audio/mp4
-  root: m4a
-  shape: single-track-audio
+  twin: single-track-audio
   note: single-track ISOBMFF/M4A, AAC, 1s mono sine wave, synthetic (ffmpeg); brand M4A
 
 # ── loose media, documents and sources (gen/media.ts, gen/documents.ts) ───────────────────────────────────
@@ -375,197 +347,169 @@
 - file: harbour-clip.mov
   blake3: ada2d918e9e268ac957f2e9140959a1805fb38e8b2f602a159098aafa8265014
   mime: video/quicktime
-  root: quicktime
-  shape: multi-track-media
+  twin: multi-track-media
   note: "a QuickTime clip, h264 + aac, one second (gen/media.ts, ffmpeg); brand qt"
 
 - file: phone-clip.3gp
   blake3: 7bf351b2bd3035a54a5d32e92b2c6dbcab599171f2c20e3b7397514059947a20
   mime: video/3gpp
-  root: threegpp
-  shape: single-track-video
+  twin: single-track-video
   note: "a 3GPP clip, baseline h264, no audio (gen/media.ts, ffmpeg); brand 3gp6"
 
 - file: stream.h264
   blake3: 69a157184ffd6285e3f13fc08ab134c46883d399a9cbd9c12b3ebd83c57b52e2
   mime: video/h264
-  root: h264
-  shape: elementary-stream
+  twin: elementary-stream
   note: "a raw H.264 Annex B stream, no container (gen/media.ts, ffmpeg); told by its first NAL header"
 
 - file: stream.h265
   blake3: 88ef6e37cb4772f9194c62a6d9527f09fac90f1dfbe73f90f334181f92484bea
   mime: video/hevc
-  root: hevc
-  shape: elementary-stream
+  twin: elementary-stream
   note: "a raw HEVC Annex B stream, no container (gen/media.ts, ffmpeg); told by its VPS NAL header"
 
 - file: stream.ivf
   blake3: 44d43946a57c6f2fc8a00f634e80fd55eb47743a1717e4377c38e8d4542b0f2d
   mime: video/av1
-  root: av1
-  shape: elementary-stream
+  twin: elementary-stream
   note: "AV1 in an IVF wrapper (gen/media.ts, ffmpeg libaom); told by DKIF + AV01"
 
 - file: tone.opus
   blake3: 3e49142d1aa4a260f2058f9e3edc09823a865669b9552c19a8ffe884a6b95039
   mime: audio/opus
-  root: opus
-  shape: audio
+  twin: audio
   note: "Opus in Ogg, a one-second tone (gen/media.ts, ffmpeg); told by OggS + OpusHead"
 
 - file: tone.aac
   blake3: b76ae5a216cc49454ffa89745afe247b09c596d8e8a690ce64de394f31b8a9df
   mime: audio/aac
-  root: aac
-  shape: audio
+  twin: audio
   note: "AAC in ADTS frames (gen/media.ts, ffmpeg); told by the sync word"
 
 - file: tone.mp3
   blake3: 0dde812f04f06b69309bf024703b1ac4a3587cf60866e894d6cd4c4a412a3dd0
   mime: audio/mpeg
-  root: mpeg-audio
-  shape: audio
+  twin: audio
   note: "MPEG audio with an ID3 header (gen/media.ts, ffmpeg lame)"
 
 - file: scan.tiff
   blake3: 484cd48f7d249aae60565a9af72fc54245ea95d5b49f031a78e177779f0e2694
   mime: image/tiff
-  root: tiff
-  shape: image-tiff
+  twin: image-tiff
   note: "a TIFF gradient (gen/media.ts, ImageMagick)"
 
 - file: still.avif
   blake3: 923a5a61e46c536524ffd949cbcdd4f01a7e6e0729a52bf93d21df5877e4ee7d
   mime: image/avif
-  root: avif
-  shape: image-avif
+  twin: image-avif
   note: "an AVIF still (gen/media.ts, ImageMagick); brand avif"
 
 - file: favicon.ico
   blake3: fd0743a47e680eedd93e6100762870d20d8a3451771cd59aa8eb64d49df13c86
   mime: image/x-icon
-  root: icon
-  shape: image-icon
+  twin: image-icon
   note: "a two-size icon (gen/media.ts, ImageMagick); told by its header, ahead of the Annex B check"
 
 - file: animation.gif
   blake3: f967637f322ea716fd7d20533b7f39b3c5138ae275de93c656a75e23eac8c599
   mime: image/gif
-  root: gif
-  shape: image-gif-animated
+  twin: image-gif-animated
   note: "a three-frame animated GIF (gen/media.ts, ffmpeg)"
 
 - file: statement-2026-03.pdf
   blake3: 409245363c6bf171d93a05a4c3df8b87145d2a6411e36f5c7c2676583b17f02d
   mime: application/pdf
-  root: pdf
-  shape: pdf-statement
+  twin: pdf-statement
   note: "the twin of a loose monthly statement (gen/documents.ts, typst); provenance in its .testimony.yaml"
 
 - file: tax-slip-2025.pdf
   blake3: 9c7ac767810beee6fbb6c41dd874ed5915d70026c8c054ae42be7332d6ba0ae4
   mime: application/pdf
-  root: pdf
-  shape: pdf-form
+  twin: pdf-form
   note: "the twin of a tax slip as a portal renders it — boxed amounts (gen/documents.ts, typst)"
 
 - file: policy-schedule.pdf
   blake3: c662da40ef0466ef873181c07902d07583842c6fc930fe90d23821b6832d872f
   mime: application/pdf
-  root: pdf
-  shape: pdf-document
+  twin: pdf-document
   note: "the twin of an insurance policy schedule (gen/documents.ts, typst)"
 
 - file: account-confirmation.pdf
   blake3: 7b2edf118bd04aca3b665e230b1a75ef9925130d30e249671b53390aa8b5efa5
   mime: application/pdf
-  root: pdf
-  shape: pdf-letter
+  twin: pdf-letter
   note: "the twin of a banking letter (gen/documents.ts, typst)"
 
 - file: chart-printout.pdf
   blake3: 24c1477b3562892536c1e39587659065673147397d3eae0f6a47eaa99ad441ec
   mime: application/pdf
-  root: pdf
-  shape: pdf-printout
+  twin: pdf-printout
   note: "the twin of a health-care chart print-out (gen/documents.ts, typst)"
 
 - file: design-export.pdf
   blake3: 38cc78eb0aec488d7e71ab9ba19f08450ffea6ab4b44060f5574bebb31959790
   mime: application/pdf
-  root: pdf
-  shape: pdf-design
+  twin: pdf-design
   note: "the twin of a design-surface export — one wide page of frames (gen/documents.ts, typst)"
 
 - file: regatta-roles.docx
   blake3: 63d98d4acacde3289468b291cf0ff0d257fa12fad908a327b0546a840e973573
   mime: application/vnd.openxmlformats-officedocument.wordprocessingml.document
-  root: docx
-  shape: docx
+  twin: docx
   note: "a minimal Word document — [Content_Types], rels, document.xml with a heading and two paragraphs (gen/documents.ts)"
 
 - file: owner-statement.md
   blake3: 6d4a69b2935ac22f1eb8e5b3236448a1a2e07bdc6ed51aa00cfc3b744ce430e8
   mime: text/markdown
-  root: markdown
-  shape: owner-statement
+  twin: owner-statement
   note: "the twin of an owner statement — a few lines of the owner's words under frontmatter (gen/documents.ts)"
 
 - file: contact-card.vcf
   blake3: 75eee68fdbadde02da00b5004924dc771245aca6a4b864b0b257cf254d9844fe
   mime: text/vcard
-  root: vcard
-  shape: vcard-card
+  twin: vcard-card
   note: "the twin of a single contact card promoted from an address-book export (gen/documents.ts)"
 
 - file: sms-2026-03.ndjson
   blake3: 2275613d697f25e2846499b364fa223facbbd568598fd6ce84223c9950e35e34
   mime: application/x-ndjson
-  root: ndjson
-  shape: sms-backup
+  twin: sms-backup
   note: "the twin of an SMS backup — one NDJSON per peer per month, an MMS with inlined media, a call (gen/documents.ts)"
 
 - file: location-history.json
   blake3: 8c73633d06364efe3dd483cb1fceebccae53dbbbc43586ea3bc704827c1fada9
   mime: application/json
-  root: json
-  shape: timeline-json
+  twin: timeline-json
   note: "the twin of an on-device Timeline export — a JSON array of visit and activity segments (gen/documents.ts)"
 
 - file: tidewatch.css
   blake3: 0c863bdc35532ac5e3cec8dc621a98aa3431e1b5dbdf9a1cb2250f8861776a5d
   mime: text/css
-  root: css
-  shape: source-text
+  twin: source-text
   note: "a stylesheet (gen/documents.ts)"
 
 - file: tidewatch.ts
   blake3: a35b5872683c4f7afdafcf85ac7fcd7e492a3f2f06fc1ed9e8206889fe3f26c8
   mime: text/typescript
-  root: typescript
-  shape: source-text
+  twin: source-text
   note: "a TypeScript source (gen/documents.ts)"
 
 - file: tidewatch.py
   blake3: d87072261d42a840b66aab832d31070ba05e54000d67475df9149c36fb611cea
   mime: text/x-python
-  root: python
-  shape: source-text
+  twin: source-text
   note: "a Python source (gen/documents.ts)"
 
 - file: harbour-events.ics
   blake3: 7f3b8136c799feb3292e7056028d3380913104bc9620d6ba111aac208ab16a04
   mime: text/calendar
-  root: calendar
-  shape: calendar
+  twin: calendar
   note: "an iCalendar stream with two events (gen/documents.ts)"
 
 - file: walk.gpx
   blake3: 0249f38682f2d7167d5676f9e805a1c63183fced52878dcb6e3d97288986dd26
   mime: application/xml
-  root: xml
-  shape: gpx-track
+  twin: gpx-track
   note: "a GPX track of thirty points (gen/documents.ts); XML by sniff"
 
 # ── generic page captures and odd formats (gen/pages.ts, gen/odds.ts) ─────────────────────────────────────
@@ -573,56 +517,52 @@
 - file: harbour-article.html
   blake3: 95460875093fd57a8d64913a45afd50b035ab53de34a2c1c988faa096e18c3b3
   mime: text/html
-  root: article-page
-  shape: page-capture
+  classifies: article-page
+  twin: page-capture
   note: "the twin of a news-article capture — headline, byline, published time, lead figure, body paragraphs and a subheading, a pull quote, comments (gen/pages.ts)"
 
 - file: rope-product.html
   blake3: d97e60d369370010642454bbb6abf2472697c76854e126db24c8a6529856ca95
   mime: text/html
-  root: product-page
-  shape: page-capture
+  classifies: product-page
+  twin: page-capture
   note: "the twin of a product-page capture — schema.org microdata: name, price, sku, description, a specification table, reviews, a gallery (gen/pages.ts)"
 
 - file: order-detail.html
   blake3: 9515b279f0de5ca3bbfe81e028f1234be064db4c9a7d86b08774b85c0a27cc6f
   mime: text/html
-  root: order-page
-  shape: page-capture
+  classifies: order-page
+  twin: page-capture
   note: "the twin of an order-detail capture — order facts, a table of lines with totals, tracking events (gen/pages.ts)"
 
 - file: cottage-listing.html
   blake3: 7684234e970a2940ac15d0974c20cded566641eefa6c5bcd5dd2ac45b1e396cc
   mime: text/html
-  root: listing-page
-  shape: page-capture
+  classifies: listing-page
+  twin: page-capture
   note: "the twin of a property-listing capture — address, price, facts, photos, description, rooms (gen/pages.ts)"
 
 - file: reference.zim
   blake3: f7563aea4ec5cf2779295f19ac2f06b805db61f6ec682f53d41b19f8d4d05982
   mime: application/x-openzim
-  root: zim
-  shape: reference-archive
+  twin: reference-archive
   note: "a ZIM header with an empty MIME list — the signature and first structures only, a stub by design (gen/odds.ts)"
 
 - file: region.osm.pbf
   blake3: f7cc967683c92e41a966b32cda3c50f60c554d03213e0d258f1bcd41e78646e7
   mime: application/x-osm+pbf
-  root: osm-pbf
-  shape: reference-archive
+  twin: reference-archive
   note: "an OSM PBF file of one OSMHeader blob — a stub by design (gen/odds.ts)"
 
 - file: bracket.FCStd
   blake3: 0384bb7ee10f7ee24fe100ff7fb5e47bb393982ed186b18d32d22a132f10288b
   mime: application/x-extension-fcstd
-  root: fcstd
-  shape: cad-document
+  twin: cad-document
   note: "a FreeCAD document — a zip of Document.xml and GuiDocument.xml with one box (gen/odds.ts)"
 
 - file: notes.txt.gz
   blake3: 30522edc7d940611e83a36c976dd5e88dc7267376b948a94e2c0772b2b770052
   mime: application/gzip
-  root: gzip
-  shape: compressed-text
+  twin: compressed-text
   note: "a gzip of a short text; stands for the tgz wrapper of a Takeout delivery (gen/odds.ts)"
 

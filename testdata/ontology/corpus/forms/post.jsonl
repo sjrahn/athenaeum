@@ -1,0 +1,9 @@
+{"pred":"definition","val":"post"}
+{"pred":"expects","val":["body"]}
+{"pred":"field","val":{"name":"author","type":"string"}}
+{"pred":"field","val":{"name":"datetime","type":"string"}}
+{"pred":"field","val":{"name":"id","required":true,"type":"string"}}
+{"pred":"field","val":{"name":"member-title","type":"string"}}
+{"pred":"field","val":{"name":"position","pattern":"^#(\\d+)$","type":"designator"}}
+{"pred":"field","val":{"name":"post-number","type":"string"}}
+{"pred":"field","val":{"name":"user_id","type":"string"}}

@@ -1,0 +1,3 @@
+{"pred":"definition","val":"a route to a member in the spine's reading order"}
+{"pred":"field","val":{"name":"path","required":true,"type":"string"}}
+{"pred":"reads","val":"none"}

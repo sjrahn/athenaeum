@@ -1,3 +1,0 @@
-{"subject":"post-body","predicate":"refines","value":"unit"}
-{"subject":"post-body","predicate":"reads","value":"text"}
-{"subject":"post-body","predicate":"convention","value":"quoted blockquotes stay in the text and are also lifted as a quotes claim"}

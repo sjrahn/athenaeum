@@ -1,0 +1,2 @@
+{"pred":"definition","val":"the metadata sidecar of one exported message (Payload: ID, Subject, Sender, Time, labels)"}
+{"pred":"matches","val":{"container":"proton-mail-export","mime":"application/json","path":"*.metadata.json"}}

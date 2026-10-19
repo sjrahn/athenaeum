@@ -6,7 +6,7 @@
 // some container matches); `origin` (an `origins` entry has, at the pointer, a matching value, or any).
 import { byCodePoint } from "@ath/kit/canonical.ts";
 import { delimiterFor, parseCsv } from "../formats/csv/parse.ts";
-import { patternMatches, type SelectParse, select, selectParse } from "../select/select.ts";
+import { patternMatches, type SelectParse, selectParse, selects } from "../select/select.ts";
 import { all, refinesChain } from "./load.ts";
 import type { Vocabulary } from "./terms.ts";
 
@@ -45,7 +45,7 @@ async function holds(m: J, p: Probe, v: Vocabulary, parse: () => Promise<SelectP
   }
   if (m.selector !== undefined) {
     const sp = await parse();
-    if (!sp || select(sp, m.selector).length === 0) return false;
+    if (!sp || !selects(sp, m.selector)) return false;
   }
   if (m.constituent !== undefined) {
     const cs = (p.intrinsics.constituents as { path: string }[] | undefined) ?? [];

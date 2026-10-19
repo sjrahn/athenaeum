@@ -1,3 +1,0 @@
-{"subject":"page","predicate":"refines","value":"unit"}
-{"subject":"page","predicate":"field","value":{"name":"number","kind":"int","derived":true,"address":"page"}}
-{"subject":"page","predicate":"aligns","value":"fabio:Page"}

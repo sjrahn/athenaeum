@@ -1,4 +1,0 @@
-{"subject":"definition","predicate":"refines","value":"unit"}
-{"subject":"definition","predicate":"reads","value":"cells"}
-{"subject":"definition","predicate":"cells","value":["symbol","=","definition"]}
-{"subject":"definition","predicate":"concept","value":{"term":"parameter","key":"symbol","claims":{"symbol":0,"definition":2}}}

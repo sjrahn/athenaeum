@@ -1,0 +1,3 @@
+{"pred":"definition","val":"a year of monthly statement PDFs from one account"}
+{"pred":"matches","val":{"constituent":"*/Statement-*.pdf","mime":"application/zip"}}
+{"pred":"refines","val":"export-bundle"}

@@ -1,0 +1,4 @@
+{"pred":"columns","val":{"form":"header","header":0}}
+{"pred":"columns","val":{"rows":"row"}}
+{"pred":"definition","val":"amazon order history"}
+{"pred":"matches","val":{"first_row":["ASIN","Billing Address","Carrier Name & Tracking Number","Currency","Department"],"mime":"text/csv"}}

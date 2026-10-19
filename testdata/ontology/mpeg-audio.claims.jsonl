@@ -1,2 +1,0 @@
-{"subject":"mpeg-audio","predicate":"refines","value":"audio"}
-{"subject":"mpeg-audio","predicate":"matches","value":{"mime":"audio/mpeg"}}

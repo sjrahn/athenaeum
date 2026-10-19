@@ -1,0 +1,3 @@
+{"pred":"definition","val":"facebook export bundle"}
+{"pred":"matches","val":{"constituent":"your_facebook_activity/","mime":"application/zip"}}
+{"pred":"refines","val":"export-bundle"}

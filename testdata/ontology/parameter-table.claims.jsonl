@@ -1,3 +1,0 @@
-{"subject":"parameter-table","predicate":"refines","value":"table"}
-{"subject":"parameter-table","predicate":"keys","value":["Data / parameter:","Data unit:","Description:","Source of data:","Measurement procedures (if any):","Monitoring frequency:","QA/QC procedures:","Any comment:"]}
-{"subject":"parameter-table","predicate":"concept","value":{"term":"monitored-parameter","key":"Data / parameter:","claims":{"symbol":"Data / parameter:","unit":"Data unit:","description":"Description:","source_of_data":"Source of data:","measurement_procedure":"Measurement procedures (if any):","monitoring_frequency":"Monitoring frequency:","qa_qc":"QA/QC procedures:","comment":"Any comment:"}}}

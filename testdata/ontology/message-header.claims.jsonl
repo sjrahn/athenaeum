@@ -1,3 +1,0 @@
-{"subject":"message-header","predicate":"refines","value":"data"}
-{"subject":"message-header","predicate":"reads","value":"none"}
-{"subject":"message-header","predicate":"definition","value":"the RFC 5322 header block; its fields are attested, never read"}

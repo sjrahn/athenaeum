@@ -1,0 +1,3 @@
+{"pred":"definition","val":"a vendor download tree: datasheets, drawings, firmware, tools"}
+{"pred":"matches","val":{"constituent":"Datasheet/","mime":"application/zip"}}
+{"pred":"refines","val":"export-bundle"}

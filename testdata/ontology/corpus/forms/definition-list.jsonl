@@ -1,0 +1,4 @@
+{"pred":"definition","val":"definition list"}
+{"pred":"expects","val":["definition"]}
+{"pred":"reads","val":"none"}
+{"pred":"renders","val":{"md":"- {sym} = {def}"}}

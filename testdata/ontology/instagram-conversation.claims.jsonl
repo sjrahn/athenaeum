@@ -1,2 +1,0 @@
-{"subject":"instagram-conversation","predicate":"refines","value":"meta-conversation"}
-{"subject":"instagram-conversation","predicate":"matches","value":{"mime":"application/json","container":"instagram-export-bundle","path":"*/message_1.json"}}

@@ -1,0 +1,16 @@
+{"pred":"chrome","val":{"selector":"nav, ad-repair-breadcrumb, .breadcrumb-container, router-outlet, script, style"}}
+{"pred":"definition","val":"a repair-procedure page captured from a single-page manual application: a page title, topics as definition lists, notices, numbered steps, specification tables, inlined figures"}
+{"pred":"matches","val":{"mime":"text/html","selector":"h3.repair-page-title"}}
+{"pred":"select","val":{"attr":"data-corpus-original-src","field":"original","form":"figure","selector":"#repair-content img.thumbnail"}}
+{"pred":"select","val":{"field":"procedure-step","form":"topic","selector":"#repair-content ol.ordered-legal > li"}}
+{"pred":"select","val":{"form":"caption","in":"topic","selector":"#repair-content .open-new-tab-label"}}
+{"pred":"select","val":{"form":"figure","in":"topic","selector":"#repair-content img.thumbnail"}}
+{"pred":"select","val":{"form":"heading","in":"topic","level":1,"selector":"#repair-content dl > dt"}}
+{"pred":"select","val":{"form":"heading","level":0,"selector":"h3.repair-page-title"}}
+{"pred":"select","val":{"form":"list-item","in":"topic","selector":"#repair-content ul.unordered-bullet > li"}}
+{"pred":"select","val":{"form":"notice","in":"topic","selector":"#repair-content dl > dd > div.important"}}
+{"pred":"select","val":{"form":"notice","in":"topic","selector":"#repair-content dl > dd > div.notice"}}
+{"pred":"select","val":{"form":"paragraph","in":"topic","selector":"#repair-content dl > dd > p"}}
+{"pred":"select","val":{"form":"row","in":"table","selector":"#repair-content table.blltnHdr tr"}}
+{"pred":"select","val":{"form":"table","in":"topic","selector":"#repair-content table.blltnHdr"}}
+{"pred":"select","val":{"form":"topic","selector":"#repair-content dl"}}

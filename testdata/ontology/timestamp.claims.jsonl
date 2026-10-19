@@ -1,5 +1,0 @@
-{"subject":"timestamp","predicate":"refines","value":"unit"}
-{"subject":"timestamp","predicate":"definition","value":"a machine-readable instant on a <time> element: the surface is the datetime attribute, not the displayed text"}
-{"subject":"timestamp","predicate":"reads","value":"text"}
-{"subject":"timestamp","predicate":"field","value":{"name":"datetime","kind":"datetime","required":true}}
-{"subject":"timestamp","predicate":"derivation","value":"html.attr@1 datetime"}

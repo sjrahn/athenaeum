@@ -1,6 +1,0 @@
-{"subject":"message-body","predicate":"refines","value":"unit"}
-{"subject":"message-body","predicate":"reads","value":"text"}
-{"subject":"message-body","predicate":"field","value":{"name":"part","kind":"string","required":true}}
-{"subject":"message-body","predicate":"field","value":{"name":"encoding","kind":"string"}}
-{"subject":"message-body","predicate":"field","value":{"name":"charset","kind":"string"}}
-{"subject":"message-body","predicate":"definition","value":"one text/plain part read in place"}

@@ -1,3 +1,0 @@
-{"subject":"plain-text","predicate":"refines","value":"document"}
-{"subject":"plain-text","predicate":"matches","value":{"mime":"text/plain"}}
-{"subject":"plain-text","predicate":"axes","value":["bytes"]}

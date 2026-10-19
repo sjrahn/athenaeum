@@ -1,2 +1,0 @@
-{"subject":"forum-thread","predicate":"refines","value":"concept"}
-{"subject":"forum-thread","predicate":"owes","value":["title","url","site","post"]}

@@ -1,0 +1,5 @@
+{"pred":"aligns","val":"doco:Footnote"}
+{"pred":"definition","val":"footnote"}
+{"pred":"field","val":{"name":"mark","pattern":"^\\d+$","type":"designator","where":"leading"}}
+{"pred":"reads","val":"text"}
+{"pred":"renders","val":{"md":"[^{mark}]: {reading}"}}

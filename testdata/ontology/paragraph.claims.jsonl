@@ -1,5 +1,0 @@
-{"subject":"paragraph","predicate":"refines","value":"unit"}
-{"subject":"paragraph","predicate":"reads","value":"text"}
-{"subject":"paragraph","predicate":"field","value":{"name":"num","kind":"designator","where":"leading","pattern":"^\\d+\\.$","address":"para"}}
-{"subject":"paragraph","predicate":"renders","value":{"md":"{num} {body}"}}
-{"subject":"paragraph","predicate":"aligns","value":"doco:Paragraph"}

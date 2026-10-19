@@ -1,4 +1,0 @@
-{"subject":"quote-source","predicate":"refines","value":"unit"}
-{"subject":"quote-source","predicate":"reads","value":"text"}
-{"subject":"quote-source","predicate":"definition","value":"the attribution of a quote: who said it, linking the quoted post"}
-{"subject":"quote-source","predicate":"field","value":{"name":"target","kind":"string","pattern":"^#(post-\\d+)$"}}

@@ -1,0 +1,2 @@
+{"pred":"definition","val":"one Google Chat conversation as Takeout exports it: messages with creator, created_date, text, attached files"}
+{"pred":"matches","val":{"container":"google-chat-export-bundle","mime":"application/json","path":"*/messages.json"}}

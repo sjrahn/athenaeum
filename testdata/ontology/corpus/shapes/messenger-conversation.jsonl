@@ -1,0 +1,3 @@
+{"pred":"definition","val":"messenger conversation"}
+{"pred":"matches","val":{"container":"facebook-export-bundle","mime":"application/json","path":"*/message_1.json"}}
+{"pred":"refines","val":"meta-conversation"}

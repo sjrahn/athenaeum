@@ -1,0 +1,14 @@
+{"pred":"chrome","val":{"selector":".p-nav, .p-footer, .message-actionBar, .menu, .p-breadcrumbs, .message-userStats, form, button"}}
+{"pred":"definition","val":"xenforo thread"}
+{"pred":"matches","val":{"mime":"text/html","selector":"html#XF[data-template=\"thread_view\"]"}}
+{"pred":"select","val":{"attr":"data-content","field":"id","form":"post","selector":"article.message--post"}}
+{"pred":"select","val":{"attr":"data-content-selector","field":"target","form":"quote","selector":"article.message--post blockquote.bbCodeBlock--quote a.bbCodeBlock-sourceJump"}}
+{"pred":"select","val":{"attr":"data-user-id","field":"user_id","form":"post","selector":"article.message--post a.username[data-user-id]"}}
+{"pred":"select","val":{"attr":"datetime","field":"datetime","form":"post","selector":"article.message--post time[qid=post-date-time]"}}
+{"pred":"select","val":{"field":"author","form":"post","selector":"article.message--post .message-name"}}
+{"pred":"select","val":{"field":"member-title","form":"post","selector":"article.message--post .userTitle"}}
+{"pred":"select","val":{"field":"post-number","form":"post","selector":"article.message--post a[qid=post-number]"}}
+{"pred":"select","val":{"form":"body","in":"post","selector":"article.message--post .bbWrapper"}}
+{"pred":"select","val":{"form":"heading","level":0,"selector":"h1[qid=page-header], h1.p-title-value"}}
+{"pred":"select","val":{"form":"post","selector":"article.message--post"}}
+{"pred":"select","val":{"form":"quote","in":"post","selector":"article.message--post blockquote.bbCodeBlock--quote"}}

@@ -1,0 +1,6 @@
+{"pred":"aligns","val":"doco:SectionTitle"}
+{"pred":"definition","val":"heading"}
+{"pred":"field","val":{"name":"level","required":true,"type":"int"}}
+{"pred":"field","val":{"name":"num","pattern":"^\\d+(\\.\\d+)*\\.$","type":"designator","where":"leading"}}
+{"pred":"reads","val":"text"}
+{"pred":"renders","val":{"md":"{level+1} {num} {reading}"}}

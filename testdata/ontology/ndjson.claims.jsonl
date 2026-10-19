@@ -1,2 +1,0 @@
-{"subject":"ndjson","predicate":"refines","value":"data"}
-{"subject":"ndjson","predicate":"matches","value":{"mime":"application/x-ndjson"}}

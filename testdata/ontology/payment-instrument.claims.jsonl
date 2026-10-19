@@ -1,2 +1,0 @@
-{"subject":"payment-instrument","predicate":"refines","value":"text"}
-{"subject":"payment-instrument","predicate":"field","value":{"name":"pattern","kind":"string"}}

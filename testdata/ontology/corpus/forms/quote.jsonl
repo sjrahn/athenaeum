@@ -1,0 +1,3 @@
+{"pred":"definition","val":"a block quoting another message or post; the source rides on its attribution"}
+{"pred":"field","val":{"name":"target","type":"string"}}
+{"pred":"reads","val":"text"}

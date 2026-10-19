@@ -1,3 +1,0 @@
-{"subject":"datetime","predicate":"refines","value":"column"}
-{"subject":"datetime","predicate":"definition","value":"a date-time in a column under a declared format; a value op (parse to ISO 8601) is not yet written, so no derivation is declared"}
-{"subject":"datetime","predicate":"field","value":{"name":"format","kind":"string","required":true}}

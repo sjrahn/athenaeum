@@ -1,0 +1,3 @@
+{"pred":"definition","val":"a period of iMessage conversation pages, one per handle (a page per phone number or group name)"}
+{"pred":"matches","val":{"constituent":"+","mime":"application/zip"}}
+{"pred":"refines","val":"export-bundle"}

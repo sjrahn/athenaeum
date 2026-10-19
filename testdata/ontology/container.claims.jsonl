@@ -1,4 +1,0 @@
-{"subject":"container","predicate":"refines","value":"data"}
-{"subject":"container","predicate":"axes","value":["path"]}
-{"subject":"container","predicate":"tree","value":"derived — the roster is the tree; members are subjects of their own"}
-{"subject":"container","predicate":"convention","value":"a route through a container canonicalises to the member; cite the member, which outlives the package"}

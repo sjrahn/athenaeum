@@ -1,0 +1,3 @@
+{"pred":"definition","val":"health export"}
+{"pred":"matches","val":{"constituent":"apple_health_export/","mime":"application/zip"}}
+{"pred":"refines","val":"export-bundle"}

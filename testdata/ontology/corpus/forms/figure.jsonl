@@ -1,0 +1,6 @@
+{"pred":"aligns","val":"doco:Figure"}
+{"pred":"definition","val":"figure"}
+{"pred":"field","val":{"name":"alt","type":"string"}}
+{"pred":"field","val":{"name":"original","type":"string"}}
+{"pred":"reads","val":"none"}
+{"pred":"renders","val":{"md":"![figure]({at}&render)"}}

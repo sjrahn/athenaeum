@@ -1,0 +1,13 @@
+{"pred":"chrome","val":{"selector":".site-header, .site-footer, script, .tags"}}
+{"pred":"definition","val":"article page"}
+{"pred":"matches","val":{"mime":"text/html","selector":"article[itemtype=\"https://schema.org/NewsArticle\"], article.post"}}
+{"pred":"select","val":{"attr":"alt","field":"alt","form":"figure","selector":"article figure img"}}
+{"pred":"select","val":{"attr":"datetime","field":"datetime","form":"value","selector":"article time.published"}}
+{"pred":"select","val":{"form":"caption","selector":"article figcaption"}}
+{"pred":"select","val":{"form":"comment","selector":".comments li.comment"}}
+{"pred":"select","val":{"form":"figure","selector":"article figure img"}}
+{"pred":"select","val":{"form":"heading","level":0,"selector":"article h1"}}
+{"pred":"select","val":{"form":"heading","level":1,"selector":"article .post-body h2"}}
+{"pred":"select","val":{"form":"paragraph","selector":"article .post-body > p, article .post-body > h2"}}
+{"pred":"select","val":{"form":"quote","selector":"article blockquote"}}
+{"pred":"select","val":{"form":"value","selector":"article .byline .author"}}

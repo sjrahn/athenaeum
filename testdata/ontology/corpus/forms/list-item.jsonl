@@ -1,0 +1,5 @@
+{"pred":"aligns","val":"doco:ListItem"}
+{"pred":"definition","val":"list item"}
+{"pred":"field","val":{"name":"num","pattern":"^\\([a-z]\\)$","type":"designator","where":"leading"}}
+{"pred":"reads","val":"text"}
+{"pred":"refines","val":"paragraph"}

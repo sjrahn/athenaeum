@@ -1,2 +1,0 @@
-{"subject":"meta-conversation","predicate":"refines","value":"json"}
-{"subject":"meta-conversation","predicate":"definition","value":"one conversation as Meta exports it (Messenger, Instagram Direct, Threads): participants and messages with sender_name, timestamp_ms, content or media"}

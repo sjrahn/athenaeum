@@ -1,0 +1,3 @@
+{"pred":"definition","val":"one titled block of a manual page"}
+{"pred":"expects","val":["heading"]}
+{"pred":"field","val":{"name":"procedure-step","type":"string"}}

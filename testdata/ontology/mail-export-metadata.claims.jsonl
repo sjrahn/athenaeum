@@ -1,3 +1,0 @@
-{"subject":"mail-export-metadata","predicate":"refines","value":"json"}
-{"subject":"mail-export-metadata","predicate":"definition","value":"the metadata sidecar of one exported message (Payload: ID, Subject, Sender, Time, labels)"}
-{"subject":"mail-export-metadata","predicate":"matches","value":{"mime":"application/json","container":"proton-mail-export","path":"*.metadata.json"}}

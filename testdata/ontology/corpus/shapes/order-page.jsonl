@@ -1,0 +1,8 @@
+{"pred":"chrome","val":{"selector":".site-header, .site-footer, script"}}
+{"pred":"definition","val":"order page"}
+{"pred":"matches","val":{"mime":"text/html","selector":"table.order-lines"}}
+{"pred":"select","val":{"form":"heading","level":0,"selector":"h1.order-title"}}
+{"pred":"select","val":{"form":"list-item","selector":".tracking li"}}
+{"pred":"select","val":{"form":"list-item","selector":"dl.order-meta dd"}}
+{"pred":"select","val":{"form":"row","selector":"table.order-lines tbody tr.line"}}
+{"pred":"select","val":{"form":"row","selector":"table.order-lines tfoot tr"}}

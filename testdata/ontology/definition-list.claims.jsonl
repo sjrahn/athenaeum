@@ -1,3 +1,0 @@
-{"subject":"definition-list","predicate":"refines","value":"unit"}
-{"subject":"definition-list","predicate":"expects","value":["definition"]}
-{"subject":"definition-list","predicate":"renders","value":{"md":"- {sym} = {def}"}}

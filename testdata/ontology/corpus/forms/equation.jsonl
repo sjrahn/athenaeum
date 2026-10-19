@@ -1,0 +1,5 @@
+{"pred":"aligns","val":"doco:FormulaBox"}
+{"pred":"definition","val":"equation"}
+{"pred":"field","val":{"name":"label","pattern":"^Equation \\((\\d+)\\)$","type":"designator","where":"margin"}}
+{"pred":"reads","val":"tex"}
+{"pred":"renders","val":{"md":"$$ {reading} \\tag*{{label}} $$"}}

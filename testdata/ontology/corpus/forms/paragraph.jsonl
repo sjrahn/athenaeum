@@ -1,0 +1,5 @@
+{"pred":"aligns","val":"doco:Paragraph"}
+{"pred":"definition","val":"paragraph"}
+{"pred":"field","val":{"name":"num","pattern":"^\\d+\\.$","type":"designator","where":"leading"}}
+{"pred":"reads","val":"text"}
+{"pred":"renders","val":{"md":"{num} {reading}"}}

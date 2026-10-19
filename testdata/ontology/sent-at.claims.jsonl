@@ -1,3 +1,0 @@
-{"subject":"sent-at","predicate":"refines","value":"unit"}
-{"subject":"sent-at","predicate":"reads","value":"text"}
-{"subject":"sent-at","predicate":"field","value":{"name":"instant","kind":"string"}}

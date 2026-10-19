@@ -1,5 +1,0 @@
-{"subject":"table","predicate":"refines","value":"unit"}
-{"subject":"table","predicate":"field","value":{"name":"layout","kind":"enum","options":["grid","key-value"],"required":true}}
-{"subject":"table","predicate":"field","value":{"name":"num","kind":"designator","where":"caption","pattern":"table (\\d+)\\.$","address":"table"}}
-{"subject":"table","predicate":"expects","value":["caption","row"]}
-{"subject":"table","predicate":"aligns","value":"doco:Table"}

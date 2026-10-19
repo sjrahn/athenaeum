@@ -1,3 +1,0 @@
-{"subject":"binary","predicate":"refines","value":"unit"}
-{"subject":"binary","predicate":"reads","value":"none"}
-{"subject":"binary","predicate":"definition","value":"bytes with no derivation and no attestation beyond size and hash"}

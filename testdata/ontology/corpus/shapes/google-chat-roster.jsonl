@@ -1,0 +1,2 @@
+{"pred":"definition","val":"the members of a Google Chat conversation (group_info.json)"}
+{"pred":"matches","val":{"container":"google-chat-export-bundle","mime":"application/json","path":"*/group_info.json"}}

@@ -5,8 +5,7 @@
 ath/node_modules/
 ath/dist/
 
-# scratch test instance (testdata/) — seeded from a private source instance by
-# testdata/seed.py; holds real (if tiny) private artifact bytes, never tracked
+# the regression instance pair testdata/seed.ts builds with the tool, never tracked
 /testdata/instance/
 
 
@@ -16,6 +15,3 @@ __pycache__/
 
 # private bytes once placed here for the regression set; the set is synthetic now, the guard stays
 /testdata/regression/
-
-# the mock instance pair testdata/mock.ts generates
-/testdata/mock/

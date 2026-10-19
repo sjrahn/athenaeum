@@ -1,3 +1,0 @@
-{"subject":"photo-library-export","predicate":"refines","value":"export-bundle"}
-{"subject":"photo-library-export","predicate":"matches","value":{"mime":"application/zip","member":"IMG_"}}
-{"subject":"photo-library-export","predicate":"definition","value":"a photo-library period batch: originals beside their sidecar JSON, edited renders, clips"}

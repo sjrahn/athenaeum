@@ -1,0 +1,2 @@
+{"pred":"definition","val":"the library metadata of one photo or clip (uuid, dates, place, albums, adjustments)"}
+{"pred":"matches","val":{"container":"photo-library-export","mime":"application/json","path":"*.json"}}
