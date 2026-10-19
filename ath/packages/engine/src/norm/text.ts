@@ -1,6 +1,6 @@
-// text.ts — the one normaliser G4 and L7 share (D-L7): NFKC, quote and dash folding, NBSP → space, whitespace
-// collapse; then a second pass with whitespace and hyphens removed. A quote is in a surface when either pass finds
-// it; prefix/suffix, when given, must bracket the match.
+// text.ts — the one normaliser (spec §13.4.2) the reading check and binding share: Unicode NFKC, typographic quotes and
+// dashes folded to ASCII, no-break spaces to spaces, whitespace runs collapsed. Punctuation is content. The squashed
+// comparison — whitespace and hyphens removed — serves the reading check alone and never binds a quote.
 const QUOTES: Record<string, string> = { "‘": "'", "’": "'", "‚": "'", "‛": "'", "“": '"', "”": '"', "„": '"', "′": "'", "″": '"' };
 const DASHES = /[‐‑‒–—―−]/g;
 
@@ -11,7 +11,6 @@ export function normalize(s: string): string {
     .replace(DASHES, "-")
     .replace(/[   ]/g, " ")
     .replace(/\s+/g, " ")
-    .replace(/\s+([,.;:!?)])/g, "$1")
     .trim();
 }
 
@@ -21,29 +20,11 @@ export function squash(s: string): string {
     .toLowerCase();
 }
 
-export interface QuoteMatch {
-  found: boolean;
-  /** Which pass matched: exact (after normalisation) or squashed. */
-  pass?: "normalized" | "squashed";
-  /** Why not, when not. */
-  why?: string;
-}
-
-export function quoteIn(surface: string, quote: string, prefix?: string, suffix?: string): QuoteMatch {
-  const S = normalize(surface);
-  const Q = normalize(quote);
-  if (!Q) return { found: false, why: "empty quote" };
-  if (S.includes(Q)) {
-    if (prefix !== undefined || suffix !== undefined) {
-      const needle = `${prefix ? normalize(prefix) : ""}${Q}${suffix ? normalize(suffix) : ""}`;
-      if (!S.includes(needle)) return { found: false, why: "quote found but not between its prefix and suffix" };
-    }
-    return { found: true, pass: "normalized" };
-  }
-  const s2 = squash(surface);
-  const q2 = squash(quote);
-  if (q2 && s2.includes(q2)) return { found: true, pass: "squashed" };
-  return { found: false, why: "quote not in surface" };
+/** Whether a quote, with its prefix and suffix, lies in a body under the normaliser — never squashed (§14.4.2). */
+export function quoteIn(body: string, quote: string, prefix?: string, suffix?: string): boolean {
+  if (!normalize(quote)) return false;
+  // prefix, quote and suffix are one run of the body, normalised together
+  return normalize(body).includes(normalize(`${prefix ?? ""}${quote}${suffix ?? ""}`));
 }
 
 /** Collapse a cells body (string[] or string[][]) to one matchable surface. */

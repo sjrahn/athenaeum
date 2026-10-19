@@ -55,12 +55,34 @@ function zipKind(b: Uint8Array): string {
 }
 
 const HEADER_LINE = /^[!-9;-~]+:[ \t]/;
-const MAIL_FIELDS = /(^|\n)(received|from|date|message-id|subject|to|mime-version|return-path|delivered-to|x-gm-thrid):/i;
+const MAIL_NAMES = new Set([
+  "received",
+  "from",
+  "date",
+  "message-id",
+  "subject",
+  "to",
+  "cc",
+  "mime-version",
+  "return-path",
+  "delivered-to",
+  "content-type",
+  "x-gm-thrid",
+]);
 
+/** A message begins with a header block (RFC 5322): every line to the first blank one a header field or its folded
+ * continuation, at least two of them fields a message carries. YAML's `key:` alone on a line is no header field. */
 function looksLikeMessage(head: string): boolean {
-  const firstLine = head.split("\n", 1)[0] ?? "";
-  if (!HEADER_LINE.test(firstLine)) return false;
-  return MAIL_FIELDS.test(head.slice(0, 8192));
+  const lines = head.split(/\r?\n/);
+  const block: string[] = [];
+  for (const l of lines.slice(0, 200)) {
+    if (l === "") break;
+    block.push(l);
+  }
+  if (!block.length || !HEADER_LINE.test(block[0]!)) return false;
+  if (!block.every((l) => HEADER_LINE.test(l) || /^[ \t]\S/.test(l))) return false;
+  const fields = block.filter((l) => HEADER_LINE.test(l)).map((l) => l.slice(0, l.indexOf(":")).toLowerCase());
+  return fields.filter((f) => MAIL_NAMES.has(f)).length >= 2;
 }
 
 function looksLikeMbox(head: string): boolean {

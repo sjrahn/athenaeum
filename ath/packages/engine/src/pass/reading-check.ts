@@ -47,6 +47,7 @@ export async function readingCheck(
   parses: Parses,
   v: Vocabulary,
   accepted: ReadonlySet<string> = new Set(),
+  hash = "",
 ): Promise<Advisory[]> {
   const op = format.ops.find((o) => !o.startsWith("audio.") && !o.startsWith("media.")) ?? null;
   const out: Advisory[] = [];
@@ -67,7 +68,10 @@ export async function readingCheck(
           : aspect === "cells"
             ? compareCells(b, hint.text, conventions)
             : compareTex(String(b), h, labels);
-      const known = accepted.has(`${canonicalAt(at)}|${rev}`);
+      const known = [...accepted].some((k) => {
+        const [h, a, rv] = k.split("|");
+        return h === hash && rv === rev && canonicalAt(a!) === canonicalAt(at);
+      });
       out.push({
         at,
         aspect,

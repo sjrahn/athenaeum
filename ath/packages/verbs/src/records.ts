@@ -4,9 +4,11 @@ import { readFileSync } from "node:fs";
 import { relative } from "node:path";
 import { defineContract, z } from "@ath/contracts";
 import { formatOf, intrinsicsOf, intrinsicsOp, parseIntrinsicsOp } from "@ath/engine/formats/index.ts";
+import { isEntityName, ownEntity, serializeEntity, writeEntity } from "@ath/engine/graph/entity.ts";
 import {
   chain,
   containersIndex,
+  entityPath,
   holdings,
   type Instance,
   ownRecord,
@@ -260,7 +262,7 @@ export const showCommand = defineCommand({
 
 export const sortCommand = defineCommand({
   meta: {
-    summary: "rewrite a record of this instance in its canonical order and style",
+    summary: "rewrite a record or an entity file of this instance in its canonical order and style",
     tier: "write",
     mutating: true,
     locks: ["repository"],
@@ -273,6 +275,14 @@ export const sortCommand = defineCommand({
   }),
   run(ctx, a) {
     const inst = instanceOf(ctx);
+    if (isEntityName(a.subject)) {
+      // an entity's file: its lines sorted by identity, each canonical (§6.4)
+      const lines = ownEntity(inst, a.subject);
+      if (!lines) throw new AthError("NOT_FOUND", `${inst.config.name} has no entity ${a.subject} of its own`);
+      const before = readFileSync(entityPath(inst, a.subject), "utf8");
+      const path = writeEntity(inst, a.subject, lines);
+      return { data: { hash: a.subject, record: path, changed: serializeEntity(lines) !== before } };
+    }
     const hash = resolvePrefix(a.subject, ownRecords(inst));
     const before = readFileSync(recordPath(inst, hash), "utf8");
     const r = ownRecord(inst, hash)!;

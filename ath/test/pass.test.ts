@@ -201,7 +201,7 @@ describe("forming", () => {
 
 describe("the reading check", () => {
   test("advises where a reading diverges from the hint at its address, and never blocks", async () => {
-    const { run } = await setup();
+    const { root, run } = await setup();
     await run(["pass", "open", PROC.slice(0, 8)]);
     await run(["pass", "stage", PROC.slice(0, 8), "p1", "--at", "page=1&bbox=0.1429,0.6906,0.0901,0.0087", "--text", "Version 02.1"]);
     await run(["pass", "stage", PROC.slice(0, 8), "p1", "--at", "page=1&bbox=0.1433,0.1928,0.0591,0.0103", "--text", "HL-03"]);
@@ -209,8 +209,24 @@ describe("the reading check", () => {
     expect(s.code, s.stdout).toBe(0);
     const adv = data<{ advisories: { at: string; state: string; detail?: string }[] }>(s).advisories;
     expect(adv).toEqual([expect.objectContaining({ at: "page=1&bbox=0.1433,0.1928,0.0591,0.0103", state: "diverges" })]);
-    const rd = data<{ advisories: { state: string }[]; unread: unknown[] }>(await run(["readings", PROC.slice(0, 8)]));
+    const rd = data<{ advisories: { state: string; at: string; rev: string }[]; unread: unknown[] }>(
+      await run(["readings", PROC.slice(0, 8)]),
+    );
     expect(rd.advisories.map((x) => x.state).sort()).toEqual(["agrees", "diverges"]);
+    // the owner accepts the divergence: known, and it no longer recurs as one
+    const d = rd.advisories.find((x) => x.state === "diverges")!;
+    const acc = await ath(["rule", "accept", `ath://${PROC}?${d.at}`, "--rev", d.rev, "--why", "the cover misprints it"], {
+      env: { ATH_ACTOR: "owner" },
+      tty: true,
+      cwd: root,
+      confirm: async () => "rule accept",
+    });
+    expect(acc.code, acc.stderr).toBe(0);
+    expect(
+      data<{ advisories: { state: string }[] }>(await run(["readings", PROC.slice(0, 8)]))
+        .advisories.map((x) => x.state)
+        .sort(),
+    ).toEqual(["accepted", "agrees"]);
     expect(rd.unread.length).toBeGreaterThan(100);
     const img = data<{ advisories: { state: string }[] }>(
       await (async () => {

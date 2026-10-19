@@ -10,6 +10,8 @@ import { defineContract, z } from "@ath/contracts";
 import { canonicalAt } from "@ath/engine/address/address.ts";
 import { type Finding, recordChecks } from "@ath/engine/checks/record.ts";
 import { Parses } from "@ath/engine/formats/index.ts";
+import { entityView, isEntityName, ownEntity } from "@ath/engine/graph/entity.ts";
+import { accepted, rulingsOf } from "@ath/engine/graph/rulings.ts";
 import { holdings, type Instance, ownRecord, recordPath, recordView, resolvePrefix, writeRecord } from "@ath/engine/instance/instance.ts";
 import { answers, superseded } from "@ath/engine/pass/coverage.ts";
 import { readingCheck, unreadUnits } from "@ath/engine/pass/reading-check.ts";
@@ -23,6 +25,8 @@ import { blake3Hex } from "@ath/kit/hash.ts";
 import type { KitCtx } from "@ath/kit/types.ts";
 import { resolver } from "./artifacts.ts";
 import { custodyIndex, instanceOf, localStore } from "./context.ts";
+import { entityFileHash, kindsOfEntity, nextEntityPass, signEntityLines, writeEntity } from "./entity-pass.ts";
+import { openGraph } from "./graph.ts";
 import { viewer } from "./view.ts";
 
 const finding = z.object({ check: z.string(), level: z.string(), at: z.string().optional(), message: z.string() });
@@ -57,11 +61,40 @@ function refuseBase(inst: Instance, hash: string): void {
     );
 }
 
+/** Sign an entity pass: bind and check its lines, write the pass line and the lines under it. */
+async function signEntity(ctx: KitCtx, inst: Instance, name: string, id: string) {
+  const state = stateOf(ctx);
+  const s = readStaged(state, name, id);
+  const verify = ctx.caller.actor!;
+  if (verify === s.by) throw new AthError("DENIED", `${s.by} authored ${id}; its verifier is someone else (§13.1.1)`);
+  if ((await entityFileHash(inst, name)) !== s.against)
+    throw new AthError("CONFLICT", `${name}'s file changed since ${id} was opened; abandon it and open a pass against the current file`);
+  if (!s.lines?.length) throw new AthError("CONFLICT", `${id} stages no line`);
+  const g = await openGraph(ctx, inst);
+  try {
+    const v = g.viewer.vocab.vocab;
+    if (v.kinds.has(name)) throw new AthError("CONFLICT", `${name} is a kind; an entity and a kind never share a name`);
+    const held = holdings(inst);
+    const known = (h: string) => held.has(h) || g.viewer.containers.has(h);
+    const { lines, problems } = await signEntityLines(s.lines, id, g.locate, v, known, kindsOfEntity(inst));
+    if (problems.length) throw new AthError("CONFLICT", `${id} is not signed:\n${problems.map((p) => `  ${p}`).join("\n")}`, { problems });
+    const pass = {
+      pred: "pass",
+      val: { by: s.by, date: ctx.wall.date(), id, verify, vocab: s.vocab, ...(s.note ? { note: s.note } : {}) },
+    };
+    const path = writeEntity(inst, name, [...(ownEntity(inst, name) ?? []), pass, ...lines]);
+    dropStaged(state, name, id);
+    return { data: { subject: name, id, record: path, over: null, findings: [], advisories: [] } };
+  } finally {
+    g.close();
+  }
+}
+
 // ── open ────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 export const passOpen = defineCommand({
   meta: {
-    summary: "open a pass over an artifact, its author the actor; staged in host state",
+    summary: "open a pass over an artifact (a hash) or an entity (a name), its author the actor; staged in host state",
     tier: "write",
     mutating: true,
     locks: ["repository"],
@@ -74,6 +107,30 @@ export const passOpen = defineCommand({
   }),
   async run(ctx, a) {
     const inst = instanceOf(ctx);
+    if (isEntityName(a.subject)) {
+      // a pass over an entity: its lines' authorship, against the graph's vocabulary
+      const state = stateOf(ctx);
+      const index = custodyIndex(ctx);
+      let vocab: string;
+      try {
+        vocab = await pin(viewer(inst, resolver(inst, localStore(ctx), index).resolve).vocab.vocab, "graph");
+      } finally {
+        index.close();
+      }
+      const id = nextEntityPass(inst, state, a.subject);
+      const s: StagedPass = {
+        subject: a.subject,
+        kind: "entity",
+        id,
+        by: ctx.caller.actor!,
+        vocab,
+        opened: ctx.wall.iso(),
+        against: await entityFileHash(inst, a.subject),
+        ...(a.note ? { note: a.note } : {}),
+      };
+      writeStaged(state, s);
+      return { data: { subject: a.subject, id, by: s.by, vocab } };
+    }
     const hash = await subjectOf(ctx, inst, a.subject);
     refuseBase(inst, hash);
     const state = stateOf(ctx);
@@ -118,6 +175,7 @@ const stageFile = z
     shape: z.string().optional(),
     attests: z.array(z.enum(["readings", "structure"])).optional(),
     note: z.string().optional(),
+    lines: z.array(z.record(z.string(), z.unknown())).optional(),
   })
   .strict();
 
@@ -147,6 +205,7 @@ export const passStage = defineCommand({
       attests: z.array(z.enum(["readings", "structure"])).default([]),
       shape: z.string().optional(),
       note: z.string().optional(),
+      line: z.array(z.string()).default([]),
     }),
     argv: {
       positionals: [
@@ -163,16 +222,26 @@ export const passStage = defineCommand({
         attests: { type: "string", repeat: true, help: "readings or structure" },
         shape: { type: "string" },
         note: { type: "string" },
+        line: { type: "string", repeat: true, metavar: "JSON", help: "an entity pass's claim or is line: {pred, val, qual?, ev?}" },
       },
     },
-    data: z.object({ subject: z.string(), id: z.string(), readings: z.number(), scopes: z.number(), attests: z.array(z.string()) }),
+    data: z.object({
+      subject: z.string(),
+      id: z.string(),
+      readings: z.number(),
+      scopes: z.number(),
+      attests: z.array(z.string()),
+      lines: z.number(),
+    }),
   }),
   async run(ctx, a) {
     const inst = instanceOf(ctx);
-    const hash = await subjectOf(ctx, inst, a.subject);
+    const hash = isEntityName(a.subject) ? a.subject : await subjectOf(ctx, inst, a.subject);
     const state = stateOf(ctx);
     const s = readStaged(state, hash, a.id);
     if (s.by !== ctx.caller.actor) throw new AthError("DENIED", `${a.id} is ${s.by}'s to stage`);
+    if (s.kind === "entity" && (a.at !== undefined || a.retire.length || a.attests.length || a.shape !== undefined))
+      throw new AthError("USAGE", "an entity pass stages lines, from --file {lines: […]} or --line");
     if (a.file) {
       const p = resolvePath(ctx.cwd, a.file);
       let doc: unknown;
@@ -196,6 +265,21 @@ export const passStage = defineCommand({
       if (f.shape !== undefined) s.shape = f.shape;
       if (f.attests) s.attests = f.attests;
       if (f.note !== undefined) s.note = f.note;
+      if (f.lines) {
+        if (s.kind !== "entity") throw new AthError("USAGE", "lines are staged on an entity pass");
+        s.lines = [...(s.lines ?? []), ...f.lines];
+      } else if (s.kind === "entity" && (f.readings || f.scopes || f.retire || f.chrome || f.shape))
+        throw new AthError("USAGE", "an entity pass stages lines");
+    }
+    for (const l of a.line) {
+      if (s.kind !== "entity") throw new AthError("USAGE", "--line stages a line on an entity pass");
+      let v: unknown;
+      try {
+        v = JSON.parse(l);
+      } catch (e) {
+        throw new AthError("USAGE", `--line is JSON: ${(e as Error).message}`);
+      }
+      s.lines = [...(s.lines ?? []), v as Record<string, unknown>];
     }
     if (a.at !== undefined) {
       const body: Reading = {};
@@ -223,6 +307,7 @@ export const passStage = defineCommand({
         readings: Object.keys(s.readings ?? {}).length,
         scopes: s.scopes?.length ?? 0,
         attests: s.attests ?? [],
+        lines: s.lines?.length ?? 0,
       },
     };
   },
@@ -261,6 +346,7 @@ export const passSign = defineCommand({
   }),
   async run(ctx, a) {
     const inst = instanceOf(ctx);
+    if (isEntityName(a.subject)) return signEntity(ctx, inst, a.subject, a.id);
     const hash = await subjectOf(ctx, inst, a.subject);
     refuseBase(inst, hash);
     const state = stateOf(ctx);
@@ -287,7 +373,10 @@ export const passSign = defineCommand({
           { findings },
         );
       const { bytes } = await res.resolve(hash);
-      const advisories = view.format.class === "rendered" ? await readingCheck(record, view.format, new Parses(bytes), vw.vocab.vocab) : [];
+      const advisories =
+        view.format.class === "rendered"
+          ? await readingCheck(record, view.format, new Parses(bytes), vw.vocab.vocab, accepted(rulingsOf(inst)), hash)
+          : [];
       const path = writeRecord(inst, hash, record);
       dropStaged(state, hash, a.id);
       return {
@@ -328,7 +417,7 @@ export const passAbandon = defineCommand({
   }),
   async run(ctx, a) {
     const inst = instanceOf(ctx);
-    const hash = await subjectOf(ctx, inst, a.subject);
+    const hash = isEntityName(a.subject) ? a.subject : await subjectOf(ctx, inst, a.subject);
     readStaged(stateOf(ctx), hash, a.id);
     dropStaged(stateOf(ctx), hash, a.id);
     return { data: { subject: hash, id: a.id } };
@@ -363,6 +452,30 @@ export const passShow = defineCommand({
   }),
   async run(ctx, a) {
     const inst = instanceOf(ctx);
+    if (isEntityName(a.subject)) {
+      const lines = entityView(inst, a.subject) ?? [];
+      const signed = lines
+        .filter((h) => h.line.pred === "pass")
+        .map((h) => {
+          const p = h.line.val as Record<string, string>;
+          return {
+            id: p.id!,
+            by: p.by!,
+            verify: p.verify!,
+            date: p.date!,
+            answers: lines.filter((x) => x.line.pass === p.id && x.instance === h.instance).map((x) => x.line.pred),
+            superseded: false,
+          };
+        });
+      const state = stateOf(ctx);
+      return {
+        data: {
+          subject: a.subject,
+          signed,
+          open: openPasses(state, a.subject).map((id) => readStaged(state, a.subject, id) as unknown as Record<string, unknown>),
+        },
+      };
+    }
     const hash = await subjectOf(ctx, inst, a.subject);
     const r = recordView(inst, hash)?.record;
     const ans = r ? answers(r) : new Map<string, string[]>();
@@ -415,7 +528,7 @@ export const readingsCommand = defineCommand({
       if (!view.record) throw new AthError("NOT_FOUND", `${hash} has no record`);
       if (view.format.class !== "rendered") throw new AthError("USAGE", `${view.mime} is not rendered: it holds no readings`);
       const parses = new Parses((await res.resolve(hash)).bytes);
-      const advisories = await readingCheck(view.record, view.format, parses, vw.vocab.vocab);
+      const advisories = await readingCheck(view.record, view.format, parses, vw.vocab.vocab, accepted(rulingsOf(inst)), hash);
       const unread = await unreadUnits(
         view.record,
         view.format,
