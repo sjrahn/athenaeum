@@ -5,11 +5,13 @@
 // lives and its socket does not answer; the `daemon` verbs `unavailable` without it; jobs on a schedule, after an
 // ingest and when a store becomes available, one at a time, with a back-off and a transfer queue resumed after a
 // restart; the service unit; bandwidth limits and a store's availability read from its mark.
+
+import { Database } from "bun:sqlite";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { buildRegistry } from "@ath/cli/main.ts";
-import { loadAccess } from "@ath/custody";
+import { loadAccess, openIndex } from "@ath/custody";
 import { pace } from "@ath/custody/drivers.ts";
 import { backoffMs, type DaemonHandle, daemonPaths, forwarder, loadDaemonConfig, nextAt, request, settle, startDaemon } from "@ath/daemon";
 import { instanceId } from "@ath/kit/root.ts";
@@ -241,6 +243,11 @@ describe("the daemon's socket", () => {
       a.hostYaml("daemon: {every: {sweep: 1h}}\n");
       const bad = await a.run(["daemon", "reload"]);
       expect(bad.code).toBe(78);
+      const reloads = readFileSync(join(a.h, "state", "athenaeum", "instances", instanceId(a.root)!, "history.jsonl"), "utf8")
+        .trim()
+        .split("\n")
+        .filter((l) => l.includes('"cmd":"daemon-reload"'));
+      expect(reloads.length).toBe(1);
       expect((await a.ok(["daemon", "status"])).reload_error).toContain("sweep");
       a.hostYaml(`daemon:\n  instances: [${a.root}]\n  every: {reconcile: 1h}\n`);
       expect((await a.ok(["daemon", "reload"])).every).toEqual({ reconcile: 3600 });
@@ -377,6 +384,22 @@ describe("the service unit, bandwidth, availability", () => {
     expect(slept[0]).toBeGreaterThan(1900);
     await pace(4e6, performance.now(), undefined, async (ms) => void slept.push(ms));
     expect(slept.length).toBe(1);
+  });
+
+  test("an index another schema wrote: an older one is dropped and rebuilt, a newer one left to the tool that knows it", async () => {
+    const a = await host();
+    const path = join(a.h, "state", "athenaeum", "index.sqlite");
+    openIndex(path).close();
+    const set = (v: string) => {
+      const db = new Database(path);
+      db.run("UPDATE meta SET value = ? WHERE key = 'schema'", [v]);
+      db.close();
+    };
+    set("1");
+    openIndex(path).close();
+    set("9");
+    expect(() => openIndex(path)).toThrow(/schema 9/);
+    expect((await a.run(["custody", "status"])).code).toBe(78);
   });
 
   test("the request client: no socket is no daemon", async () => {

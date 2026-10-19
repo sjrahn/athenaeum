@@ -137,7 +137,7 @@ export async function runCli(argv: readonly string[], deps: DispatchDeps): Promi
       io.err(`${prog}: ${err.message}\n`);
       if (err.code === "USAGE") io.err(`(${prog} help for usage)\n`);
     }
-    if (caller && state && deps.history !== false) record(state, cmd, words ?? [], caller, err.exit, started, err.code, e);
+    if (caller && state && deps.history !== false && !err.relayed) record(state, cmd, words ?? [], caller, err.exit, started, err.code, e);
     return err.exit;
   };
 

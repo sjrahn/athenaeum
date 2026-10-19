@@ -78,7 +78,11 @@ export async function ask<D>(r: Request): Promise<{ data: D; exitCode?: number; 
     if (e instanceof NoDaemon) throw new AthError("UNAVAILABLE", `the host daemon is not running (${e.message})`);
     throw e;
   }
-  if (!env.ok) throw new AthError(env.error.code, env.error.message, env.error.data);
+  if (!env.ok) {
+    const err = new AthError(env.error.code, env.error.message, env.error.data);
+    err.relayed = true;
+    throw err;
+  }
   return { data: env.data as D, relayed: true, ...(env.exit_code ? { exitCode: env.exit_code } : {}) };
 }
 

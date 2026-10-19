@@ -6,6 +6,7 @@
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { AthError } from "@ath/kit/errors.ts";
 
 export type CopyState = "claimed" | "verified" | "missing";
 
@@ -94,6 +95,11 @@ export function openIndex(path: string): CustodyIndex {
   // the index is a belief, always safe to delete (§18.4.2): one of another schema is dropped and re-inventoried
   const hasMeta = db.query<{ n: number }, []>("SELECT count(*) AS n FROM sqlite_master WHERE name = 'meta'").get()!.n > 0;
   const found = hasMeta ? db.query<{ value: string }, []>("SELECT value FROM meta WHERE key = 'schema'").get()?.value : undefined;
+  // a newer tool's index is left as it is: dropping it would undo what a newer daemon keeps
+  if (hasMeta && found !== undefined && Number(found) > Number(VERSION)) {
+    db.close();
+    throw new AthError("CONFIG", `${path}: index schema ${found}; this tool knows ${VERSION} — a newer ath keeps this index`);
+  }
   if (hasMeta && found !== VERSION) for (const t of TABLES) db.exec(`DROP TABLE IF EXISTS ${t}`);
   db.exec(SCHEMA);
   db.run("INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', ?)", [VERSION]);

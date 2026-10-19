@@ -3,6 +3,9 @@
 import { ERROR_CODES, type ErrorCode } from "./types.ts";
 
 export class AthError extends Error {
+  /** The failure came back from the host daemon, which recorded it in the history itself. */
+  relayed?: boolean;
+
   constructor(
     readonly code: ErrorCode,
     message: string,
