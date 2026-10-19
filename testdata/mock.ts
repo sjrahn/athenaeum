@@ -62,7 +62,7 @@ const rev = async (body: unknown) => `b3:${(await blake3Hex(typeof body === "str
 // ── records (§8.2): one document, keys in a fixed order, written in one style ────────────────────────────────────
 type Reading = { text?: string; cells?: string[][]; tex?: string };
 type Scope = Reading & { form: string | string[]; at: string; scopes?: Scope[]; [field: string]: unknown };
-type Rec = { intrinsics: J; receipt?: J; origins?: J[]; shape?: string; chrome?: J[]; passes?: Record<string, J>; readings?: Record<string, Reading>; scopes?: Scope[] };
+type Rec = { intrinsics: J; receipts?: J[]; origins?: J[]; shape?: string; chrome?: J[]; passes?: Record<string, J>; readings?: Record<string, Reading>; scopes?: Scope[] };
 const ASPECTS = ["cells", "tex", "text"];
 const WORDS = /^(true|false|yes|no|null|on|off|y|n|~)$/i;
 const plainOk = (v: string, flow: boolean) => /^[A-Za-z][^\n]*$/.test(v) && !/: | #/.test(v) && !/[\s:]$/.test(v) && !WORDS.test(v) && !(flow && /[,[\]{}]/.test(v));
@@ -94,7 +94,7 @@ const byAddr = (a: string, b: string) => {
 };
 function recordYaml(r: Rec): string {
   let out = `intrinsics: ${flow(r.intrinsics)}\n`;
-  if (r.receipt) out += `receipt: ${flow(r.receipt)}\n`; // absent on an asset: its provenance is its container's (§9.6)
+  if (r.receipts?.length) out += `receipts:\n${r.receipts.map((e) => `  - ${flow(e)}\n`).join("")}`; // absent on an asset: its provenance is its container's (§9.6)
   if (r.origins?.length) out += `origins:\n${r.origins.map((e) => `  - ${flow(e)}\n`).join("")}`;
   if (r.shape) out += `shape: ${scalar(r.shape)}\n`;
   if (r.chrome) out += `chrome:\n${r.chrome.map((c) => `  - ${flow(c)}\n`).join("")}`;
@@ -157,7 +157,7 @@ class Instance {
     return `b3:${(await blake3Hex(text)).slice(0, 16)}`;
   }
   /** A pass's judgments laid over the projection ingest wrote (§8.1). */
-  judge(full: string, doc: Omit<Rec, "intrinsics" | "receipt" | "origins">) {
+  judge(full: string, doc: Omit<Rec, "intrinsics" | "receipts" | "origins">) {
     const have = this.records.get(full);
     if (!have) throw new Error(`no record for ${full.slice(0, 8)}: not ingested here`);
     this.records.set(full, { ...have, ...doc });
@@ -300,7 +300,7 @@ async function ingest(inst: Instance, bytes: Uint8Array, name: string, testimony
   idOf(full);
   const { val, parts } = await intrinsics(bytes, name);
   for (const p of parts) idOf(p.blake3);
-  inst.records.set(full, { intrinsics: val, receipt: { actor, received, name }, ...(origins.length ? { origins } : {}) });
+  inst.records.set(full, { intrinsics: val, receipts: [{ actor, received, name }], ...(origins.length ? { origins } : {}) });
   return { full, parts, testimony: delivered[0]?.hash };
 }
 
@@ -362,7 +362,7 @@ function prop(inst: Instance, name: string, range: string, functional = false, a
 }
 const recordPass = { by: "reader-a", verify: "reader-b", vocab: "@corpus", date: DATE };
 const entityPass = { pred: "pass", val: { by: "reader-a", date: DATE, id: "p1", verify: "reader-b", vocab: "@graph" } };
-const ev = (anchor: string, quote: string, reading: string, extra: J = {}) => ({ anchor, mode: "stated", quote, reading, ...extra });
+const ev = (anchor: string, quote: string, binding: string, extra: J = {}) => ({ anchor, mode: "stated", quote, binding, ...extra });
 
 // ══ reference — public, standalone ════════════════════════════════════════════════════════════════════════════════
 rmSync(OUT, { recursive: true, force: true });
