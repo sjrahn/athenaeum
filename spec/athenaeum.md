@@ -142,6 +142,8 @@ A cycle among bases, a base missing at its path or not at its pinned commit, or 
 | `$XDG_STATE_HOME/athenaeum/index.sqlite` | the custody index (§18.4) |
 | `$XDG_STATE_HOME/athenaeum/instances/<id>/` | an instance's staged passes, locks and history, by the instance's `id` |
 | `$XDG_CONFIG_HOME/athenaeum/access.yaml` | how this host reaches each store |
+| `$XDG_CONFIG_HOME/athenaeum/host.yaml` | what this host binds: the recogniser a hint op consults (§10.6.2), the daemon's schedule (§18.9) |
+| `$XDG_RUNTIME_DIR/athenaeum/athd.sock` | the host daemon's socket (§18.9) |
 
 5.7 **Holdings.** An instance holds the artifacts its records say: every ingested artifact has a record from the moment of ingest (§8.1), and an asset is held through its container's. Which artifacts an instance holds, and where each came from, is answered from the repository alone. The testimony it holds is what the receipts in its stores delivered, answered through the custody index (§18.4); the stores keep the bytes and the testimony themselves.
 
@@ -617,7 +619,7 @@ Everything in this section is knowledge of a format's own specification. None of
 | `pdf.words@1` | pdf | `whole`, `page`, `page&bbox` | the words the PDF draws inside the region (§10.6.3), banded into lines on each glyph's baseline origin, in column-aware reading order; boxes rounded to 4 decimals |
 | `html.text@1` | html, xhtml | `whole`, `bytes` | the text of the elements in the span: `head`, `script`, `style`, `template`, `noscript` and `svg` dropped; block elements and `<br>` end a line; table cells separated by a tab; whitespace runs collapsed to one space; lines trimmed; blank lines collapsed |
 | `html.attr@1 <name>` | html, xhtml | `whole`, `bytes` | the named attribute of the root element at the span |
-| `audio.speech@1` | audio, video | `whole`, `t` | candidate regions `t=a,b` with the speech a recogniser run on the host — a local binary or a service bound to the host — heard in each; the engine and its model ride in the note of the pass that signs |
+| `audio.speech@1` | audio, video | `whole`, `t` | candidate regions `t=a,b` with the speech a recogniser run on the host — a local binary or a service the host binds in `host.yaml` (§5.6) — heard in each; the engine and its model ride in the note of the pass that signs |
 | `media.subtitles@1` | audio, video | `whole`, `t` | candidate regions `t=a,b` with the text of an embedded subtitle track |
 | `eml.text@1` | rfc822 | `path&bytes` | a body part's span transfer-decoded (7bit, 8bit, binary, quoted-printable, base64) and charset-decoded, CRLF folded to LF, trailing whitespace trimmed; an HTML part as `html.text@1` |
 | `epub.text@1` · `ooxml.text@1` | epub · ooxml | `path&bytes` | the text of the content document's or package part's span, as `html.text@1` over its markup |
@@ -1035,8 +1037,7 @@ Custody keeps artifacts and testimony and finds them by BLAKE3. The repository n
 1. **A hash resolves or fails.** Given a BLAKE3, custody produces the artifact through whichever route holds it, or reports that none does. No caller names a store.
 2. **Every read is verified.** The BLAKE3 is computed over the bytes as they stream; a mismatch fails that route and the next is tried. No driver is trusted.
 3. **Residence is derived.** No line in the repository records where an artifact resides. The index is a belief about the stores, refreshed by inventory, transfer and verification.
-4. **No machine removes a copy.** Reconcile evicts from the local store alone; a copy anywhere else is removed by an owner's verb, one at a time.
-4. **Automation only adds.** Custody copies and verifies on its own. It removes a copy only from a store declared evictable, and only after verifying, at that moment, that the artifact's policies hold without it (§18.6.3). Every other removal is an owner-gated verb.
+4. **No machine removes a copy.** Custody copies and verifies on its own; it evicts from the local store alone, and only after verifying, at that moment, that the artifact's policies hold without the copy (§18.6.3). A copy anywhere else is removed by an owner's verb, one at a time.
 
 ### 18.2 Stores
 
@@ -1133,9 +1134,13 @@ b3:9f2c…  ← path=IMG_0042.HEIC in b3:41aa… (zip)
 
 18.8.3 An artifact resolved from a store other than the local one MAY be kept in the local store as a cache copy.
 
-### 18.9 The custody daemon
+### 18.9 The host daemon
 
-Each host MAY run one custody daemon, `athd`, serving every instance on the host. It runs reconcile on a schedule and on events — an ingest, a store becoming available, a change in an observed tree — keeps a resumable transfer queue with bandwidth limits and back-off, and is the single writer of the host index while it runs. Everything it does is a custody verb any caller can run by hand (§19.5); without it, those verbs take the index lock themselves.
+18.9.1 Each host MAY run one daemon, `athd`, serving every instance on the host. Its socket is `$XDG_RUNTIME_DIR/athenaeum/athd.sock`, readable and writable by the host user alone.
+
+18.9.2 **One surface.** The daemon answers every `read` and `write` verb of §19.5 from the same registry the tool dispatches: `POST /v1/<verb>` with the verb's arguments as one JSON object and the instance root among them, answered with the envelope `--json` prints (§19.4), byte for byte. The verb runs under the same gates, locks and history as at the terminal. A caller over the socket is an `agent` at most; it may narrow, never widen. An `admin` verb, which is confirmed at a terminal (§13.5.5), and a global flag are refused over the socket.
+
+18.9.3 **Custody.** The daemon runs reconcile on a schedule and on events — an ingest, a store becoming available, a new generation of an observed tree — keeps a resumable transfer queue with bandwidth limits and back-off, and is the single writer of the host index while it runs. Everything it does is a verb any caller can run by hand; without it, those verbs take the index lock themselves, and every verb but the daemon's own runs in the calling process.
 
 
 ## 19. The tool
@@ -1171,9 +1176,12 @@ Each host MAY run one custody daemon, `athd`, serving every instance on the host
 | 70 | internal: an unexpected failure |
 | 71 | external: a tool outside the tooling failed |
 | 73 | conflict: a write the contract refuses — identity, shadowing, an undeclared field, an unadmitted testimony |
+| 69 | unavailable: the daemon a `daemon` verb addresses is not running |
 | 75 | busy: a lock is held |
 | 77 | denied: the caller's profile or actor may not run this |
 | 78 | config: `athenaeum.yaml`, a base, a store or policy declaration, the host's access file or the vocabulary is broken, or the tool cannot serve the chain (§19.2.2) |
+
+19.4.2 Over the daemon's socket (§18.9.2) the envelope is the body of every response, and the status is: 200 for `ok`, a verdict included, with its `exit_code`; 400 usage; 403 denied; 404 not found; 409 conflict; 423 busy; 502 external; 500 for an internal or configuration failure.
 
 ### 19.5 Verbs
 
@@ -1182,7 +1190,7 @@ Each host MAY run one custody daemon, `athd`, serving every instance on the host
 | `instance init [--extends <path>]` · `instance show` · `instance check` | write · read · read | init writes `athenaeum.yaml` and the empty directories — for a standalone instance with the terms §11.9 names, for an extension pinned to its base's current commit; show prints the instance and what it builds on; check verifies the chain, its pins and its configuration |
 | `instance repin` | admin | moves the base pin to the base's current commit and reports what the move makes stale (§4.3) |
 | `instance reshard` | admin | moves files to the shard widths `athenaeum.yaml` declares (§5.2); no line changes |
-| `ingest <file…> [--testimony <file>…]` | write | sniffs; admits or refuses delivered testimony before anything is placed; places the artifact and its testimony in the local store; writes the receipt; writes the artifact's record with its projection, or adds the receipt and the origins to it (§8.1). Writes nothing judged |
+| `ingest <file…> [--testimony <file>…]` | write | sniffs; admits or refuses delivered testimony before anything is placed; places the artifact and its testimony in the local store; writes the receipt; writes the artifact's record with its projection, or adds the receipt and the origins to it (§8.1). Writes nothing judged. Answers, per file, `new` or `met again`, the full hash and the record's path; a refused testimony refuses its file (73) and places nothing of it |
 | `holdings` | read | what the instance holds: its records, each with its stage, receipts and origins (§5.7) |
 | `sweep [--stale]` | write | rewrites `intrinsics` where the op is newer than the projection's |
 | `resolve <anchor> [--trace]` | read | the artifact, the surface or the reading at an address; `--trace` reports the route (§18.8.2) |
@@ -1208,4 +1216,6 @@ Each host MAY run one custody daemon, `athd`, serving every instance on the host
 | `custody reconcile` | write | perform the plan: copy, verify, evict (§18.7) |
 | `custody where <blake3>` · `custody report <store>` | read | every known residence of a hash, whether or not the instance holds it; an observed tree's report (§18.5.4) |
 | `custody remove <blake3> --from <store>` | admin | remove one copy, refused unless the policies hold without it, verified at that moment (§9.7) |
+| `daemon run` · `daemon status` · `daemon trigger <job>` · `daemon reload` | write · read · write · write | run the host daemon in the foreground (§18.9); its state, jobs and queue; start a job now; re-read its configuration without stopping a running job |
+| `daemon install` · `daemon uninstall` | admin | install or remove the host's service unit for `athd` |
 | `log` · `whoami` | read | the history; the caller's profile, actor and instance root |
