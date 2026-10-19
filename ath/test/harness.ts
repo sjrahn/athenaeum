@@ -16,6 +16,8 @@ export interface RunOpts {
   confirm?: (prompt: string) => Promise<string | null>;
   registry?: Registry;
   history?: boolean;
+  /** The wall clock; absent, a fixed instant so output compares byte for byte. */
+  wall?: () => Date;
 }
 
 export interface RunOut {
@@ -45,6 +47,7 @@ export async function ath(argv: string[], o: RunOpts = {}): Promise<RunOut> {
     session: () => o.session ?? null,
     confirm: o.confirm,
     history: o.history,
+    wall: o.wall ?? (() => new Date("2026-03-20T09:00:00Z")),
   };
   const code = await runCli(argv, deps);
   return { code, stdout: io.stdout, stderr: io.stderr, json: () => JSON.parse(io.stdout) };

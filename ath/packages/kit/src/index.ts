@@ -3,7 +3,7 @@
 
 export { type CallerInput, resolveCaller } from "./caller.ts";
 export * from "./canonical.ts";
-export { isoSecond, makeClock, wallClock } from "./clock.ts";
+export { clockAt, isoSecond, makeClock, wallClock } from "./clock.ts";
 export { defineCommand } from "./define.ts";
 export { type DispatchDeps, type Globals, parseGlobals, runCli } from "./dispatch.ts";
 export { errEnvelope, okEnvelope, toAthError } from "./envelope.ts";

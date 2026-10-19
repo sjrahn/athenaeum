@@ -45,7 +45,6 @@ The v52 Python tooling (`tools/`) is retired on this branch; it lives on the
     cd ath && bun run check      # tsc --noEmit, biome check, bun test
     cd ath && bun run build      # the compiled binary still loads pdfium
 
-The regression suite (`ath/test/regression.test.ts`) runs entirely over the
-committed synthetic fixtures; nothing self-skips. Run the tests with `TMPDIR`
-on a filesystem with room (`/tmp` is a 16 GB tmpfs here). A change that touches the contract's behaviour also updates its
+The suite runs over committed fixtures (`ath/test/fixtures/`, `testdata/synthetic/`); nothing self-skips. Run the
+tests with `TMPDIR` on a filesystem with room (`/tmp` is a 16 GB tmpfs here). A change that touches the contract's behaviour also updates its
 row in `ath/CONFORMANCE.md` with the test that pins it.

@@ -2,14 +2,14 @@
 // Never calls process.exit; returns the exit code.
 import { type AnyContract, ContractUsageError, contractJsonSchema, parseArgv, usageText } from "@ath/contracts";
 import { resolveCaller } from "./caller.ts";
-import { isoSecond, makeClock, wallClock } from "./clock.ts";
+import { clockAt, isoSecond, makeClock, wallClock } from "./clock.ts";
 import { errEnvelope, okEnvelope, toAthError } from "./envelope.ts";
 import { AthError } from "./errors.ts";
 import { collectSink, createEventBus, levelFor, textSink } from "./events.ts";
 import { checkGates, HiddenError, visible } from "./gates.ts";
 import { appendHistory } from "./history.ts";
 import type { Io } from "./io.ts";
-import { recoverJournal } from "./journal.ts";
+import { journalPending, recoverJournal } from "./journal.ts";
 import { acquireLocks } from "./locks.ts";
 import type { Registry } from "./registry.ts";
 import { findRoot, instanceId } from "./root.ts";
@@ -28,6 +28,8 @@ export interface DispatchDeps {
   session?: () => SessionIdentity | null;
   /** Ask at the terminal; absent = admin commands are refused. */
   confirm?: (prompt: string) => Promise<string | null>;
+  /** The wall clock (receipts, pass dates, rulings, removals); tests inject one. Absent: the real clock. */
+  wall?: () => Date;
   /** History is appended when a root is known; tests may turn it off. */
   history?: boolean;
   prog?: string;
@@ -223,7 +225,7 @@ export async function runCli(argv: readonly string[], deps: DispatchDeps): Promi
   const ctx: KitCtx = {
     io,
     clock,
-    wall: wallClock(),
+    wall: deps.wall ? clockAt(deps.wall) : wallClock(),
     host,
     instance,
     env: deps.env,
@@ -246,9 +248,15 @@ export async function runCli(argv: readonly string[], deps: DispatchDeps): Promi
           : `${cmd} needs an instance (--root, $ATHENAEUM_ROOT, or an athenaeum.yaml above the cwd)`,
       );
     if (def.meta.locks?.length) held = acquireLocks((s) => (s === "repository" ? state! : host.state), def.meta.locks, ctx.wall.now());
-    if (instance && def.meta.mutating) {
-      const done = recoverJournal(instance.state);
-      if (done) events.emit({ kind: "journal.recovered", level: "warn", msg: `an interrupted multi-file write was ${done} first` });
+    // an interrupted multi-file write is completed or undone before any verb, a read included, sees the instance
+    if (instance && journalPending(instance.state)) {
+      const lock = def.meta.locks?.includes("repository") ? null : acquireLocks(() => instance.state, ["repository"], ctx.wall.now());
+      try {
+        const done = recoverJournal(instance.state);
+        if (done) events.emit({ kind: "journal.recovered", level: "warn", msg: `an interrupted multi-file write was ${done} first` });
+      } finally {
+        lock?.release();
+      }
     }
     const result = await def.run(ctx, args as never);
     const exit = result.exitCode ?? 0;

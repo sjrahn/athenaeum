@@ -144,6 +144,7 @@ A cycle among bases, a base missing at its path or not at its pinned commit, or 
 | `$XDG_CONFIG_HOME/athenaeum/access.yaml` | how this host reaches each store |
 | `$XDG_CONFIG_HOME/athenaeum/host.yaml` | what this host binds: the recogniser a hint op consults (§10.6.2), the daemon's schedule (§18.9) |
 | `$XDG_RUNTIME_DIR/athenaeum/athd.sock` | the host daemon's socket (§18.9) |
+| `$XDG_CACHE_HOME/athenaeum/bases/<id>/<commit>/` | a base's tracked files at a pinned commit, materialised to load it (§4.3); always safe to delete |
 
 5.7 **Holdings.** An instance holds the artifacts its records say: every ingested artifact has a record from the moment of ingest (§8.1), and an asset is held through its container's. Which artifacts an instance holds, and where each came from, is answered from the repository alone. The testimony it holds is what the receipts in its stores delivered, answered through the custody index (§18.4); the stores keep the bytes and the testimony themselves.
 
@@ -243,7 +244,7 @@ A reading's **revision** is `b3:` followed by the first 16 hex digits of the BLA
 
 7.4.2 The regions of a union sort by page, then row, then time, then y, then x, then byte start; `path` sorts last; no region is listed twice. Every address is canonicalised before it is used as identity.
 
-7.4.3 A number is written in its shortest form — no trailing zeros, no leading sign, `0.1` never `0.1000` — and a page, row, column or byte offset is an integer. The axes of one region are written in the order §7.3.1 lists them. A `path` value is percent-encoded where it holds `;`, `&`, `=`, `%` or a code point outside printable ASCII. A region the artifact does not have — a page past its count, a byte past its end, a box outside the frame — is refused.
+7.4.3 A number is written in its shortest form — no trailing zeros, no leading sign, `0.1` never `0.1000` — and a page, row, column or byte offset is an integer. The axes of one region are written in one order — `path`, `page`, `row`, `t`, `bbox`, `bytes`, `col` — so a route leads the region it opens (`path=OEBPS/ch02.xhtml&bytes=…`) and a cell closes the row it is in (`page=3&bbox=…&col=1`). A `path` value is percent-encoded where it holds `;`, `&`, `=`, `%` or a code point outside printable ASCII. A region the artifact does not have — a page past its count, a byte past its end, a box outside the frame — is refused.
 
 ### 7.5 Routes through containers
 
@@ -586,7 +587,7 @@ Everything in this section is knowledge of a format's own specification. None of
 | mbox | structured | `path` | — | — | its messages |
 | zip | structured | `path` | — | — | its entries |
 
-10.4.4 A format the tooling sniffs but registers no row for is held, resolvable and addressable at `whole` only.
+10.4.4 **Plain text** is every text format the tooling sniffs that has no row of its own — source code, stylesheets, a calendar. A format the tooling sniffs but registers no row for is held, resolvable and addressable at `whole` only; its intrinsics op is `bytes.intrinsics@<version>`, which records its mime and size.
 
 ### 10.5 Surface ops
 

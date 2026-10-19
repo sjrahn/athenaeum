@@ -5,14 +5,14 @@ import type { Clock } from "./types.ts";
 /** An instant in whole-second UTC. */
 export const isoSecond = (d: Date): string => `${d.toISOString().slice(0, 19)}Z`;
 
-const at = (now: () => Date): Clock => ({ now, iso: () => isoSecond(now()), date: () => now().toISOString().slice(0, 10) });
+export const clockAt = (now: () => Date): Clock => ({ now, iso: () => isoSecond(now()), date: () => now().toISOString().slice(0, 10) });
 
 /** The wall clock, which `--now` never moves. */
-export const wallClock = (): Clock => at(() => new Date());
+export const wallClock = (): Clock => clockAt(() => new Date());
 
 export function makeClock(now?: string): Clock {
   if (now === undefined) return wallClock();
   const d = new Date(now);
   if (Number.isNaN(d.getTime())) throw new Error(`--now: not an ISO-8601 instant: '${now}'`);
-  return at(() => new Date(d.getTime()));
+  return clockAt(() => new Date(d.getTime()));
 }
