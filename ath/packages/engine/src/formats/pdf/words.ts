@@ -1,8 +1,9 @@
-// words.ts — `pdf.words@1`, the quote surface of a PDF scope: the text layer's characters grouped into words with a
-// box each (the same pdfium calls v52's pypdfium2 wrapped, so boxes agree to rounding), lines banded on the
-// baseline, words-in-box in column-aware reading order, and chrome by repetition across pages (D-chrome).
+// words.ts — `pdf.words@1`, a hint (spec §10.6.2): the words the PDF draws, each with a box normalised 0–1 in the page
+// as displayed — its crop box, its rotation applied, origin top-left — banded into lines on each glyph's baseline
+// origin, in column-aware reading order. Text drawn invisible (render mode 3, an OCR layer under a page image)
+// contributes nothing (§10.6.3). Nothing it yields is stored or bound.
 import { type Box, DECIMALS, pointInBox, SLACK } from "../../address/address.ts";
-import { registerOp } from "../registry.ts";
+import { registerOp } from "../ops.ts";
 import { openPdf, type PdfDoc } from "./pdfium.ts";
 
 export const PDF_WORDS_OP = "pdf.words@1";
@@ -38,22 +39,36 @@ export function pageWords(d: PdfDoc, index0: number): PageWords {
   const m = d.m;
   const page = m.FPDF_LoadPage(d.doc, index0);
   const tp = m.FPDFText_LoadPage(page);
+  // the displayed frame: pdfium's page size is the crop box with the rotation applied; points map into it through
+  // FPDF_PageToDevice at a fine device grid, so a box is normalised in the frame a reader sees
   const width = m.FPDF_GetPageWidthF(page);
   const height = m.FPDF_GetPageHeightF(page);
+  const GRID = 100;
+  const gw = Math.max(1, Math.round(width * GRID));
+  const gh = Math.max(1, Math.round(height * GRID));
   const buf = m.pdfium.wasmExports.malloc(32);
+  const dev = m.pdfium.wasmExports.malloc(8);
+  /** A point in page space → [x, y] in 0–1 of the displayed frame, origin top-left. */
+  const toFrame = (px: number, py: number): [number, number] => {
+    m.FPDF_PageToDevice(page, 0, 0, gw, gh, 0, px, py, dev, dev + 4); // pdfium adds the page's own /Rotate
+    return [m.pdfium.getValue(dev, "i32") / gw, m.pdfium.getValue(dev + 4, "i32") / gh];
+  };
+  /** A box in page space (left, bottom, right, top) → [x0, y0, x1, y1] in the frame. */
+  const frameBox = (l: number, b: number, r: number, t: number): [number, number, number, number] => {
+    const [ax, ay] = toFrame(l, b);
+    const [bx, by] = toFrame(r, t);
+    return [Math.min(ax, bx), Math.min(ay, by), Math.max(ax, bx), Math.max(ay, by)];
+  };
   const words: Word[] = [];
   const lines: Line[] = [];
   try {
     const n = m.FPDFText_CountChars(tp);
     let chars = "";
-    let box: [number, number, number, number] | null = null; // left, bottom, right, top in points
+    let box: [number, number, number, number] | null = null; // x0, y0, x1, y1 in the frame
     const flush = () => {
       if (chars && box && width > 0 && height > 0) {
-        const [left, bottom, right, top] = box;
-        words.push({
-          text: chars,
-          bbox: [r4(left / width), r4((height - top) / height), r4((right - left) / width), r4((top - bottom) / height)],
-        });
+        const [x0, y0, x1, y1] = box;
+        words.push({ text: chars, bbox: [r4(x0), r4(y0), r4(x1 - x0), r4(y1 - y0)] });
       }
       chars = "";
       box = null;
@@ -67,41 +82,56 @@ export function pageWords(d: PdfDoc, index0: number): PageWords {
         cur = null;
         continue;
       }
+      // drawn text only: a glyph in render mode 3 (invisible) is not what the page shows
+      const obj = m.FPDFText_GetTextObject(tp, i);
+      if (obj && m.FPDFTextObj_GetTextRenderMode(obj) === 3) {
+        flush();
+        continue;
+      }
       if (!m.FPDFText_GetCharBox(tp, i, buf, buf + 8, buf + 16, buf + 24)) continue;
-      const left = m.pdfium.getValue(buf, "double");
-      const right = m.pdfium.getValue(buf + 8, "double");
-      const bottom = m.pdfium.getValue(buf + 16, "double");
-      const top = m.pdfium.getValue(buf + 24, "double");
+      const [cx0, cy0, cx1, cy1] = frameBox(
+        m.pdfium.getValue(buf, "double"),
+        m.pdfium.getValue(buf + 16, "double"),
+        m.pdfium.getValue(buf + 8, "double"),
+        m.pdfium.getValue(buf + 24, "double"),
+      );
+      const left = cx0;
+      const right = cx1;
+      const top = cy0;
+      const bottom = cy1;
       // lines: banded on the glyph's baseline origin (a descender's box bottom would open a new band under a font
       // that reports tight glyph boxes); the box bottom stands in when pdfium has no origin for the char
-      const base = m.FPDFText_GetCharOrigin(tp, i, buf, buf + 8) ? 1 - m.pdfium.getValue(buf + 8, "double") / height : 1 - bottom / height;
+      const base = m.FPDFText_GetCharOrigin(tp, i, buf, buf + 8)
+        ? toFrame(m.pdfium.getValue(buf, "double"), m.pdfium.getValue(buf + 8, "double"))[1]
+        : bottom;
       if (cur && Math.abs(base - cur.base) > LINE_TOLERANCE) cur = null;
       if (!cur) {
-        cur = { base, top: 1 - top / height, h: (top - bottom) / height, x0: left / width, x1: right / width, text: "" };
+        cur = { base, top, h: bottom - top, x0: left, x1: right, text: "" };
         lines.push(cur as unknown as Line);
       }
       cur.text += ch;
-      cur.top = Math.min(cur.top, 1 - top / height);
-      cur.h = Math.max(cur.h, (top - bottom) / height);
-      cur.x0 = Math.min(cur.x0, left / width);
-      cur.x1 = Math.max(cur.x1, right / width);
+      cur.top = Math.min(cur.top, top);
+      cur.h = Math.max(cur.h, bottom - top);
+      cur.x0 = Math.min(cur.x0, left);
+      cur.x1 = Math.max(cur.x1, right);
       // words
       if (/\s/.test(ch)) {
         flush();
         continue;
       }
       chars += ch;
-      if (!box) box = [left, bottom, right, top];
+      if (!box) box = [left, top, right, bottom];
       else {
         box[0] = Math.min(box[0], left);
-        box[1] = Math.min(box[1], bottom);
+        box[1] = Math.min(box[1], top);
         box[2] = Math.max(box[2], right);
-        box[3] = Math.max(box[3], top);
+        box[3] = Math.max(box[3], bottom);
       }
     }
     flush();
   } finally {
     m.pdfium.wasmExports.free(buf);
+    m.pdfium.wasmExports.free(dev);
     m.FPDFText_ClosePage(tp);
     m.FPDF_ClosePage(page);
   }
@@ -218,24 +248,42 @@ export function isChromeWord(chrome: readonly ChromeLine[], page: number, w: Wor
   return chrome.some((c) => c.page === page && pointInBox(c.box, cx, cy, 0.004));
 }
 
-/** The parsed form of a PDF: words per page and the chrome by repetition. */
-export interface PdfForm {
-  pages: PageWords[];
-  chrome: ChromeLine[];
+/** Words in a region, banded into lines, in column-aware reading order. */
+export function linesInBox(words: readonly Word[], box: Box): Word[][] {
+  const ordered = wordsInBox(words, box);
+  const lines: Word[][] = [];
+  for (const w of ordered) {
+    const last = lines.at(-1);
+    const prev = last?.at(-1);
+    // a word left of its predecessor, or off its band, starts a line
+    if (
+      prev &&
+      w.bbox[0] >= prev.bbox[0] &&
+      Math.abs(w.bbox[1] + w.bbox[3] / 2 - (prev.bbox[1] + prev.bbox[3] / 2)) <= Math.max(0.005, 0.6 * prev.bbox[3])
+    )
+      last!.push(w);
+    else lines.push([w]);
+  }
+  return lines;
 }
 
-registerOp<PdfForm>({
+const FULL: Box = [0, 0, 1, 1];
+
+registerOp<PageWords[]>({
   name: PDF_WORDS_OP,
+  kind: "hint",
   family: "pdf",
-  parse: async (bytes) => {
-    const pages = await allPages(bytes);
-    return { pages, chrome: detectChrome(pages) };
-  },
-  surface: (f, m) => {
-    if (m.whole) return f.pages.map((p) => wordsText(p.words)).join("\n");
-    if (m.page === undefined) return null;
-    const page = f.pages[m.page - 1];
-    if (!page) return null;
-    return m.bbox ? wordsText(wordsInBox(page.words, m.bbox)) : wordsText(page.words);
+  parse: (bytes) => allPages(bytes),
+  hint: (pages, r) => {
+    const on = r.whole ? pages : r.page !== undefined ? pages.filter((p) => p.page === r.page) : [];
+    if (!on.length || r.path !== undefined) return null;
+    const texts: string[] = [];
+    const units: { text: string; at: string }[] = [];
+    for (const p of on) {
+      const lines = linesInBox(p.words, r.bbox ?? FULL);
+      texts.push(lines.map((l) => l.map((w) => w.text).join(" ")).join("\n"));
+      for (const w of lines.flat()) units.push({ text: w.text, at: `page=${p.page}&bbox=${w.bbox.join(",")}` });
+    }
+    return { text: texts.filter(Boolean).join("\n"), units };
   },
 });

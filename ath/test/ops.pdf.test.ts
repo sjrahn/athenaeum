@@ -42,4 +42,21 @@ describe("pdf.words@1", () => {
     expect(chrome.every((c) => c.text === "RUNNING HEADER" && c.role === "running-header")).toBe(true);
     expect(chrome.map((c) => c.page)).toEqual([1, 2, 3]);
   });
+  test("the displayed frame: a rotated page, a crop box; text drawn invisible contributes nothing (§7.3.1, §10.6.3)", async () => {
+    const pages = await allPages(
+      new Uint8Array(await Bun.file(join(import.meta.dir, "..", "..", "testdata", "synthetic", "frames.pdf")).arrayBuffer()),
+    );
+    expect(pages.map((p) => [p.width_pt, p.height_pt])).toEqual([
+      [600, 800],
+      [800, 600],
+      [400, 600],
+      [600, 800],
+    ]);
+    expect(pages[0]!.words).toEqual([{ text: "Plain", bbox: [0.1701, 0.1035, 0.0829, 0.022] }]);
+    // rotated 90° clockwise: the page's left edge is the top, its top the right; the word runs down the frame
+    expect(pages[1]!.words).toEqual([{ text: "Turned", bbox: [0.8746, 0.1672, 0.022, 0.1239] }]);
+    // cropped to [100 100 500 700]: x from the crop box's left, y from its top
+    expect(pages[2]!.words).toEqual([{ text: "Cropped", bbox: [0.2527, 0.1372, 0.224, 0.0377] }]);
+    expect(pages[3]!.words.map((w) => w.text)).toEqual(["Shown"]);
+  });
 });

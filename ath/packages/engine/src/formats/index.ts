@@ -13,10 +13,17 @@ import { mboxIntrinsics, messageIntrinsics } from "./mail/intrinsics.ts";
 import "./mail/text.ts";
 import { mediaIntrinsics } from "./media/media.ts";
 import { pdfIntrinsics } from "./pdf/intrinsics.ts";
+import "./json/json.ts";
+import "./markdown/markdown.ts";
+import "./media/hints.ts";
+import "./package/text.ts";
 import "./pdf/words.ts";
+import "./text/text.ts";
+import "./vcard/vcard.ts";
+import "./yaml/yaml.ts";
 import { ooxmlIntrinsics, zipIntrinsics } from "./zip/intrinsics.ts";
 
-export { argProblem, type DerivationOp, type Family, formKey, opFor, opNames } from "./registry.ts";
+export { type Hint, hintAt, type Op, opNamed, opNames, opProblem, Parses, parseOpRef, surfaceAt, type Unit } from "./ops.ts";
 
 const text = (b: Uint8Array) => ({ facts: {}, encoding: textEncoding(b) });
 const OOXML = [

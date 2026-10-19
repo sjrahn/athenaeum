@@ -583,7 +583,7 @@ Everything in this section is knowledge of a format's own specification. None of
 | json, ndjson | structured | `bytes` | — | `json.text@1` (`lines` for ndjson) | — |
 | yaml | structured | `bytes` | — | `yaml.text@1` | — |
 | vcard | structured | `bytes` | — | `vcard.text@1` | — |
-| markdown, plain text | structured | `bytes` | — | `markdown.text@1` · the text itself | — |
+| markdown, plain text | structured | `bytes` | — | `markdown.text@1` · `text.text@1` | — |
 | mbox | structured | `path` | — | — | its messages |
 | zip | structured | `path` | — | — | its entries |
 
@@ -604,6 +604,7 @@ Everything in this section is knowledge of a format's own specification. None of
 | `yaml.text@1` | yaml | `whole`, `bytes` | as `json.text@1`, over the YAML parse |
 | `vcard.text@1` | vcard | `whole`, `bytes` | the content lines in the span unfolded (RFC 6350 §3.2), each value unescaped, a structured value's components joined by a space |
 | `markdown.text@1` | markdown | `whole`, `bytes` | the blocks in the span with their block markers removed (`#` runs, `>`, a list bullet or number, fence lines); inline markup verbatim |
+| `text.text@1` | plain text | `whole`, `bytes` | the text itself: the span's bytes decoded in the file's encoding |
 
 10.5.4 A JSON or YAML value's span covers its source text, a string's quotes included. A vCard content line's span covers its folded physical lines. A markdown block's span covers its lines, its markers included.
 

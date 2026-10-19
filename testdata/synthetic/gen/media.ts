@@ -1,9 +1,10 @@
 #!/usr/bin/env bun
 // media.ts — the twins of the loose media and raster shapes, from tools (versions in README.md) and pinned by the
 // committed bytes: a QuickTime clip, a 3GPP clip, raw elementary streams (H.264 Annex B, HEVC Annex B, AV1 in IVF),
-// Opus in Ogg, AAC in ADTS, MPEG audio, a TIFF, an AVIF, an icon, an animated GIF. Test patterns and tones only.
+// Opus in Ogg, AAC in ADTS, MPEG audio, a TIFF, an AVIF, an icon, an animated GIF, a clip with a subtitle track. Test
+// patterns and tones only.
 //
-//   bun testdata/synthetic/gen/media.ts [--only mov,3gp,h264,hevc,av1,opus,aac,mp3,tiff,avif,ico,gif]
+//   bun testdata/synthetic/gen/media.ts [--only mov,3gp,h264,hevc,av1,opus,aac,mp3,tiff,avif,ico,gif,subs]
 import { dirname, join } from "node:path";
 
 const SYN = join(dirname(Bun.fileURLToPath(import.meta.url)), "..");
@@ -28,6 +29,13 @@ const gens: Record<string, () => void> = {
   avif: () => run(["magick", "-size", "32x32", "plasma:#3a5a2a-#ffffff", "-strip", join(SYN, "still.avif")]),
   ico: () => run(["magick", "-size", "32x32", "xc:#2d5f8a", "-fill", "#ffffff", "-draw", "circle 16,16 16,6", "-define", "icon:auto-resize=32,16", join(SYN, "favicon.ico")]),
   gif: () => ff([...VID, "-vf", "fps=5,scale=64:-1", "-t", "0.6"], "animation.gif"),
+  // a clip with an embedded 3GPP timed-text track: two cues
+  subs: () => {
+    const srt = join(SYN, ".subs.srt");
+    Bun.write(srt, "1\n00:00:00,000 --> 00:00:00,800\nHigh water at the quay\n\n2\n00:00:01,000 --> 00:00:01,800\nBerth A2 is free\n");
+    ff([...VID.slice(0, 3), "testsrc=duration=2:size=160x120:rate=15", "-i", srt, "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:s", "mov_text", "-f", "mp4"], "subtitled.mp4");
+    Bun.spawnSync(["rm", "-f", srt]);
+  },
 };
 const only = process.argv.includes("--only") ? process.argv[process.argv.indexOf("--only") + 1]!.split(",") : Object.keys(gens);
 for (const k of only) gens[k]!();

@@ -27,6 +27,7 @@
     "htmlparser2": "10.0.0",
     "parse5": "^8.0.1",
     "parse5-htmlparser2-tree-adapter": "^8.0.1",
+    "yaml": "2.9.1",
     "zod": "^4.6.7"
   },
   "devDependencies": {

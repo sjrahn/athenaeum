@@ -1,14 +1,13 @@
-// text.ts — `html.text@1`, the quote surface of a markup scope (D-html): the text of the nodes inside a byte span,
-// with head/script/style/template/noscript/svg dropped, block elements and <br> ending a line, td/th separated by a
-// tab, whitespace runs collapsed to one space, lines trimmed, blank runs collapsed. Also `html.attr@1 <name>` and
-// `html.title@1`.
+// text.ts — `html.text@1`, a hint (spec §10.6.2): the text of the elements in a byte span, with head, script, style,
+// template, noscript and svg dropped, block elements and <br> ending a line, table cells separated by a tab,
+// whitespace runs collapsed to one space, lines trimmed, blank lines collapsed; every run of text it emits keeps the
+// byte span of its source (§10.6.4). Also `html.attr@1 <name>`. Nothing either yields is bound or stored.
 import { type Element, isTag, isText, type Node } from "domhandler";
-import { registerOp } from "../registry.ts";
+import { registerOp } from "../ops.ts";
 import { elementAt, type HtmlDoc, parseHtml, select, spanOf } from "./dom.ts";
 
 export const HTML_TEXT_OP = "html.text@1";
 export const HTML_ATTR_OP = "html.attr@1";
-export const HTML_TITLE_OP = "html.title@1";
 
 const DROP = new Set(["head", "script", "style", "template", "noscript", "svg", "iframe"]);
 const BLOCK = new Set([
@@ -62,7 +61,8 @@ function collect(n: Node, out: string[], pre: boolean): void {
     return;
   }
   if (!isTag(n)) return;
-  const name = n.name.toLowerCase();
+  // a package part's elements carry a namespace prefix (w:p, a:br); the local name is the element
+  const name = n.name.toLowerCase().split(":").pop()!;
   if (DROP.has(name)) return;
   if (name === "br") {
     out.push("\n");
@@ -143,37 +143,85 @@ export function textRuns(d: HtmlDoc): { start: number; end: number; text: string
   return out;
 }
 
-// ── the ops the ontology names (D-derivation) ───────────────────────────────────────────────────────────────────────
+// ── the hints (§10.6.2) ─────────────────────────────────────────────────────────────────────────────────────────
+
+/** Every run of text inside [start, end), in document order, collapsed, with the byte span of its source text; the
+ * drop set's subtrees excluded. A run a span cuts is cut at the span. */
+export function runsIn(d: HtmlDoc, start: number, end: number, root: Node = d.doc): { text: string; start: number; end: number }[] {
+  const out: { text: string; start: number; end: number }[] = [];
+  const charAt = (byte: number): number => {
+    let lo = 0;
+    let hi = d.text.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (d.map[mid]! < byte) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo;
+  };
+  const walk = (n: Node) => {
+    if (isText(n)) {
+      const s = spanOf(d, n);
+      if (!s || s.end <= start || s.start >= end) return;
+      const a = Math.max(s.start, start);
+      const b = Math.min(s.end, end);
+      const t = d.text.slice(charAt(a), charAt(b)).replace(/\s+/g, " ").trim();
+      if (t) out.push({ text: t, start: a, end: b });
+      return;
+    }
+    if (isTag(n) && DROP.has(n.name.toLowerCase())) return;
+    if ("children" in n) for (const c of (n as { children: Node[] }).children) walk(c);
+  };
+  walk(root);
+  return out;
+}
+
+/** The nodes inside [start, end): whole elements and text, an element the span cuts walked into. */
+function textIn(d: HtmlDoc, start: number, end: number): string {
+  const out: string[] = [];
+  const visit = (n: Node, pre: boolean) => {
+    const s = spanOf(d, n);
+    if (s && (s.end <= start || s.start >= end)) return;
+    if (s && s.start >= start && s.end <= end) {
+      collect(n, out, pre);
+      return;
+    }
+    if (isText(n)) {
+      const r = runsIn(d, start, end, n)[0];
+      if (r) out.push(r.text);
+      return;
+    }
+    if (isTag(n) && DROP.has(n.name.toLowerCase())) return;
+    if ("children" in n) for (const c of (n as { children: Node[] }).children) visit(c, pre || (isTag(n) && n.name === "pre"));
+  };
+  visit(d.doc, false);
+  return surfaceText(out.join(""));
+}
+
 const parse = (bytes: Uint8Array) => parseHtml(bytes);
 
 registerOp<HtmlDoc>({
   name: HTML_TEXT_OP,
+  kind: "hint",
   family: "html",
   parse,
-  surface: (d, m) => {
-    if (m.whole) {
-      const root = select(d, "html")[0];
-      return root ? elementText(root) : null;
-    }
-    return m.bytes ? textAt(d, m.bytes[0], m.bytes[1]) : null;
+  hint: (d, r) => {
+    if (r.path !== undefined) return null;
+    const [a, b] = r.whole ? [0, d.bytes.length] : (r.bytes ?? [-1, -1]);
+    if (a < 0) return null;
+    return { text: textIn(d, a, b), units: runsIn(d, a, b).map((x) => ({ text: x.text, at: `bytes=${x.start},${x.end}` })) };
   },
 });
 
 registerOp<HtmlDoc>({
   name: HTML_ATTR_OP,
+  kind: "hint",
   family: "html",
   parse,
   arg: (a) => (a ? null : `${HTML_ATTR_OP} needs the attribute name as its argument`),
-  surface: (d, m, arg) => {
-    if (!arg) return null;
-    if (m.whole) return rootAttr(d, arg);
-    return m.bytes ? attrAt(d, m.bytes[0], m.bytes[1], arg) : null;
+  hint: (d, r, arg) => {
+    if (!arg || r.path !== undefined) return null;
+    const v = r.whole ? rootAttr(d, arg) : r.bytes ? attrAt(d, r.bytes[0], r.bytes[1], arg) : null;
+    return v === null ? null : { text: v, units: [{ text: v, at: r.whole ? "whole" : `bytes=${r.bytes![0]},${r.bytes![1]}` }] };
   },
-});
-
-registerOp<HtmlDoc>({
-  name: HTML_TITLE_OP,
-  family: "html",
-  parse,
-  surface: (d, m) => (m.whole ? titleOf(d) : null),
 });

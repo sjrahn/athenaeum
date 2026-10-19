@@ -3,3 +3,4 @@
 // the labels a policy selects on are handed in.
 export { type Copy, type CopyState, type CustodyIndex, openIndex, type ReceiptRow } from "./index-db.ts";
 export { type LocalStore, openLocalStore, type Tree } from "./local.ts";
+export { type Readable, type ResolveDeps, type Resolved, resolveHash, type Trace, traceLines } from "./resolve.ts";

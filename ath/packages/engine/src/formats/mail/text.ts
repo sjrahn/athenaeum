@@ -2,7 +2,9 @@
 // transfer-decoded and charset-decoded, CRLF folded to LF, trailing whitespace trimmed. Also the mechanical blocks
 // of a text body — blank-line paragraphs, `>` quote runs, the `-- ` signature — as raw spans, since quoted-printable
 // and the identity encodings are line-local and a blank line survives them (D-rfc822-parts).
-import { registerOp } from "../registry.ts";
+import { parseHtml } from "../html/dom.ts";
+import { HTML_TEXT_OP } from "../html/text.ts";
+import { opNamed, registerOp } from "../ops.ts";
 import { decodeCharset, decodeTransfer, isBodyPart, leaves, type Message, type Part, parseMessage } from "./parse.ts";
 
 export const EML_TEXT_OP = "eml.text@1";
@@ -103,9 +105,33 @@ export function blocks(m: Message, p: Part): Block[] {
   return out;
 }
 
+/** A part's decoded bytes (its transfer encoding undone), as its constituent resolves to. */
+const partDecoded = (m: Message, p: Part): Uint8Array => decodeTransfer(m.bytes.subarray(p.bodyStart, p.bodyEnd), p.cte);
+
 registerOp<Message>({
   name: EML_TEXT_OP,
-  family: "mail",
+  kind: "hint",
+  family: "rfc822",
   parse: (bytes) => parseMessage(bytes),
-  surface: (m, a) => (a.bytes ? textAt(m, a.bytes[0], a.bytes[1]) : null),
+  // a body part's span, in the part's decoded bytes, charset-decoded, CRLF folded to LF, trailing whitespace
+  // trimmed; an HTML part as html.text@1 over the part
+  hint: async (m, r) => {
+    if (r.path === undefined) return null;
+    const p = m.parts.find((x) => x.path === r.path);
+    if (!p || p.children.length) return null;
+    const body = partDecoded(m, p);
+    const [a, b] = r.bytes ?? [0, body.length];
+    if (b > body.length) return null;
+    const at = `path=${r.path}&bytes=${a},${b}`;
+    if (p.mime === "text/html") {
+      const h = await opNamed(HTML_TEXT_OP)!.hint!(parseHtml(body), { bytes: [a, b] }, undefined);
+      return h ? { text: h.text, units: h.units.map((u) => ({ text: u.text, at: `path=${r.path}&${u.at}` })) } : null;
+    }
+    if (!p.mime.startsWith("text/")) return null;
+    const text = decodeCharset(body.subarray(a, b), p.charset)
+      .replace(/\r\n/g, "\n")
+      .replace(/[ \t]+$/gm, "")
+      .replace(/\n+$/, "");
+    return { text, units: [{ text, at }] };
+  },
 });

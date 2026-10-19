@@ -3,7 +3,7 @@
 // both end a row; quoted fields may hold doubled quotes and newlines. `row=0` is the header (D-csv). A tab-separated
 // file is the same parse with the tab as the delimiter.
 import { AthError } from "@ath/kit/errors.ts";
-import { registerOp } from "../registry.ts";
+import { registerOp } from "../ops.ts";
 
 export const CSV_OP = "csv.parse@1";
 
@@ -123,6 +123,7 @@ export function csvSurface(p: CsvParse, row: number, col?: number): string | nul
 
 registerOp<CsvParse>({
   name: CSV_OP,
+  kind: "surface",
   family: "csv",
   parseArg: true,
   arg: delimiterProblem,

@@ -4,13 +4,26 @@ import type { Registry } from "@ath/kit/registry.ts";
 import { ingestCommand } from "./ingest.ts";
 import { instanceCheck, instanceInit, instanceRepin, instanceReshard, instanceShow } from "./instance.ts";
 import { logCommand } from "./log.ts";
+import { proposeCommand } from "./propose.ts";
 import { holdingsCommand, provenanceCommand, recordCommand, showCommand, sortCommand, sweepCommand } from "./records.ts";
+import { resolveCommand } from "./resolve.ts";
 import { whoamiCommand } from "./whoami.ts";
 
 export function registerVerbs(r: Registry): void {
   r.registerGroup("instance", "the instance and what it builds on");
   for (const c of [instanceInit, instanceShow, instanceCheck, instanceRepin, instanceReshard]) r.register(c);
-  for (const c of [ingestCommand, holdingsCommand, recordCommand, provenanceCommand, showCommand, sortCommand, sweepCommand]) r.register(c);
+  for (const c of [
+    ingestCommand,
+    holdingsCommand,
+    recordCommand,
+    provenanceCommand,
+    showCommand,
+    sortCommand,
+    sweepCommand,
+    resolveCommand,
+    proposeCommand,
+  ])
+    r.register(c);
   r.register(whoamiCommand);
   r.register(logCommand);
 }
