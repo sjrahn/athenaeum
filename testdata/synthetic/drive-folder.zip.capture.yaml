@@ -1,9 +1,12 @@
-# provenance of a local export, as the producer leaves it beside the bytes (D-sidecar)
-origin: google-drive-export
-via: export
-origin_fields:
+# testimony of a local export, as the producer leaves it beside the bytes: the contract (spec §9.4), extended with its own keys
+subject: b3:da7b858a7acc71ea1953f162369503c564bce9e6ec59ad1b717c6864ccaf34f0
+producer:
+  tool: google-drive-export
+  version: "2026.03"
+  at: "2026-03-18T16:00:00Z"
+source:
   account: ada.abbott@example.invalid
   folder: Harbour plans
-  exported_at: "2026-03-18T16:00:00Z"
-  coverage: the folder, whole
-  part: "001"
+via: export
+coverage: the folder, whole
+part: "001"

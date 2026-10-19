@@ -227,21 +227,12 @@ const TRACKS: Record<string, J> = {
     ],
   },
 };
-/** Admission (§9.6): a delivered testimony follows the contract (§9.4) or matches a testimony shape, and carries what every shape it matches requires; else ingest refuses it. Nothing of this is written. */
+/** Admission (§9.5): a delivered testimony follows the contract (§9.4), or ingest refuses it. Nothing else is asked, nothing is written. */
 const pointer = (doc: unknown, ptr: string) => ptr.split("/").slice(1).reduce<unknown>((v, k) => (v && typeof v === "object" ? (v as J)[k] : undefined), doc);
-const contract = (doc: J) => /^b3:[0-9a-f]{64}$/.test(String(doc.subject)) && ["/producer/tool", "/producer/version", "/producer/at"].every((p) => pointer(doc, p) !== undefined) && !!doc.source && typeof doc.source === "object" && Object.keys(doc.source as J).length > 0;
-function admit(inst: Instance, bytes: Uint8Array, base?: Instance): J {
+function admit(bytes: Uint8Array): J {
   const doc = Bun.YAML.parse(new TextDecoder().decode(bytes)) as J;
-  let admitted = contract(doc);
-  for (const i of [inst, base].filter(Boolean) as Instance[])
-    for (const [k, ls] of i.terms) {
-      if (!k.startsWith("shapes/") || !ls.some((l) => l.pred === "testimony")) continue;
-      const m = ls.find((l) => l.pred === "matches")?.val as J | undefined;
-      if (!m || pointer(doc, String(m.selector)) === undefined) continue;
-      for (const f of ls.filter((l) => l.pred === "field" && (l.val as J).required)) if (pointer(doc, String((f.val as J).from)) === undefined) throw new Error(`testimony lacks ${(f.val as J).name}: ingest refuses it`);
-      admitted = true;
-    }
-  if (!admitted) throw new Error("testimony neither follows the contract nor matches a shape: ingest refuses it (§9.6)");
+  const ok = /^b3:[0-9a-f]{64}$/.test(String(doc.subject)) && ["/producer/tool", "/producer/version", "/producer/at"].every((p) => pointer(doc, p) !== undefined) && !!doc.source && typeof doc.source === "object" && Object.keys(doc.source as J).length > 0;
+  if (!ok) throw new Error("testimony does not follow the contract: ingest refuses it (§9.5)");
   return doc;
 }
 /** A capture sidecar in the contract's shape (§9.4). */
@@ -290,7 +281,7 @@ function jsonSpan(bytes: Uint8Array, key: string, value: string) {
 
 /** Ingest (§19.5): the artifact and its testimony into the local store, the receipt, and the record's projection — nothing judged. */
 let clock = 0;
-async function ingest(inst: Instance, bytes: Uint8Array, name: string, testimony: Uint8Array | null, actor = "reader-a", base?: Instance) {
+async function ingest(inst: Instance, bytes: Uint8Array, name: string, testimony: Uint8Array | null, actor = "reader-a") {
   const full = await blake3Hex(bytes);
   keep("artifacts", full, bytes);
   const delivered: { hash: string; name: string }[] = [];
@@ -299,7 +290,7 @@ async function ingest(inst: Instance, bytes: Uint8Array, name: string, testimony
     const t = await blake3Hex(testimony);
     keep("testimony", t, testimony);
     delivered.push({ hash: t, name: `${name}.testimony.yaml` });
-    origins.push(admit(inst, testimony, base)); // the producer's object, verbatim
+    origins.push(admit(testimony)); // the producer's object, verbatim
     idOf(t);
   }
   const received = new Date(Date.parse(`${DATE}T09:00:00Z`) + 60_000 * clock++).toISOString().replace(".000", "");
@@ -378,18 +369,11 @@ rmSync(OUT, { recursive: true, force: true });
 const ref = new Instance(join(OUT, "reference"), { id: "3b8f1d2e-9a4c-4f6b-8e2d-5c7a1b9e0f43", name: "reference", tier: "public", shard: { records: 2, entities: 2 } });
 for (const f of ["header", "heading", "cover-page", "label", "paragraph", "definition", "definition-list", "row", "caption", "list", "list-item", "equation", "figure", "table-of-contents", "table", "footnote", "end-mark"])
   copyForm(ref, f);
-ref.shape(
-  "web-capture",
-  { pred: "definition", val: "a page capture: this instance requires every capture to say why it was made" },
-  { pred: "testimony", val: true },
-  { pred: "matches", val: { mime: "application/yaml", selector: "/source/uri" } },
-  { pred: "field", val: { name: "context", type: "string", required: true, from: "/context" } },
-);
 ref.term("value", { pred: "definition", val: "a short value printed apart from running text" }, { pred: "reads", val: "text" });
 ref.shape(
   "homes-listing",
   { pred: "definition", val: "the markup of homes.example.invalid's property pages" },
-  { pred: "matches", val: { mime: "text/html", selector: '.listing[itemtype="https://schema.org/Residence"]' } },
+  { pred: "matches", val: { mime: "text/html", selector: '.listing[itemtype="https://schema.org/Residence"]', origin: { "/source/uri": "https://homes.example.invalid/*" } } },
   { pred: "select", val: { selector: "h1.listing-title", form: "heading", level: 0 } },
   { pred: "select", val: { selector: ".price .amount", form: "value" } },
   { pred: "select", val: { selector: "ul.facts li", form: "list-item" } },
@@ -570,11 +554,8 @@ const home = new Instance(join(OUT, "household"), {
 });
 home.shape(
   "drive-export",
-  { pred: "definition", val: "a cloud drive's export sidecar: the account and folder exported, when, how much of it" },
-  { pred: "testimony", val: true },
-  { pred: "matches", val: { mime: "application/yaml", selector: "/origin_fields/folder" } },
-  { pred: "field", val: { name: "account", type: "string", required: true, from: "/origin_fields/account" } },
-  { pred: "field", val: { name: "exported-at", type: "datetime", from: "/origin_fields/exported_at" } },
+  { pred: "definition", val: "a folder as a cloud drive exports it: what the drive's export tool delivered, recognised by its testimony" },
+  { pred: "matches", val: { mime: "application/zip", origin: { "/producer/tool": "google-drive-export" } } },
 );
 home.shape(
   "headed-sheet",
@@ -608,7 +589,7 @@ prop(home, "display-name", "string", true);
 prop(home, "length", "decimal", true);
 
 const zipBytes = readFileSync(join(SYN, "drive-folder.zip"));
-const drive = await ingest(home, zipBytes, "drive-folder.zip", readFileSync(join(SYN, "drive-folder.zip.capture.yaml")), "reader-a", ref);
+const drive = await ingest(home, zipBytes, "drive-folder.zip", readFileSync(join(SYN, "drive-folder.zip.capture.yaml")));
 // a recording: one record, its video and audio tracks listed as parts with their intrinsics; nothing said yet
 await ingest(home, readFileSync(join(SYN, "harbour-clip.mov")), "harbour-clip.mov", null);
 const part = (suffix: string) => drive.parts.find((p) => p.path.endsWith(suffix))!;
