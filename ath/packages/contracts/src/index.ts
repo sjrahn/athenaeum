@@ -192,6 +192,16 @@ export function parseArgv<C extends AnyContract>(contract: C, argv: readonly str
   return validate(contract, raw);
 }
 
+/** An args object (over a socket or HTTP) → validated args. Keys the contract does not declare are refused, so a
+ * caller never passes what a terminal could not. Throws ContractUsageError. */
+export function parseArgs<C extends AnyContract>(contract: C, raw: unknown): ArgsOf<C> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw))
+    throw new ContractUsageError("the arguments are one JSON object", contract.key);
+  const keys = objectKeys(contract.args) ?? [];
+  for (const k of Object.keys(raw)) if (!keys.includes(k)) throw new ContractUsageError(`unrecognized argument: ${k}`, contract.key);
+  return validate(contract, raw);
+}
+
 /** The usage line and the argument table for one contract. */
 export function usageText(prog: string, c: AnyContract, summary?: string): string {
   const words = c.key.replaceAll("-", " ");

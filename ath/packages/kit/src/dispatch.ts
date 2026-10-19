@@ -238,27 +238,8 @@ export async function runCli(argv: readonly string[], deps: DispatchDeps): Promi
     prog: `${prog} ${cmd.replaceAll("-", " ")}`,
   };
 
-  let held: { release(): void } | null = null;
   try {
-    if (def.meta.locks?.includes("repository") && !instance)
-      throw new AthError(
-        "CONFIG",
-        root
-          ? `${root}/athenaeum.yaml is missing, unparseable or names no id`
-          : `${cmd} needs an instance (--root, $ATHENAEUM_ROOT, or an athenaeum.yaml above the cwd)`,
-      );
-    if (def.meta.locks?.length) held = acquireLocks((s) => (s === "repository" ? state! : host.state), def.meta.locks, ctx.wall.now());
-    // an interrupted multi-file write is completed or undone before any verb, a read included, sees the instance
-    if (instance && journalPending(instance.state)) {
-      const lock = def.meta.locks?.includes("repository") ? null : acquireLocks(() => instance.state, ["repository"], ctx.wall.now());
-      try {
-        const done = recoverJournal(instance.state);
-        if (done) events.emit({ kind: "journal.recovered", level: "warn", msg: `an interrupted multi-file write was ${done} first` });
-      } finally {
-        lock?.release();
-      }
-    }
-    const result = await def.run(ctx, args as never);
+    const result = await execute(def, args, ctx);
     const exit = result.exitCode ?? 0;
     if (json) io.out(`${JSON.stringify(okEnvelope(cmd, result.data, performance.now() - started, exit))}\n`);
     else if (def.text) def.text(result.data as never, io, ctx);
@@ -267,10 +248,41 @@ export async function runCli(argv: readonly string[], deps: DispatchDeps): Promi
     return exit;
   } catch (e) {
     return fail(cmd, e, caller, state, rest);
+  }
+}
+
+/** Run a verb whose gates have passed: its locks taken in order, an interrupted journal completed or undone first —
+ * before any verb, a read included, sees the instance (§19.3.1) — then the verb itself. Throws what the verb throws. */
+export async function execute(def: CommandDef, args: unknown, ctx: KitCtx): Promise<{ data: unknown; exitCode?: number }> {
+  const instance = ctx.instance;
+  const cmd = def.contract.key;
+  if (def.meta.locks?.includes("repository") && !instance)
+    throw new AthError(
+      "CONFIG",
+      ctx.root
+        ? `${ctx.root}/athenaeum.yaml is missing, unparseable or names no id`
+        : `${cmd} needs an instance (--root, $ATHENAEUM_ROOT, or an athenaeum.yaml above the cwd)`,
+    );
+  let held: { release(): void } | null = null;
+  try {
+    if (def.meta.locks?.length)
+      held = acquireLocks((s) => (s === "repository" ? instance!.state : ctx.host.state), def.meta.locks, ctx.wall.now());
+    if (instance && journalPending(instance.state)) {
+      const lock = def.meta.locks?.includes("repository") ? null : acquireLocks(() => instance.state, ["repository"], ctx.wall.now());
+      try {
+        const done = recoverJournal(instance.state);
+        if (done) ctx.events.emit({ kind: "journal.recovered", level: "warn", msg: `an interrupted multi-file write was ${done} first` });
+      } finally {
+        lock?.release();
+      }
+    }
+    return await def.run(ctx, args as never);
   } finally {
     held?.release();
   }
 }
+
+export { record as recordHistory };
 
 function record(
   state: string,
