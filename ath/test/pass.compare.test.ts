@@ -1,19 +1,23 @@
-// lint.l7.test.ts — the L7 comparators: text (designators stripped, footnote marks, bullets), cells per cell, tex by
-// symbol multiset on equations of the generated calculation procedure (testdata/synthetic/procedure.pdf).
+// pass.compare.test.ts — the reading check's comparisons (§13.4): text token by token then squashed, under the four
+// conventions; cells each a contiguous run of the row's words; tex by the multiset of symbols, the label a designator
+// names dropped. Equations from the generated calculation procedure (testdata/synthetic/procedure.pdf).
 import { describe, expect, test } from "bun:test";
 import { stripTex } from "@ath/engine/norm/tex.ts";
 import { compareCells, compareTex, compareText } from "@ath/engine/pass/compare.ts";
 
-describe("L7", () => {
+describe("the reading check", () => {
   test("text: conventions and squash absorb what the reading normalised", () => {
     expect(compareText("Baseline emissions", "Baseline emissions", [])).toBeNull();
     expect(compareText("CO2 emissions from fuel", "CO 2 emissions from fuel", [])).toBeNull();
     expect(
-      compareText("the first batch[^1] of project devices", "the first batch1 of project devices", ["footnote marks as [^n]"]),
+      compareText("the first batch[^1] of project devices", "the first batch1 of project devices", [{ footnotes: "\\[\\^\\d+\\]" }]),
     ).toBeNull();
-    expect(compareText("• Use either mass or volume meters", "Use either mass or volume meters", [])).toBeNull();
+    expect(compareText("Use either mass or volume meters", "• Use either mass or volume meters", [{ bullets: "drop" }])).toBeNull();
+    expect(compareText("Use either mass or volume meters", "• Use either mass or volume meters", [])).not.toBeNull();
+    expect(compareText("insulated pipework", "insu-\nlated pipework", [{ hyphens: "rejoin" }])).toBeNull();
     expect(compareText("Baseline emissions", "Baseline omissions", [])).toContain("token 1");
-    expect(compareText("Baseline", "Baseline emissions", [])).toContain("length");
+    expect(compareText("Baseline", "Baseline emissions", [])).toContain("the hint goes on");
+    expect(compareText("Baseline emissions.", "Baseline emissions", [])).not.toBeNull(); // punctuation is content
   });
 
   test("cells: each cell is a contiguous run of the row's words, in any row order", () => {
@@ -37,8 +41,9 @@ describe("L7", () => {
     const reading = "U_{i,y} = h_{i,y} + 4 \\times \\epsilon_{i} \\times \\sigma \\times T_{s,i,y}^{3}";
     const derivation = "𝑈𝑖,𝑦 = ℎ𝑖,𝑦 + 4 × 𝜀𝑖 × 𝜎 × 𝑇 3 𝑠,𝑖,𝑦 Equation (2)";
     expect(stripTex(reading)).toBe("Ui,y = hi,y + 4 × εi × σ × Ts,i,y3");
-    expect(compareTex(reading, derivation)).toBeNull();
+    expect(compareTex(reading, derivation, ["Equation (2)"])).toBeNull();
+    expect(compareTex(reading, derivation)).not.toBeNull();
     expect(compareTex("U_{i,y} = h_{i,y} + 4 \\times \\epsilon_{i} \\times \\sigma", derivation)).toContain("counts differ");
-    expect(compareTex("\\Delta T_{i,y} = T_{s,i,y} - T_{a,y}", "Δ𝑇𝑖,𝑦 = 𝑇𝑠,𝑖,𝑦 − 𝑇𝑎,𝑦 Equation (3)")).toBeNull();
+    expect(compareTex("\\Delta T_{i,y} = T_{s,i,y} - T_{a,y}", "Δ𝑇𝑖,𝑦 = 𝑇𝑠,𝑖,𝑦 − 𝑇𝑎,𝑦 Equation (3)", ["Equation (3)"])).toBeNull();
   });
 });

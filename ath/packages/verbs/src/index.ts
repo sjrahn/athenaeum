@@ -4,6 +4,7 @@ import type { Registry } from "@ath/kit/registry.ts";
 import { ingestCommand } from "./ingest.ts";
 import { instanceCheck, instanceInit, instanceRepin, instanceReshard, instanceShow } from "./instance.ts";
 import { logCommand } from "./log.ts";
+import { passAbandon, passOpen, passShow, passSign, passStage, readingsCommand } from "./pass.ts";
 import { proposeCommand } from "./propose.ts";
 import { holdingsCommand, provenanceCommand, recordCommand, showCommand, sortCommand, sweepCommand } from "./records.ts";
 import { resolveCommand } from "./resolve.ts";
@@ -27,6 +28,8 @@ export function registerVerbs(r: Registry): void {
     treeCommand,
   ])
     r.register(c);
+  r.registerGroup("pass", "one author and one verifier over one subject");
+  for (const c of [passOpen, passStage, passSign, passAbandon, passShow, readingsCommand]) r.register(c);
   r.registerGroup("vocab", "the forms, shapes, kinds and properties");
   for (const c of [vocabList, vocabShow, vocabRules, vocabPin, vocabCheck, vocabAdd, vocabEdit, vocabRemove]) r.register(c);
   r.register(whoamiCommand);
