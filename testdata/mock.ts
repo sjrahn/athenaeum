@@ -227,12 +227,12 @@ const TRACKS: Record<string, J> = {
     ],
   },
 };
-/** Admission (§9.5): a delivered testimony follows the contract (§9.4), or ingest refuses it. Nothing else is asked, nothing is written. */
+/** Admission (§9.5): a delivered testimony follows the contract (§9.4), its `subject` the artifact it is delivered for, or ingest refuses it. Nothing else is asked, nothing is written. */
 const pointer = (doc: unknown, ptr: string) => ptr.split("/").slice(1).reduce<unknown>((v, k) => (v && typeof v === "object" ? (v as J)[k] : undefined), doc);
-function admit(bytes: Uint8Array): J {
+function admit(bytes: Uint8Array, subject: string): J {
   const doc = Bun.YAML.parse(new TextDecoder().decode(bytes)) as J;
-  const ok = /^b3:[0-9a-f]{64}$/.test(String(doc.subject)) && ["/producer/tool", "/producer/version", "/producer/at"].every((p) => pointer(doc, p) !== undefined) && !!doc.source && typeof doc.source === "object" && Object.keys(doc.source as J).length > 0;
-  if (!ok) throw new Error("testimony does not follow the contract: ingest refuses it (§9.5)");
+  const ok = doc.subject === `b3:${subject}` && ["/producer/tool", "/producer/version", "/producer/at"].every((p) => pointer(doc, p) !== undefined) && !!doc.source && typeof doc.source === "object" && Object.keys(doc.source as J).length > 0;
+  if (!ok) throw new Error("testimony does not follow the contract, or is not about the artifact it was delivered for: ingest refuses it (§9.5)");
   return doc;
 }
 /** A capture sidecar in the contract's shape (§9.4). */
@@ -290,7 +290,7 @@ async function ingest(inst: Instance, bytes: Uint8Array, name: string, testimony
     const t = await blake3Hex(testimony);
     keep("testimony", t, testimony);
     delivered.push({ hash: t, name: `${name}.testimony.yaml` });
-    origins.push(admit(testimony)); // the producer's object, verbatim
+    origins.push(admit(testimony, full)); // the producer's object, verbatim
     idOf(t);
   }
   const received = new Date(Date.parse(`${DATE}T09:00:00Z`) + 60_000 * clock++).toISOString().replace(".000", "");
