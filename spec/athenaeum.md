@@ -20,7 +20,7 @@ This document is normative. The key words MUST, MUST NOT, SHOULD and MAY are use
 - what the tooling knows about **formats**, and the primitives a vocabulary composes to say what data is;
 - how artifacts are kept and found (**custody**), and the tool through which all of it is read and written.
 
-1.2 A conforming tool implements every MUST of this document for the formats it registers (§10). A conforming instance holds only what this document allows to be stored.
+1.2 Every rule of this document — in prose, in a table, in a grammar — is normative; MUST marks the ones a tool checks and refuses on. A conforming tool implements all of them for the formats it registers (§10). A conforming instance holds only what this document allows to be stored.
 
 1.3 The tooling acquires nothing. Artifacts and testimony are acquired by producers outside the tooling and handed to it from disk; the tooling never fetches them. It opens no connection to acquire: the network it uses is custody's, reaching the stores an instance declares (§18.2) to keep and resolve what it already holds; serving (§16); and a recogniser bound to the host that a hint op consults (§10.6.2).
 
@@ -42,8 +42,8 @@ This document is normative. The key words MUST, MUST NOT, SHOULD and MAY are use
 | **instance** | one repository — its corpus, its graph, its store and policy declarations and its rulings (§4): **standalone**, or an **extension** of a **base** it builds on |
 | **corpus** | an instance's forms, shapes and records: how its artifacts are organised and what they say |
 | **graph** | an instance's kinds, properties and entities: what its artifacts show about the world |
-| **artifact** | bytes, identified by their BLAKE3; the subject `ath://<id>` (§7.1) |
-| **id** | an artifact's short identifier: the first 8 hex digits of its BLAKE3, 16 where 8 collide (§7.1) |
+| **artifact** | bytes, identified by their BLAKE3; the subject `ath://<blake3>` (§7.1) |
+| **hash** | an artifact's or a testimony's BLAKE3 in 64 hex digits: its identity, its file name and every stored reference to it; at a terminal a prefix of 8 or more digits stands for it (§7.1) |
 | **container** | an artifact whose format holds whole files of its own |
 | **constituent** | a file a container holds whole: an **asset**, its own artifact and subject, or a **part** of the container's own plan, never a subject (§7.2.2) |
 | **testimony** | an artifact a producer emitted about other artifacts — where, when, by what, why they were found (§9) |
@@ -76,7 +76,6 @@ This document is normative. The key words MUST, MUST NOT, SHOULD and MAY are use
 | **ruling** | the owner's steering: what the instance should distrust, accept, seek, defer or decline; never evidence (§13.5) |
 | **store** | a place custody keeps artifacts and testimony: **managed** or **observed** (§18.2) |
 | **policy** | an instance's rule for how many copies of which artifacts sit on which stores (§18.6) |
-| **plane** | a served view of an instance: public, audience, owner (§16) |
 | **demand** | work the stored lines and rulings imply is owed, derived (§14.6) |
 
 ## 4. Instances
@@ -88,18 +87,15 @@ This document is normative. The key words MUST, MUST NOT, SHOULD and MAY are use
 ```yaml
 id: 0f4c2a8e-7b1d-4e5a-9c3f-6d2e8b1a4c70   # a UUID, the instance's identity on every host
 name: household
-tier: private                              # public, or a named tier
 extends:                                   # absent on a standalone instance
   path: ../reference
   commit: 5f2a9c1e7d3b40a86e1f2c9b7d4a3e5f60812c7d
 shard: { records: 2, entities: 2 }         # §5.2
-audiences:                                 # §16
-  family: [private]
 ```
 
 A cycle among bases, a base missing at its path or not at its pinned commit, or an unparseable file is a configuration error.
 
-4.3 An extension reads its base at the pinned commit and at no other. Moving the pin (`instance repin`, §19.5) recomputes everything derived from the base: the vocabulary pin, and with it the staleness of the extension's passes; bindings, status and checks; ids (§7.1.3); anchors into artifacts the base no longer holds, which are flagged.
+4.3 An extension reads its base at the pinned commit and at no other. Moving the pin (`instance repin`, §19.5) recomputes everything derived from the base: the vocabulary pin, and with it the staleness of the extension's passes; bindings, status and checks; anchors into artifacts the base no longer holds, which are flagged. A repin that brings into the base an artifact the extension holds judgments of leaves the extension's record and lists it; moving it to the base is the owner's verb (§13.5.5).
 
 4.4 A subject resolves in the extension first, then in its base, and so on down; the view of a subject is the line-set union of its files. Within that union:
 
@@ -108,7 +104,7 @@ A cycle among bases, a base missing at its path or not at its pinned commit, or 
 - an extension adds terms and lines to the vocabulary, and MUST NOT write at an identity the base's vocabulary holds;
 - a disagreement with a base line, and a term the extension mints, are demand on the base (§14.6).
 
-4.5 Every line an instance holds carries the instance's `tier`; no line declares its own. An instance MUST NOT be `public` unless its base is.
+4.5 What an instance holds is as private as the repository that holds it; no line, verb or served view gates who sees it. What is shared is separated from what is not by extension — a shared base, a private extension — never within one instance.
 
 ## 5. Files
 
@@ -120,7 +116,7 @@ A cycle among bases, a base missing at its path or not at its pinned commit, or 
 ├── corpus/
 │   ├── forms/<name>.jsonl             structural units (§11)
 │   ├── shapes/<name>.jsonl            artifact families and where their forms lie (§11)
-│   └── records/<shard>/<id>.yaml      every held artifact: its projection and judgments (§8)
+│   └── records/<shard>/<blake3>.yaml  every held artifact: its projection and judgments (§8)
 ├── graph/
 │   ├── kinds/<name>.jsonl             what an entity is (§11)
 │   ├── properties/<name>.jsonl        what can be said of one (§11)
@@ -130,7 +126,7 @@ A cycle among bases, a base missing at its path or not at its pinned commit, or 
 └── rulings.jsonl                      §13.5
 ```
 
-5.2 **Shards.** A record's `<shard>` is the first *n* hex digits of its artifact's id; an entity's is the first *n* characters of its name. `athenaeum.yaml` declares *n* per directory; absent, both take 2. Forms, shapes, kinds and properties are never sharded. Changing a width is `instance reshard` (§19.5), which moves files and changes no line.
+5.2 **Shards.** A record's `<shard>` is the first *n* hex digits of its artifact's hash; an entity's is the first *n* characters of its name. `athenaeum.yaml` declares *n* per directory; absent, both take 2. Forms, shapes, kinds and properties are never sharded. Changing a width is `instance reshard` (§19.5), which moves files and changes no line.
 
 5.3 **Names.** A term or an entity is named by a **name**: lowercase letters, digits and hyphens, starting with a letter or digit, never consisting of hex digits alone. A name is unique within its directory. Entities and kinds — the things a consumer asks the graph about — share one name space and are the subjects `ath://<name>`; artifacts are `ath://<id>`. Forms, shapes and properties are named within their own vocabularies and referred to by bare name (`"form":"heading"`, `"pred":"total"`); the graph projection gives them IRIs of their own (§15.3).
 
@@ -163,12 +159,12 @@ A cycle among bases, a base missing at its path or not at its pinned commit, or 
 // corpus/forms/heading.jsonl
 {"pred":"reads","val":"text"}
 // graph/entities/ti/tide-table-02.jsonl
-{"pred":"version","val":"02.1","ev":[{"anchor":"ath://5e6e497d?page=1&bbox=0.1429,0.6906,0.0901,0.0087&text","mode":"stated","quote":"Version 02.1","binding":"b3:aae7b6bb9c216abb"}],"pass":"p1"}
+{"pred":"version","val":"02.1","ev":[{"anchor":"ath://5e6e497d8e163eb4b1cc7330087e3dd86545858d0b28af49fbf1e5b13f4746cf?page=1&bbox=0.1429,0.6906,0.0901,0.0087&text","mode":"stated","quote":"Version 02.1","binding":"b3:aae7b6bb9c216abb"}],"pass":"p1"}
 ```
 
 ### 6.2 Authorship
 
-6.2.1 `by` names an op as `<name>@<version>`, or `owner`. `pass` names a pass by its id: a pass line in the same entity file, or an entry of the record's `passes` (§13.1).
+6.2.1 `by` names an op as `<name>@<version>`, or `owner`. `pass` names a pass by its id: a pass line in the same entity file — the file of the instance the line lives in, so an extension's `p2` and its base's `p2` are two passes — or an entry of the record's `passes` (§13.1).
 
 6.2.2 A pass is itself the authorship of what names it and carries none of its own: a `pass` line is the one line of an entity file with neither `by` nor `pass`.
 
@@ -184,7 +180,7 @@ A cycle among bases, a base missing at its path or not at its pinned commit, or 
 | `is` | (pred, val) |
 | `pass` in an entity file | (pred, id) |
 | a ruling | (id) |
-| a term line | (pred) for a single-valued predicate; (pred, name) for a repeatable one, where the name is the value's `name`, `col`, `selector` or `form`, else the whole value |
+| a term line | (pred) for a single-valued predicate; (pred, name) for a repeatable one, where the name is the value's `name` or `col`; (pred, value) for `select`, `matches`, `chrome`, `columns` and every other repeatable predicate without one |
 
 A record's identities are its addresses and ids (§8.6).
 
@@ -194,7 +190,7 @@ A record's identities are its addresses and ids (§8.6).
 
 6.4.1 One line per claim or term statement. A file is sorted by identity; nothing depends on line order. The union of an extension with its base, and a merge, are line-set unions.
 
-6.4.2 The canonical serialisation of a line is compact JSON, LF-terminated, non-ASCII characters unescaped, with its keys in a fixed order: `id`; then `pred`; then every other key in code-point order; then `ev`; then the authorship (`by` or `pass`) last. Nested objects' keys are in code-point order; arrays keep their stored order. Two lines are the same content when their canonical serialisations are equal. Every hash this document defines over JSON — a revision of `cells`, a pin — is taken over this form.
+6.4.2 The canonical serialisation of a line is compact JSON, LF-terminated, non-ASCII characters unescaped, with its keys in a fixed order: `id`; then `pred`; then every other key in code-point order; then `ev`; then the authorship (`by` or `pass`) last. Nested objects' keys are in code-point order; arrays keep their stored order; a number is written in the shortest form that round-trips (ECMAScript `Number.prototype.toString`); a string escapes only `"`, `\` and control characters. A hash over several lines is over their concatenation, each LF-terminated. Two lines are the same content when their canonical serialisations are equal. Every hash this document defines over JSON — a revision of `cells`, a pin — is taken over this form.
 
 ### 6.5 Revisions
 
@@ -206,11 +202,11 @@ A reading's **revision** is `b3:` followed by the first 16 hex digits of the BLA
 
 7.1.1 An artifact's identity is the BLAKE3 of its bytes and nothing else: no URL, name, path or producer key takes part in it. New bytes are a new artifact. The same bytes met again are the same artifact; the encounter adds testimony (§9) and nothing else.
 
-7.1.2 Within an instance an artifact is written by its **id**: the first 8 hex digits of its BLAKE3. Its subject is `ath://<id>`; its record, when it has one, is `corpus/records/<shard>/<id>.yaml`. A testimony has an id the same way and no record: its id resolves through the receipt that delivered it, which the custody index carries (§18.4). Testimony and the format's constituent lists carry full hashes; everything tracked in the repository carries ids.
+7.1.2 An artifact is written by its hash, in full, everywhere it is stored: its subject is `ath://<blake3>`, its record `corpus/records/<shard>/<blake3>.yaml`, and every anchor, ruling, constituent list and graph name carries the 64 digits. A testimony is named the same way and has no record (§9.1.2). A hash never changes and is never rewritten.
 
-7.1.3 Where two artifacts the instance holds share their first 8 digits, the one received first (by its first receipt, §9.3; a constituent by its container's; a testimony by the receipt that delivered it) keeps the 8-digit id and every later one is written with 16. An extension defers to its base: if a repin brings a base artifact onto an 8-digit id the extension already uses for another artifact, the repin rewrites the extension's lines to give its own artifact 16 digits. Should 16 digits collide, the full hash is the id.
+7.1.3 At a terminal and in printed output a **prefix** of 8 or more hex digits stands for a hash: the tool accepts one where it names exactly one artifact or testimony the chain holds, prints the shortest prefix that does, and refuses an ambiguous one. A prefix is never stored.
 
-7.1.4 A reference that names an id resolves to exactly one artifact or testimony, or is flagged.
+7.1.4 A stored reference names exactly one artifact or testimony, or is flagged.
 
 ### 7.2 Containers and constituents
 
@@ -226,8 +222,8 @@ A reading's **revision** is `b3:` followed by the first 16 hex digits of the BLA
 
 | axis | formats | meaning |
 |---|---|---|
-| `whole` | every artifact | the artifact: where the record's whole-level keys apply (§8.2), the root of its tree, and what a pass names in `over` when it wrote them |
-| `page=N` · `page=N&bbox=x,y,w,h` | pdf | page N, 1-based; a box normalised 0–1 in the page frame, origin top-left |
+| `whole` | every artifact | the artifact: where the record's whole-level keys apply (§8.2) and the root of its tree |
+| `page=N` · `page=N&bbox=x,y,w,h` | pdf | page N, 1-based; a box normalised 0–1 in the page as displayed — its crop box, its rotation applied — origin top-left |
 | `bbox=x,y,w,h` | raster images | a box normalised 0–1 on the pixel grid |
 | `bytes=a,b` | every text format: html, xhtml, markdown, plain text, rfc822, json, ndjson, yaml, vcard | the half-open byte range [a, b) of the file |
 | `row=N` · `row=N&col=M` · `col=M` | csv, tsv | physical row N and column M, both 0-based |
@@ -243,7 +239,9 @@ A reading's **revision** is `b3:` followed by the first 16 hex digits of the BLA
 
 7.4.1 Box coordinates carry at most 4 decimals. Containment of one box in another allows 0.002 slack per edge.
 
-7.4.2 The regions of a union sort by page, then y, then x, then byte start; `path` sorts last. Every address is canonicalised before it is used as identity.
+7.4.2 The regions of a union sort by page, then row, then time, then y, then x, then byte start; `path` sorts last; no region is listed twice. Every address is canonicalised before it is used as identity.
+
+7.4.3 A number is written in its shortest form — no trailing zeros, no leading sign, `0.1` never `0.1000` — and a page, row, column or byte offset is an integer. The axes of one region are written in the order §7.3.1 lists them. A `path` value is percent-encoded where it holds `;`, `&`, `=`, `%` or a code point outside printable ASCII. A region the artifact does not have — a page past its count, a byte past its end, a box outside the frame — is refused.
 
 ### 7.5 Routes through containers
 
@@ -266,7 +264,7 @@ A page the document has, a row the parse holds, a cell within such a row and a s
 
 ### 7.8 Re-capture and moved scopes
 
-7.8.1 A re-capture is a new artifact. A `supersedes` claim relates the two (§14.2); an anchor carries across where the body at the same intrinsic address still holds its quote, and is otherwise held (§14.4).
+7.8.1 A re-capture is a new artifact. A `manifests` claim on the entity both are captures of names each (§14.2.2); an anchor carries across where the body at the same intrinsic address still holds its quote, and is otherwise held (§14.4).
 
 7.8.2 A reading is at its address and nowhere else. A pass that moves, splits or combines readings leaves anchors behind; verify reports each whose quote still lies in a body at its address as a re-bind owed, finds a body of the same revision at a new address and reports the anchor to move, and holds the rest as demand (§14.6). A re-bind is a pass's own line for the claim, bound at the current revision (§14.4.2); nothing signed is rewritten.
 
@@ -274,7 +272,7 @@ A page the document has, a row the parse holds, a cell within such a row and a s
 
 ### 8.1 What a record is
 
-8.1.1 A record is the document about one artifact, `corpus/records/<shard>/<id>.yaml`: its **projection** — what the format defines about its bytes (`intrinsics`), the receipts of its ingests (`receipts`) and the testimony delivered with it (`origins`), all caches the tooling writes — and the judgments passes make about it. Every ingested artifact has a record from the moment it is ingested, holding the projection; the first pass adds the first judgment. An asset's record is derived from its container's until something is said about it or it is ingested on its own.
+8.1.1 A record is the document about one artifact, `corpus/records/<shard>/<blake3>.yaml`: its **projection** — what the format defines about its bytes (`intrinsics`), the receipts of its ingests (`receipts`) and the testimony delivered with it (`origins`), all caches the tooling writes — and the judgments passes make about it. Every ingested artifact has a record from the moment it is ingested, holding the projection; the first pass adds the first judgment. An asset's record is derived from its container's until something is said about it or it is ingested on its own.
 
 8.1.2 What a record holds depends on the class of the artifact's format (§10.4):
 
@@ -291,7 +289,7 @@ A page the document has, a row the parse holds, a cell within such a row and a s
 |---|---|
 | `intrinsics` | what the artifact's format defines about its bytes: mime, size, encoding, page count, dimensions, duration, the metadata the format specifies, and a container's constituents with their kind (§10.2, §10.3). Nothing a producer asserts. A cache: `op` names the intrinsics op and its version; a value by an older version than the tool's is **stale** (§12) and the sweep rewrites it |
 | `receipts` | every ingest of the artifact into this instance, in order, each `{actor, received, name}` (§9.3) |
-| `origins` | every testimony delivered with the artifact, each its parsed content verbatim — the producer's object, nothing of the instance's in it. What a testimony is admitted as is derived from its content (§9.5, §12) and never written. Extended at every later delivery, as `receipts` is. Both keys are absent on an asset never ingested on its own, whose provenance is its containers' (§9.6) |
+| `origins` | every testimony delivered with the artifact, each its parsed content verbatim but for `subject`, which the record's own hash states — the producer's object otherwise untouched, nothing of the instance's in it. What a testimony is admitted as is derived from its content (§9.5, §12) and never written. Extended at every later delivery, as `receipts` is. Both keys are absent on an asset never ingested on its own, whose provenance is its containers' (§9.6) |
 | `shape` | a stored choice of the artifact's shape, overriding the one `matches` derives (§11.4.3) |
 | `chrome` | rules for what is chrome in this artifact, each in the grammar of a shape's `chrome` line (§11.2.3); applied together with the shape's (§8.4.6) |
 | `passes` | the passes over the artifact, by id: `{by, verify, vocab, date, over?, attests?, note?}` (§8.5, §13.1) |
@@ -300,7 +298,7 @@ A page the document has, a row the parse holds, a cell within such a row and a s
 
 A record holds `readings` or `scopes`, never both.
 
-8.2.2 **Encoding.** A record is YAML, written only by the tool, in one style: the keys above in that order; a scope's keys as `form`, `at`, its fields in code-point order, its reading under its aspect, `scopes`; a multi-line body as a literal block scalar; every scalar YAML would read as anything but a string, quoted. On load every field takes the type its form declares and every body is a string, or a list of lists of strings under `cells`; a document that does not parse, or a key the record's grammar lacks, is refused. Two records are the same content when their documents are equal.
+8.2.2 **Encoding.** A record is YAML, written only by the tool, in one style: the keys above in that order; a scope's keys as `form`, `at`, its fields in code-point order, its reading under its aspect, `scopes`; a multi-line body as a literal block scalar; every scalar YAML would read as anything but a string, quoted. On load every field takes the type its form declares and every body is a string, or a list of strings — one row's cells — under `cells`; a document that does not parse, or a key the record's grammar lacks, is refused. Two records are the same content when their documents are equal.
 
 ### 8.3 Readings
 
@@ -344,7 +342,7 @@ A record holds `readings` or `scopes`, never both.
 
 ### 8.5 Passes and stages
 
-8.5.1 The projection is no pass's: `intrinsics`, `receipts` and `origins` are the tooling's. Nothing else in a record names the pass that wrote it. A pass names what it covers: `over` lists the addresses a partial pass read or re-read — and `whole` where it wrote the shape or chrome — and a pass with no `over` covers the whole record. A region's pass is the highest-numbered pass whose extent includes it; a `distrust` of a pass, a stale pin and a correction all resolve through this. A forming pass covers the whole record and answers for every reading in it, adopted or re-read. A pass stays in `passes` once signed, whether or not a later pass answers for everything it covered; a pass that no longer answers for any region is **superseded**, and neither a stale pin nor a `distrust` on it reaches anything.
+8.5.1 The projection is no pass's: `intrinsics`, `receipts` and `origins` are the tooling's. Nothing else in a record names the pass that wrote it. A pass names what it covers in `over`, by kind: the address of each reading it wrote or re-wrote, exactly as stored; `tree` where it formed; `shape` and `chrome` where it wrote those. A pass with no `over` covers everything the record holds. A reading's pass is the highest-numbered pass whose `over` names its address or everything; the tree's, shape's and chrome's likewise. Containment is never coverage: a reading inside a region another pass read, or inside a scope, keeps its own pass, and a pass that wrote only `shape` or `chrome` answers for nothing else. A `distrust` of a pass, a stale pin and a correction all resolve through this. A forming pass covers the whole record and answers for every reading in it, adopted or re-read. A pass stays in `passes` once signed, whether or not a later pass answers for everything it covered; a pass that no longer answers for any region is **superseded**, and neither a stale pin nor a `distrust` on it reaches anything.
 
 8.5.2 A pass attests completeness with `attests`: `readings` — every region of the rendering that carries transcribable content has a reading; `structure` — every reading lies in a scope and every scope that reads has its reading. Structure is checked and blocks (§17.1); readings can only be attested, and where a hint exists the hint's words outside every reading and chrome are listed beside it. Either means complete, never correct, and neither implies the other. An attestation stands while its pass is the latest; a later pass re-attests or it lapses. A tree is never signed without `structure`.
 
@@ -366,7 +364,7 @@ A record holds `readings` or `scopes`, never both.
 A reading's identity is its address, in `readings` or in the scope that adopted it; a scope's is its address, which is unique across the tree; a `chrome` rule's is its value; a pass's is its id. A write at an existing identity with different content replaces the entry; a write with the same content is a no-op; the repository's history is the record of every replacement.
 
 ```yaml
-# corpus/records/6a/6aa934e5.yaml — a photograph of a sign, read in full: transcribed, not formed
+# corpus/records/6a/6aa934e584b7516e05515e6fbc7f13081d65cf4321de25f363573ba6d3c55f7d.yaml — a photograph of a sign, read in full: transcribed, not formed
 intrinsics: {op: jpeg.intrinsics@1, mime: image/jpeg, bytes: 47268, width: 900, height: 420}
 receipts: [{actor: reader-a, received: "2026-01-12T09:14:03Z", name: sign.jpg}]
 passes:
@@ -382,9 +380,9 @@ readings:
 ```
 
 ```yaml
-# corpus/records/76/7684234e.yaml — a web page, read at the four spans an entity cites: the read stage
+# corpus/records/76/7684234e8dacfee3e2a4576c60fac3c4d96cfc3e5b2ab317e9d18724a5fbe6d4.yaml — a web page, read at the four spans an entity cites: the read stage
 passes:
-  p1: {by: reader-a, verify: reader-b, vocab: b3:5c1e0a9d77f3b210, date: 2026-01-12, over: [bytes=800,967, bytes=985,1022, bytes=1088,1120, bytes=1210,1242]}
+  p1: {by: reader-a, verify: reader-b, vocab: b3:5c1e0a9d77f3b210, date: 2026-01-12, over: ["bytes=800,967", "bytes=985,1022", "bytes=1088,1120", "bytes=1210,1242"]}
 readings:
   bytes=800,967:
     text: "12 Quay Street, Port Ellen"
@@ -393,7 +391,7 @@ readings:
 ```
 
 ```yaml
-# corpus/records/9f/9f2c1a3b.yaml — a formed excerpt: the scopes have adopted their readings
+# corpus/records/9f/9f2c1a3bdccc9c1260a82e76d6de144288acea5ca283d45122c39e8cc077aa54.yaml — a formed excerpt: the scopes have adopted their readings
 passes:
   p2: {by: reader-a, verify: reader-b, vocab: b3:5c1e0a9d77f3b210, date: 2026-01-14, attests: [readings, structure]}
 scopes:
@@ -415,11 +413,11 @@ scopes:
 ```
 
 ```yaml
-# corpus/records/41/41aa07d2.yaml — an archive as ingest left it: the projection, nothing said
-intrinsics: {op: zip.intrinsics@1, mime: application/zip, bytes: 184211, constituents: [{path: Harbour plans/Mooring plan 2026.pdf, blake3: 0c4efa13…, kind: asset}, {path: Harbour plans/Berth list.csv, blake3: 7a3e0c11…, kind: asset}]}
+# corpus/records/41/41aa07d2639fefa0f2de2c860a8c887b19a173435317617c6c3ce3efcc3cff4a.yaml — an archive as ingest left it: the projection, nothing said
+intrinsics: {op: zip.intrinsics@1, mime: application/zip, bytes: 184211, constituents: [{path: Harbour plans/Mooring plan 2026.pdf, blake3: 0c4efa131a12f4a40da8e3ebb83aee7b454ec144979a43a49f816f8f2cb1cd2c, kind: asset}, {path: Harbour plans/Berth list.csv, blake3: 7a3e0c118f025c115ee9e5844d3b31e26b1231de25f4f8286765fe1a2f2c13ea, kind: asset}]}
 receipts: [{actor: reader-a, received: "2026-01-12T09:14:03Z", name: drive-folder.zip}]
 origins:
-  - {subject: b3:da7b858a…, producer: {tool: google-drive-export, version: "2026.03", at: "2026-03-18T16:00:00Z"}, source: {account: ada.abbott@example.invalid, folder: Harbour plans}, via: export, coverage: the folder, whole, part: "001"}
+  - {producer: {tool: google-drive-export, version: "2026.03", at: "2026-03-18T16:00:00Z"}, source: {account: ada.abbott@example.invalid, folder: Harbour plans}, via: export, coverage: "the folder, whole", part: "001"}
 ```
 
 ## 9. Testimony
@@ -447,14 +445,14 @@ origins:
 9.3.1 Every ingest writes one testimony of the tooling's own, the **receipt**:
 
 ```json
-{"actor":"reader-a","artifact":"9f2c1a3b…","instance":"0f4c2a8e-7b1d-4e5a-9c3f-6d2e8b1a4c70","name":"statement-03.pdf","received":"2026-01-12T09:14:03Z","testimony":[{"hash":"41aa07d2…","name":"statement-03.pdf.testimony.yaml"}]}
+{"actor":"reader-a","artifact":"9f2c1a3bdccc9c1260a82e76d6de144288acea5ca283d45122c39e8cc077aa54","instance":"0f4c2a8e-7b1d-4e5a-9c3f-6d2e8b1a4c70","name":"statement-03.pdf","received":"2026-01-12T09:14:03Z","testimony":[{"hash":"41aa07d2639fefa0f2de2c860a8c887b19a173435317617c6c3ce3efcc3cff4a","name":"statement-03.pdf.testimony.yaml"}]}
 ```
 
 — the instance it was ingested into, who handed the artifact in, the instant, the name it arrived under, the artifact's full hash, and the full hash and delivered name of every testimony delivered with it. Testimony is not itself receipted: the receipt covers it, so every artifact has at least one testimony and the chain stops at one. Which receipt delivered which testimony is the receipts' to say; the record's `origins` carries no hashes.
 
 9.3.2 The receipt is the only testimony the tooling prescribes, and it knows the receipt's shape itself; no vocabulary declares it.
 
-9.3.3 A record's `receipts` and `origins` are the projection of the receipts and the testimony delivered for its artifact (§8.2); the originals in the stores, which carry the hashes, are what it is rebuilt from if the repository loses it, and how a testimony is found as an artifact to cite or to distrust: the `origins` entry a testimony is, is the one its parse equals (§12).
+9.3.3 A record's `receipts` and `origins` are the projection of the receipts and the testimony delivered for its artifact (§8.2); the originals in the stores, which carry the hashes, are what it is rebuilt from if the repository loses it, and how a testimony is found as an artifact to cite or to distrust: the `origins` entry a testimony is, is the one its parse equals, `subject` aside (§12).
 
 ### 9.4 The testimony contract
 
@@ -473,7 +471,7 @@ source:                                                                         
 context: the heat-loss procedure the office publishes                           # optional: why it was acquired
 ```
 
-`subject`, `producer.tool`, `producer.version`, `producer.at` and a non-empty `source` are required. Every other key — under `source`, under `producer`, or beside them — is the producer's own and is kept as written. A testimony about a container names the container; its constituents inherit it (§9.2.2).
+`subject`, `producer.tool`, `producer.version`, `producer.at` and a non-empty `source` are required. Every other key — under `source`, under `producer`, or beside them — is the producer's own and is kept as written. A testimony about a container names the container; its constituents inherit it (§9.2.2). The receipt is the tooling's own and has the shape §9.3 gives it, not this one.
 
 9.4.2 The contract fixes what every testimony says about *itself* — who made it, when, from where — and nothing about what the artifact is, which no one has to know at ingest. What a producer's extension means is found out afterwards, the way everything about an artifact is: a pass looks at the artifact and its origins; when the same artifact and the same extension have come in enough times, the instance mints a shape for them, and from then on the pattern matches on arrival (§11.5). No producer and no instance negotiate anything beyond the contract.
 
@@ -610,7 +608,7 @@ Everything in this section is knowledge of a format's own specification. None of
 
 ### 10.6 Hints
 
-10.6.1 A **hint op** guesses at what a rendered artifact shows at an address. A hint is never a surface: nothing binds to it, nothing stores it, and no check relies on it. It serves a reader in three ways: as proposed text the reader may stage, correct and sign (`propose`, §19.5); as the advisory the reading check lists where a signed reading differs from it (§13.4); and as the advisory that lists what a completeness attestation may have missed (§8.5). A shape's `select` over a rendered artifact proposes a tree the same way (§11.7.5).
+10.6.1 A **hint op** guesses at what a rendered artifact shows at an address. A hint is never a surface: nothing binds to it, nothing stores it, and no check relies on it. It serves a reader in three ways: as proposed text the reader may stage, correct and sign (`propose`, §19.5); as the advisory the reading check lists where a signed reading differs from it (§13.4); and as the advisory that lists what a completeness attestation may have missed (§8.5). A shape's `select` over a rendered artifact proposes a tree the same way (§11.7.5). A hint is not an op in the sense of §10.2.4: its output may vary with the recogniser, model or renderer on the host, and its version names the contract of its output, not a function of the bytes.
 
 10.6.2 The registered hint ops:
 
@@ -626,7 +624,7 @@ Everything in this section is knowledge of a format's own specification. None of
 
 10.6.3 **Drawn text only.** `pdf.words@1` reports text the PDF draws. A glyph drawn invisible — text render mode 3, the mode an OCR layer laid under a page image uses — contributes nothing. A page whose only text is invisible has no hint; it is read as a page.
 
-10.6.4 An HTML span runs from an element's start tag's first byte to its end tag's last byte, half-open; an element whose end is implied is flagged. Offsets in the hint text map to bytes by a prefix sum of the UTF-8 lengths of its code units.
+10.6.4 An HTML span runs from an element's start tag's first byte to its end tag's last byte, half-open; an element whose end is implied is flagged. The hint keeps, for every run of text it emits, the byte span of the source text it came from; an offset in the hint maps to a byte through its run, and the markup, inserted breaks and collapsed whitespace between runs map to nothing.
 
 10.6.5 **No op reads.** No op transcribes an image, proposes the layout of a page, or writes a reading. What a pass signs are readings; a hint that was not corrected is still the pass's reading, and the pass answers for it.
 
@@ -758,7 +756,7 @@ A pattern is a prefix, or a glob where `*` stands for any run of characters, anc
 - a selected node becomes a scope at its span (or its route), of `form`;
 - its parent is the nearest enclosing scope of the form named by `in`, else it is a top-level scope;
 - its position is byte order among its siblings, unless `ord` names another order the format defines;
-- a line with `field` mints no scope: it fills that field of the nearest enclosing scope of `form` with the node's text, or its `attr` (§10.7.4); a line with `reads` makes the node that scope's reading under the aspect;
+- a line with `field` mints no scope: it fills that field of the nearest enclosing scope of `form` with the node's text, or its `attr` (§10.7.4); a line with `reads` makes the node that scope's reading under the aspect, and the scope's surface is that node's, not its span's (§14.4.1);
 - a designator field is filled from the text `where` names;
 - `level` sets a heading's level.
 
@@ -772,7 +770,7 @@ A pattern is a prefix, or a glob where `*` stands for any run of characters, anc
 
 ### 11.8 The pin
 
-11.8.1 A pass pins the vocabulary it read against (`vocab`): a pass over a record pins the corpus's forms and shapes, a pass over an entity the graph's kinds and properties. A pin is `b3:` followed by the first 16 hex digits of the BLAKE3 of that vocabulary as loaded, an extension's terms together with its base's — the term files in name order, each preceded by its name and its lines sorted by identity, each line in canonical form (§6.4.2).
+11.8.1 A pass pins the vocabulary it read against (`vocab`): a pass over a record pins the corpus's forms and shapes, a pass over an entity the graph's kinds and properties. A pin is `b3:` followed by the first 16 hex digits of the BLAKE3 of that vocabulary as loaded, an extension's terms together with its base's — the term files in path order (`forms/` then `shapes/` for the corpus, `kinds/` then `properties/` for the graph, names in code-point order within each), each file preceded by its path and an LF, its lines sorted by identity, each line in canonical form (§6.4.2), LF-terminated.
 
 11.8.2 A change to a form or a shape makes every record pass pinned at an older hash **stale** for the scopes it reaches; a change to a kind or a property, every entity pass for the entities it reaches: derived, listed, re-run. Nobody edits a recipe.
 
@@ -797,7 +795,7 @@ The following are computed at read time. Writing any of them to a file is a chec
 | what an instance holds | its records (§5.7) |
 | a table's grid | its rows' readings in order (§8.4.7) |
 | the provenance chain | the record's `receipts` and `origins` and its containers' (§9.6) |
-| the testimony an instance holds; which `origins` entry a testimony is | the receipts in its stores, through the index (§5.7, §18.4); the entry its parse equals (§9.3.3) |
+| the testimony an instance holds; which `origins` entry a testimony is | the receipts in its stores, through the index (§5.7, §18.4); the entry its parse equals, `subject` aside (§9.3.3) |
 | a superseded pass | a pass no region resolves to (§8.5.1) |
 | testimony admitted | whether it follows the contract (§9.4) |
 | stale intrinsics | an `intrinsics` value by an older op version than the tool's for its mime |
@@ -811,7 +809,6 @@ The following are computed at read time. Writing any of them to a file is a chec
 | relevance | the `seek` rulings an artifact, scope or entity meets (§13.5) |
 | section closure, paragraph numbers | the tree |
 | the export, the remainder, the envelope | §15 |
-| sensitivity | the tier of the instance a line lives in |
 
 ## 13. Passes and rulings
 
@@ -819,13 +816,13 @@ The following are computed at read time. Writing any of them to a file is a chec
 
 13.1.1 A pass is one author and one verifier over one artifact or one entity; a container's parts are read under the container's pass. The author and the verifier MUST differ. A judgment exists only once both have signed; nothing unsigned is in the repository.
 
-13.1.2 In a record a pass is an entry of `passes`: `<id>: {by, verify, vocab, date, over?, attests?, note?}` (§8.5); in an entity's file it is a line `{"pred":"pass","val":{"id","by","verify","vocab","date","note"?}}`. `vocab` is the pin (§11.8). An id is `p<n>`, *n* one more than the highest on the subject, signed or open; an id is never reused, so a ruling or a graph name that carries one names one pass for good.
+13.1.2 In a record a pass is an entry of `passes`: `<id>: {by, verify, vocab, date, over?, attests?, note?}` (§8.5); in an entity's file it is a line `{"pred":"pass","val":{"id","by","verify","vocab","date","note"?}}`. `vocab` is the pin (§11.8). An id is `p<n>`, *n* one more than the highest on the subject, signed or open, in the instance that allocates it; a signed pass's id is never reused, so a ruling or a graph name that carries one names one pass for good, and an abandoned pass's id is free again, since nothing cites an unsigned pass.
 
 13.1.3 A correction pass swaps roles, so no correction is self-verified. A pass over a rendered artifact MAY start from a hint (§10.6) and from the tree its shape proposes (§11.7.5); what it signs is its own.
 
 ### 13.2 Staging and signing
 
-13.2.1 An open pass stages in its instance's host state (§5.6), outside the repository: readings, a tree, chrome rules, a shape, what it attests; claims for an entity.
+13.2.1 An open pass stages in its instance's host state (§5.6), outside the repository: readings, a tree, chrome rules, a shape, what it attests; claims for an entity. It records the content of the record or entity file it was opened against; signing against a file that has changed since is refused, and the pass is re-opened against the current one.
 
 13.2.2 Signing lays the staged readings over the stored ones by address, puts a staged tree in place of the stored tree whole with every reading adopted, writes the pass with what it covers and attests, and runs the record checks, the per-file checks and the per-form checks over the result (§17). Any blocking finding refuses the signature and leaves the staging untouched. The first signature over an asset that has no record of its own creates one with its intrinsics (§8.1.1). Abandoning a pass discards its staging.
 
@@ -841,7 +838,7 @@ The following are computed at read time. Writing any of them to a file is a chec
 
 13.4.1 The rendering is the authority for a reading, and no op sees it: a reading is checked by its verifier. Where the format gives a hint (§10.6), the **reading check** compares the reading's body with the hint at its address, after the scope's conventions and designators are applied, per aspect, and lists the divergence as an advisory for the verifier. It never blocks and is never resolved automatically; an `accept` ruling marks a divergence known (§13.5). A reading with no hint — of an image — is listed for inspection.
 
-13.4.2 **One normaliser** serves the reading check and binding (§14.4): Unicode NFKC; typographic quotes and dashes folded to ASCII; no-break space to space; whitespace runs collapsed. A second, **squashed** comparison removes whitespace and hyphens. Punctuation is content: a dropped period diverges.
+13.4.2 **One normaliser** serves the reading check and binding (§14.4): Unicode NFKC; typographic quotes and dashes folded to ASCII; no-break space to space; whitespace runs collapsed. A second, **squashed** comparison removes whitespace and hyphens; it serves the reading check alone and never binds a quote. Punctuation is content: a dropped period diverges.
 
 13.4.3 **text.** A formed scope's designator fields are removed from the hint's head or tail; footnote marks and bullets are treated as the scope's conventions declare; the bodies are compared token by token (longest common subsequence), then squashed.
 
@@ -851,7 +848,7 @@ The following are computed at read time. Writing any of them to a file is a chec
 
 ### 13.5 Rulings
 
-13.5.1 A **ruling** is how the owner steers an instance. It never asserts, supports or refutes a claim, is never evidence, and is never served outside the owner plane or projected into the graph (§15.3). It changes only what the instance relies on and what it works on next.
+13.5.1 A **ruling** is how the owner steers an instance. It never asserts, supports or refutes a claim, is never evidence, and is never projected into the graph (§15.3). It changes only what the instance relies on and what it works on next.
 
 13.5.2 Rulings are the lines of `rulings.jsonl`, each with its own `id`, written `by: owner` with a `date`:
 
@@ -861,13 +858,13 @@ The following are computed at read time. Writing any of them to a file is a chec
 
 | ruling | on | effect |
 |---|---|---|
-| `distrust` | a testimony (`ath://<id>`); an op's output at a scope (`ath://<id>?<at>` with the op); a pass (`ath://<id>#<pass-id>`) | everything bound through it is held, and becomes demand to re-derive, re-read or re-acquire; a distrusted testimony stays in provenance, marked. It says *do not rely on this*, never *this is false* |
+| `distrust` | a testimony (`ath://<blake3>`); an op's output at a scope (`ath://<blake3>?<at>` with the op); a pass (`ath://<blake3>#<pass-id>`) | everything bound through it is held, and becomes demand to re-derive, re-read or re-acquire; a distrusted testimony stays in provenance, marked. It says *do not rely on this*, never *this is false* |
 | `accept` | a finding: a reading-check divergence (a scope and the reading's revision) or a check finding | the finding is listed as known and no longer recurs; a re-read lapses an accepted divergence |
 | `seek` | a selection (forms, kinds, origins, an entity), optionally the owed properties or readings wanted | creates demand for what it names, and makes it **relevant**: every artifact, scope and entity that meets it — at ingest, at signing — is reported as meeting it |
 | `defer` | a demand item or a selection of them | orders the work after everything not deferred |
 | `decline` | a demand item or a selection of them | removes it from demand: what is declined is not pursued |
 
-13.5.3 `why` is the owner's note to themself. It is shown to the owner alone and is never evidence, never exported and never served on any other plane.
+13.5.3 `why` is the owner's note to themself: never evidence, never exported, never projected.
 
 13.5.4 A ruling lives in the instance that makes it. An extension holds its base's `distrust` and `accept` rulings too — they correct what both rely on — but not its base's `seek`, `defer` and `decline`, which steer only the base's work. An extension's owner MAY rule on its base's artifacts, passes and testimony. Revoking a ruling removes its line.
 
@@ -885,8 +882,8 @@ The following are computed at read time. Writing any of them to a file is a chec
 // graph/entities/tx/txn-corner-shop-48213.jsonl
 {"pred":"pass","val":{"by":"reader-a","date":"2026-01-12","id":"p1","verify":"reader-b","vocab":"b3:5c1e0a9d77f3b210"}}
 {"pred":"is","val":"transaction","pass":"p1"}
-{"pred":"total","val":"42.10","ev":[{"anchor":"ath://a48bf844?bbox=0.36,0.69,0.27,0.03&text","mode":"stated","quote":"42.10","binding":"b3:0de3a1c94b7e5f21"}],"pass":"p1"}
-{"pred":"merchant","val":"ath://corner-shop","ev":[{"anchor":"ath://a48bf844?bbox=0.34,0.13,0.31,0.04&text","mode":"stated","quote":"CORNER SHOP","binding":"b3:7a19c4e0d2b65f83"}],"qual":{"as":"CORNER SHOP"},"pass":"p1"}
+{"pred":"total","val":"42.10","ev":[{"anchor":"ath://a48bf844785ccd731e19ef0d8b4d00c8002c846919b4a052bac1066e988915bc?bbox=0.36,0.69,0.27,0.03&text","mode":"stated","quote":"42.10","binding":"b3:0de3a1c94b7e5f21"}],"pass":"p1"}
+{"pred":"merchant","val":"ath://corner-shop","ev":[{"anchor":"ath://a48bf844785ccd731e19ef0d8b4d00c8002c846919b4a052bac1066e988915bc?bbox=0.34,0.13,0.31,0.04&text","mode":"stated","quote":"CORNER SHOP","binding":"b3:7a19c4e0d2b65f83"}],"qual":{"as":"CORNER SHOP"},"pass":"p1"}
 ```
 
 14.1.3 Splitting an entity, merging two or renaming one is a verb (`entity split|merge|rename`, §19.5) that rewrites every reference in the instance at once. An extension cannot rename its base's entities; on a repin it is told of the base's.
@@ -900,8 +897,9 @@ The following are computed at read time. Writing any of them to a file is a chec
 | predicate | meaning |
 |---|---|
 | `is` | the entity is of this kind |
-| `same_as` | two entities are one; while it is `confirmed` the merge is demand for `entity merge` (§14.6) |
-| `supersedes` | an artifact or entity replaces another; anchors carry across as §7.8 says |
+| `same-as` | two entities are one; while it is `confirmed` the merge is demand for `entity merge` (§14.6) |
+| `manifests` | the entity — a document, a work, a page — is manifested by the artifact `val` names (`ath://<blake3>`): a screenshot and a PDF of one page, a capture and its re-capture. Artifacts that manifest one entity are one source (§14.5), and anchors carry across between them as §7.8 says |
+| `supersedes` | an entity replaces another |
 | `challenges` | names a claim by its identity and content hash, with evidence against it |
 | `presence` | `none`: the thing is not attested where it would be |
 
@@ -911,8 +909,8 @@ The following are computed at read time. Writing any of them to a file is a chec
 
 | key | meaning |
 |---|---|
-| `anchor` | `ath://<id>?<at>[&<aspect>]` — tight: the smallest scope the quote lies in — on a record with no tree, the reading; on a structured artifact without a shape, the span — one cell of a row (`&col=M`), never wider; a route through a container canonicalises to the constituent |
-| `quote` | verbatim from the reading (a rendered artifact) or the surface (a structured one) the binding names; an elided composite (`…`) or a typographic re-take is refused; `prefix` and `suffix` disambiguate a repeated string and extend a long one |
+| `anchor` | `ath://<blake3>?<at>[&<aspect>]` — tight: the smallest scope the quote lies in — on a record with no tree, the reading; on a structured artifact without a shape, the span — one cell of a row (`&col=M`), never wider; a route through a container canonicalises to the constituent |
+| `quote` | absent on an `observed` entry (§14.4.1); otherwise verbatim from the reading (a rendered artifact) or the surface (a structured one) the binding names; an elided composite (`…`) or a typographic re-take is refused; `prefix` and `suffix` disambiguate a repeated string and extend a long one |
 | `mode` | how the entry supports the value: `stated`, `inferred`, `reported`; `reason` is required when it is not `stated` |
 | `binding` | what the quote is in, and the revision it was bound at (§14.4) |
 
@@ -925,33 +923,36 @@ The following are computed at read time. Writing any of them to a file is a chec
 14.4.1 `binding` is one of:
 
 - `b3:<16 hex>` — a reading's revision (§6.5): the reading at the anchor's scope and aspect, as it was when the pass bound it;
-- `derived:<op>@<version>[ <argument>]` — on a structured artifact, the surface op yields the quote's surface;
+- `derived:<op>@<version>[ <argument>]` — on a structured artifact, the surface op yields the quote's surface: of the node the scope reads where its shape names one (§11.7.1), else of the scope's span;
+- `observed` — no quote: the entry attests what the region at the anchor shows and nothing it prints (§8.3.5), with `mode: inferred` and a `reason`; it is bound while its artifact resolves, since bytes never change, and no revision holds it;
 - `field:<name>` — a field of the scope at the anchor, or `intrinsics:<key>` a value of the artifact's intrinsics;
 - `null` — held.
 
-14.4.2 An entry is **bound** when its anchor resolves to a scope, its binding yields a body there, and its quote (with prefix and suffix) is in that body under the normaliser (§13.4.2), plain or squashed. It is **held** when its binding is `null`, when the reading's revision is no longer the one it names, or when it relies on a distrusted testimony, op output or pass (§13.5). It is **flagged** otherwise, with the reason. A held entry whose quote still lies in the body at its anchor is a **re-bind owed**: a later pass adds its own line for the claim, bound at the current revision (§6.3.1), and the claim is bound through that line; the earlier line stays as its pass signed it.
+14.4.2 An entry is **bound** when its anchor resolves to a scope, its binding yields a body there, and its quote (with prefix and suffix) is in that body under the normaliser (§13.4.2) — never squashed, which serves the reading check alone. It is **held** when its binding is `null`, when the reading's revision is no longer the one it names, or when it relies on a distrusted testimony, op output or pass (§13.5). It is **flagged** otherwise, with the reason. A held entry whose quote still lies in the body at its anchor is a **re-bind owed**: a later pass adds its own line for the claim, bound at the current revision (§6.3.1), and the claim is bound through that line; the earlier line stays as its pass signed it.
 
 14.4.3 Three links are checked separately: claim to reading (the quote is in the bound body), reading to rendering (the verifier, with the reading check's advisories), value to quote (the verifier's judgment).
 
-14.4.4 **Standing is derived, never written.** A property the graph declares `authority: true` — with range `artifact` — names an artifact as an authoritative source for the entity that carries it (`hl-02` `source` `ath://5e6e497d`). A bound entry anchored in artifact A and supporting a claim of entity X is **authoritative** while X carries a `confirmed` authority claim naming A; otherwise it is **independent**. An authority claim's own status is computed without the authority it would confer: A cannot vouch for itself.
+14.4.4 **Standing is derived, never written.** A property the graph declares `authority: true` — with range `artifact` — names an artifact as an authoritative source for the entity that carries it (`hl-02` `source` `ath://5e6e497d8e163eb4b1cc7330087e3dd86545858d0b28af49fbf1e5b13f4746cf`). A bound entry anchored in artifact A and supporting a claim of entity X is **authoritative** while X carries a `confirmed` authority claim naming A; otherwise it is **independent**. Standing is grounded: authority is conferred in rounds from none — each round confers only the authority of claims `confirmed` in the round before, until a round changes nothing — so A cannot vouch for itself, and a cycle of authority claims that confirm only one another confers nothing.
 
 ### 14.5 Status, derived
 
+A claim's status is the first row that holds. A challenge **stands** when it has a bound entry and is **upheld** when its own status is `confirmed`; two artifacts are **one source** when they manifest one entity (§14.2.2); the **best** bound entry is the first by mode in the order `stated`, `inferred`, `reported`.
+
 | status | when |
 |---|---|
-| `confirmed` | a bound authoritative entry, or bound entries from two distinct artifacts, and no standing challenge |
-| `provisional` · `inferred` · `reported` | the bar is not met; the mode of the best bound entry decides — `stated` gives `provisional` |
+| `refuted` | no bound entry and an upheld challenge; it stays, so it is not proposed again |
 | `disputed` | a challenge stands |
 | `conflicting` | a bound sibling claim disagrees on a `functional` property |
+| `confirmed` | a bound authoritative entry, or bound entries from two artifacts that are not one source |
+| `provisional` · `inferred` · `reported` | some entry is bound; the mode of the best decides — `stated` gives `provisional` |
 | `unsupported` | no bound entry — a hypothesis is a claim in this state |
-| `refuted` | unsupported with an upheld challenge; it stays, so it is not proposed again |
 
 ### 14.6 Demand
 
 Derived, never stored:
 
 - a held entry is a reading owed over its region, or, where its quote still lies there, a re-bind owed (§14.4.2);
-- a `confirmed` `same_as` is a merge owed (`entity merge`, §14.1.3); on a base's entity, demand on the base;
+- a `confirmed` `same-as` is a merge owed (`entity merge`, §14.1.3); on a base's entity, demand on the base;
 - an unmet `owes` of an entity's kind is a search;
 - an unsupported claim is an acquisition;
 - a stale pass is a re-run;
@@ -969,21 +970,21 @@ The owner orders demand with `defer` and removes it with `decline` (§13.5); not
 
 15.1.2 Its header names: the authority (the bytes); every pass and its vocabulary pin; the accepted divergences; the chrome; and the **remainder** — for a rendered artifact, the readings outside every scope and, where a hint exists, the hint's words outside every scope and chrome; for a structured one, the characters outside every unit and declared chrome, of the total.
 
-15.1.3 It is lossless back to the bytes and never breaks on a new term.
+15.1.3 Every character it emits is a reading's, at the address that prefixes it, so the proxy is regenerated from the record exactly and traced to the bytes through the readings. It never breaks on a new term.
 
 ### 15.2 Provenance
 
-An artifact's provenance chain (§9.6) is exported beside the proxy on the owner plane, and on another plane only where its testimony belongs to an instance that plane serves.
+An artifact's provenance chain (§9.6) is exported beside the proxy.
 
 ### 15.3 The graph
 
-15.3.1 Every term and entity line, and every reading and scope of a record, maps to N-Quads statements — a scope to one per form, field and position, a reading to one per aspect — and back, byte-identical; rulings are never projected. Artifacts and their scopes are `ath://<id>` and `ath://<id>?<at>`; entities and kinds are `ath://<name>`; forms are `ath:form/<name>`, shapes `ath:shape/<name>` and properties `ath:p/<name>`. The line's own predicate is `ath:p/<pred>` for a claim and `ath:pred/<pred>` otherwise, its payload a literal typed `ath:json`, and its graph its authorship — `ath://<subject>#<pass-id>` for a pass, `ath:by/<op>` for an op, `ath:vocab` for a term's lines.
+15.3.1 Every term and entity line, and every reading and scope of a record, maps to N-Quads statements — a scope to one per form, field and position, a reading to one per aspect — and back, byte-identical; rulings are never projected. Artifacts and their scopes are `ath://<blake3>` and `ath://<blake3>?<at>`; entities and kinds are `ath://<name>`; forms are `ath:form/<name>`, shapes `ath:shape/<name>` and properties `ath:p/<name>`. The line's own predicate is `ath:p/<pred>` for a claim and `ath:pred/<pred>` otherwise, its payload a literal typed `ath:json`, and its graph its authorship — `ath://<subject>#<instance-id>/<pass-id>` for a pass, the id of the instance whose file holds it, `ath:by/<op>` for an op, `ath:vocab` for a term's lines.
 
 15.3.2 A term's `aligns` IRIs are asserted as its class or property in the projection; `is` projects as `rdf:type`.
 
-## 16. Planes and publication
+## 16. Serving and publication
 
-16.1 Serving an instance serves it and everything it builds on, filtered by plane. The **public plane** serves the `public` instances of the chain and the claims whose derived status is `confirmed`. An **audience plane** serves those plus every instance whose tier the audience's grant names, under the same status filter unless the grant names another. The **owner plane** serves every instance of the chain, every status, the rulings, provenance, demand and every finding.
+16.1 Serving an instance serves it and everything it builds on, whole: every line, every status, the rulings, provenance, demand and every finding. What is shared is decided by which instance is served — a base is served without its extensions (§4.5) — and by nothing else. A consumer that wants only `confirmed` claims filters on the status it is served.
 
 16.2 Read-only is normative. A consumer reads entities, materialises artifacts only for what the entities' claims cite, never cites a generated view, and pins the reproducibility tuple — the commit of every instance in the chain and the vocabulary pin — when it freezes a build.
 
@@ -1001,7 +1002,6 @@ A failing record check blocks a pass from signing; an advisory is listed and nev
 | **unit** | every scope whose form reads an aspect has a reading under that aspect at its own `at`; every reading's body is under `text`, `cells` or `tex` |
 | **tree** | every `at` in the tree is an address the format has, and no two scopes share one; every form named is a form |
 | **coverage** | a formed record has no reading outside a scope (§8.4.3); advisory: the hint's words outside every reading, or every scope, and chrome |
-| **citation** | every anchor resolves; every quote is in its bound body or surface; a bound revision that no longer exists is flagged |
 
 ### 17.2 Vocabulary use, forms, testimony and files
 
@@ -1009,9 +1009,10 @@ A failing record check blocks a pass from signing; an advisory is listed and nev
 |---|---|
 | **sorts** | a scope's `form` names forms; a stored `shape` names a shape; `is` names a kind; a claim's `pred` is a property, and its `val` fits the property's range |
 | **standing** | no evidence entry carries a standing; an authority claim names an artifact the instance holds |
+| **citation** | over the lines an entity pass signs, and by `verify` over every line: every anchor resolves; every quote is in its bound body or surface. It never runs at a record's signing: a correction that moves a quote out of its body holds the entries that cited it (§14.4.2) and is reported, never refused |
 | **per form** | `reads` is satisfied; required fields are present; designators are found where `where` and `pattern` say, in the reading or beside it; `expects` is met (soft); the form's `check` lines hold; the reading check per aspect (advisory); a stored `shape` is one that matches |
-| **per testimony** | every entry of `origins` follows the contract |
-| **per file** | no undeclared field; no derivable value stored; no revision stored in a record; keys in the record's order, lines sorted; every reading and scope covered by a pass; every pin known; `intrinsics`, `receipts` and `origins` only by the tool; no stale `intrinsics` (soft); every id and name resolves to one subject |
+| **per testimony** | every entry of `origins` follows the contract, `subject` aside |
+| **per file** | no undeclared field; no derivable value stored; no revision stored in a record; keys in the record's order, lines sorted; every reading and scope covered by a pass; every pin known; `intrinsics`, `receipts` and `origins` only by the tool; no stale `intrinsics` (soft); every hash and name resolves to one subject |
 
 ### 17.3 Form checks
 
@@ -1034,6 +1035,7 @@ Custody keeps artifacts and testimony and finds them by BLAKE3. The repository n
 1. **A hash resolves or fails.** Given a BLAKE3, custody produces the artifact through whichever route holds it, or reports that none does. No caller names a store.
 2. **Every read is verified.** The BLAKE3 is computed over the bytes as they stream; a mismatch fails that route and the next is tried. No driver is trusted.
 3. **Residence is derived.** No line in the repository records where an artifact resides. The index is a belief about the stores, refreshed by inventory, transfer and verification.
+4. **No machine removes a copy.** Reconcile evicts from the local store alone; a copy anywhere else is removed by an owner's verb, one at a time.
 4. **Automation only adds.** Custody copies and verifies on its own. It removes a copy only from a store declared evictable, and only after verifying, at that moment, that the artifact's policies hold without it (§18.6.3). Every other removal is an owner-gated verb.
 
 ### 18.2 Stores
@@ -1063,7 +1065,7 @@ evict: { above: 90% }          # only on a store that may shed copies (§18.6.3)
 
 18.2.2 How a host reaches a store is not the instance's: `$XDG_CONFIG_HOME/athenaeum/access.yaml` maps each store id to the driver's configuration on that host — a path, an rclone remote, a reference to credentials. Credentials never enter a repository.
 
-18.2.3 Every host has a **local store**: a managed store at `$XDG_DATA_HOME/athenaeum/`, tagged `local` and declared evictable. Ingest writes new artifacts and their testimony there first.
+18.2.3 Every host has a **local store**: a managed store at `$XDG_DATA_HOME/athenaeum/`, tagged `local` and whatever else the host's `access.yaml` declares of it, and evictable. Ingest writes new artifacts and their testimony there first; it is a placement like any other, so ingest refuses an artifact whose policies confine it to stores the local one is not, and resolution caches nothing there that is confined elsewhere.
 
 18.2.4 An observed tree, like the local store, holds artifacts without persisting them: a file in it may be edited, moved or deleted by anyone. A policy counts no copy in an observed tree.
 
@@ -1075,7 +1077,7 @@ evict: { above: 90% }          # only on a store that may shed copies (§18.6.3)
 
 ### 18.4 The index
 
-18.4.1 Each host keeps one index, at `$XDG_STATE_HOME/athenaeum/index.sqlite`, shared by every instance on the host. Per store and BLAKE3 it records the state — `claimed` (an inventory says so), `verified` (custody hashed it, with the instant) or `missing` (looked for and absent) — with the size and the inventory generation. For an observed tree it records each path with its size and mtime, and any link to a managed copy. From every receipt in a store it records the testimony delivered, by hash and subject, so a testimony's id resolves (§7.1.2) and an instance's testimony is enumerable (§5.7).
+18.4.1 Each host keeps one index, at `$XDG_STATE_HOME/athenaeum/index.sqlite`, shared by every instance on the host. Per store and BLAKE3 it records the state — `claimed` (an inventory says so), `verified` (custody hashed it, with the instant) or `missing` (looked for and absent) — with the size and the inventory generation. For an observed tree it records each path with its size and mtime, and any link to a managed copy. From every receipt in a store it records the testimony delivered, by hash and subject, so an instance's testimony is enumerable (§5.7).
 
 18.4.2 The index persists, because rebuilding it needs every store's inventory and, for verification, the artifacts themselves. Deleting it is always safe; custody re-inventories.
 
@@ -1085,7 +1087,7 @@ evict: { above: 90% }          # only on a store that may shed copies (§18.6.3)
 
 18.5.2 For every file the scanner records what was observed — the host, the path, the size, the mtime and birth time, the generation — as testimony in the contract's shape (§9.4): the file's hash as `subject`, the scanner as `producer`, the host and path under `source`. The scanner prepares it in advance; it enters the instance only when the file is ingested.
 
-18.5.3 Ingesting a file from an observed tree writes its receipt and keeps the scanner's record as a testimony of it, and places the artifact in a managed store: by the first of the tree's `links` methods the filesystem supports, else by copy. A **reflink** is an independent copy-on-write clone. A **hardlink** shares the observed file's inode, so an edit made in place to the observed file changes the managed copy; verification then finds it corrupt and reconcile restores it from another copy. A linked copy shares physical storage with its source and is counted as one copy.
+18.5.3 Ingesting a file from an observed tree writes its receipt and keeps the scanner's record as a testimony of it, and places the artifact in a managed store: by the first of the tree's `links` methods the filesystem supports, else by copy. A **reflink** is an independent copy-on-write clone. A **hardlink** shares the observed file's inode, so an edit made in place to the observed file changes the managed copy; verification then finds it corrupt and reconcile restores it from another copy. A linked copy shares physical storage with its source and is counted as one copy; until an independent copy is verified the artifact is unpersisted, and that copy is the first thing reconcile makes.
 
 18.5.4 Custody reports, per observed tree: artifacts also held by a managed store (with how each is linked) — candidates for clean-up outside the instance; held artifacts held only there — at risk; files the instance does not hold — candidates for ingest.
 
@@ -1105,7 +1107,7 @@ confine: { all: ["country:ca"] }
 verify: 90d
 ```
 
-18.6.2 **Selection** matches labels the instance computes for each artifact and testimony it holds: its shape and that shape's `refines` chain (`shape`), the producers of its `origins`, by `producer.tool` (`origin`), the kinds of the entities that cite it (`kind`), the instance's tier (`tier`), its mime and its size; `testimony: true` selects testimony. Every policy whose selection matches applies; an extension's policies apply together with its base's.
+18.6.2 **Selection** matches labels the instance computes for each artifact and testimony it holds: its shape and that shape's `refines` chain (`shape`), the producers of its `origins`, by `producer.tool` (`origin`), the kinds of the entities that cite it (`kind`), its mime and its size; `testimony: true` selects testimony. Every policy whose selection matches applies; an extension's policies apply together with its base's.
 
 18.6.3 **Requirements.** A requirement holds when at least `copies` copies sit on stores whose tags satisfy `where` (`all`, `any`, `not`), spread across that many distinct values of the `distinct` key. A copy counts once per physical copy — routes through containers count (a constituent is held wherever its container is), linked copies sharing storage count once, observed trees and missing copies never count. `confine` restricts every copy to stores whose tags satisfy it; a copy outside is a finding and reconcile never places one there. `verify` is how recent a verification a copy needs to count; an older one is a finding and is re-verified.
 
@@ -1113,7 +1115,7 @@ verify: 90d
 
 ### 18.7 Reconcile
 
-18.7.1 **Status** lists every finding — unpersisted, below a requirement, outside a confinement, verification overdue, a store over capacity. **Plan** lists the actions that would resolve them. **Reconcile** performs them: it copies from the cheapest verified route to stores chosen by requirement, confinement, free space and declared cost; it re-verifies what is overdue; and it evicts from an evictable store above its fill level only copies whose policies hold without it, verified at that moment. Reconcile is idempotent and resumable: an interrupted run leaves every completed transfer in place and none half-written.
+18.7.1 **Status** lists every finding — unpersisted, below a requirement, outside a confinement, verification overdue, a store over capacity. **Plan** lists the actions that would resolve them. **Reconcile** performs them: it copies from the cheapest verified route to stores chosen by requirement, confinement, free space and declared cost; it re-verifies what is overdue; and it evicts from this host's local store, when it is above its fill level, only copies whose policies hold without them, verified at that moment. Reconcile removes a copy from no other store: every other removal is `custody remove` (§9.7), one copy at a time, confirmed at a terminal. Reconcile is idempotent and resumable: an interrupted run leaves every completed transfer in place and none half-written.
 
 18.7.2 A store that is unavailable — a removable disk unplugged, a remote unreachable — is skipped and reconciled when it next answers.
 
@@ -1152,7 +1154,7 @@ Each host MAY run one custody daemon, `athd`, serving every instance on the host
 
 ### 19.3 Writes
 
-19.3.1 Every write is atomic. An artifact or a testimony is written under a temporary name, verified against its BLAKE3 and renamed into place; a line file is rewritten under a temporary name and renamed. A verb that is interrupted leaves the instance as it was, or with every write it completed whole. A delivered file is placed in the local store by copy, or from an observed tree by link (§18.5.3); the tool never removes it from where it was delivered.
+19.3.1 Every write is atomic. An artifact or a testimony is written under a temporary name, verified against its BLAKE3 and renamed into place; a line file is rewritten under a temporary name and renamed. A verb that writes several files — a rename, a merge, a repin, a reshard — journals them in the instance's host state first and renames them last; an interrupted verb is completed or undone from the journal before any verb runs on the instance again, so no reader sees a partial rewrite. A verb that writes one file is interrupted before it or after it. A delivered file is placed in the local store by copy, or from an observed tree by link (§18.5.3); the tool never removes it from where it was delivered.
 
 19.3.2 Mutating verbs take named locks in the instance's host state (§5.6); a held lock is `busy`. Every mutating verb appends its actor, arguments and outcome to the instance's history there.
 
@@ -1178,7 +1180,7 @@ Each host MAY run one custody daemon, `athd`, serving every instance on the host
 | verb | tier | contract |
 |---|---|---|
 | `instance init [--extends <path>]` · `instance show` · `instance check` | write · read · read | init writes `athenaeum.yaml` and the empty directories — for a standalone instance with the terms §11.9 names, for an extension pinned to its base's current commit; show prints the instance and what it builds on; check verifies the chain, its pins and its configuration |
-| `instance repin` | admin | moves the base pin to the base's current commit, rewrites ids that now collide (§7.1.3), and reports what the move makes stale (§4.3) |
+| `instance repin` | admin | moves the base pin to the base's current commit and reports what the move makes stale (§4.3) |
 | `instance reshard` | admin | moves files to the shard widths `athenaeum.yaml` declares (§5.2); no line changes |
 | `ingest <file…> [--testimony <file>…]` | write | sniffs; admits or refuses delivered testimony before anything is placed; places the artifact and its testimony in the local store; writes the receipt; writes the artifact's record with its projection, or adds the receipt and the origins to it (§8.1). Writes nothing judged |
 | `holdings` | read | what the instance holds: its records, each with its stage, receipts and origins (§5.7) |
@@ -1196,9 +1198,10 @@ Each host MAY run one custody daemon, `athd`, serving every instance on the host
 | `entity split` · `merge` · `rename` | write | §14.1.3 |
 | `verify [<subject>…]` | read | bindings, status, demand, stale passes |
 | `check [<subject>…] [--all]` | read | §17 |
+| `vocab add\|edit\|remove <vocabulary> <term> [<line>…]` | admin | write or remove a term's lines, the vocabulary check run first (§17.4); confirmed at a terminal (§13.5.5) |
 | `vocab list` · `show` · `rules` · `pin` · `check` | read | the forms, shapes, kinds and properties; a term's lines; a scope's effective rules; the two pins; §17.4 |
 | `export markdown <subject>` · `export graph [<subject>]` | read | §15 |
-| `serve` | read | the planes over HTTP (§16) |
+| `serve` | read | the instance and its chain over HTTP (§16) |
 | `store add <name>` · `store list` | write · read | declare a store and write its id into it; the stores and their state |
 | `custody inventory [<store>]` · `custody verify [<store>]` | write | refresh the index from inventories or scanner manifests; re-hash copies |
 | `custody status` · `custody plan` | read | findings; the actions that would resolve them (§18.7) |

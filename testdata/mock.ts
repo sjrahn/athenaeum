@@ -107,18 +107,8 @@ function recordYaml(r: Rec): string {
   return out;
 }
 
-// ── ids (§7.1): 8 hex digits, 16 where 8 collide, the first received keeping 8 ──────────────────────────────────
-const ids = new Map<string, string>();
-function idOf(full: string): string {
-  const known = ids.get(full);
-  if (known) return known;
-  const short = full.slice(0, 8);
-  const taken = [...ids.values()].includes(short);
-  const id = taken ? full.slice(0, 16) : short;
-  ids.set(full, id);
-  return id;
-}
-const A = (full: string) => `ath://${idOf(full)}`;
+// ── subjects (§7.1): the full hash, everywhere it is stored; a prefix is a terminal shortcut only ─────────────────
+const A = (full: string) => `ath://${full}`;
 
 // ── the host: local store (artifacts/, testimony/), access, per-instance state ─────────────────────────────────
 const HOST = join(OUT, "host");
@@ -190,8 +180,7 @@ class Instance {
       write(join(this.dir, { forms: "corpus/forms", shapes: "corpus/shapes", kinds: "graph/kinds", properties: "graph/properties" }[v], `${name}.jsonl`), jsonl(ls));
     }
     for (const [full, doc] of this.records) {
-      const id = idOf(full);
-      write(join(this.dir, "corpus/records", id.slice(0, 2), `${id}.yaml`), recordYaml(pinned([doc])[0] as Rec));
+      write(join(this.dir, "corpus/records", full.slice(0, 2), `${full}.yaml`), recordYaml(pinned([doc])[0] as Rec));
     }
     for (const [n, ls] of this.entities) write(join(this.dir, "graph/entities", n.slice(0, 2), `${n}.jsonl`), jsonl(pinned(ls)));
     for (const [n, s] of this.stores) write(join(this.dir, "stores", `${n}.yaml`), yaml(s));
@@ -290,16 +279,14 @@ async function ingest(inst: Instance, bytes: Uint8Array, name: string, testimony
     const t = await blake3Hex(testimony);
     keep("testimony", t, testimony);
     delivered.push({ hash: t, name: `${name}.testimony.yaml` });
-    origins.push(admit(testimony, full)); // the producer's object, verbatim
-    idOf(t);
+    const { subject: _subject, ...origin } = admit(testimony, full);
+    origins.push(origin); // the producer's object, verbatim but for `subject`, which the record's own hash states (§8.2.1)
   }
   const received = new Date(Date.parse(`${DATE}T09:00:00Z`) + 60_000 * clock++).toISOString().replace(".000", "");
   const receipt = new TextEncoder().encode(`${JSON.stringify(sortKeys({ actor, artifact: full, instance: inst.config.id, name, received, testimony: delivered }))}\n`);
   const r = await blake3Hex(receipt);
   keep("testimony", r, receipt);
-  idOf(full);
   const { val, parts } = await intrinsics(bytes, name);
-  for (const p of parts) idOf(p.blake3);
   inst.records.set(full, { intrinsics: val, receipts: [{ actor, received, name }], ...(origins.length ? { origins } : {}) });
   return { full, parts, testimony: delivered[0]?.hash };
 }
@@ -366,7 +353,7 @@ const ev = (anchor: string, quote: string, binding: string, extra: J = {}) => ({
 
 // ══ reference — public, standalone ════════════════════════════════════════════════════════════════════════════════
 rmSync(OUT, { recursive: true, force: true });
-const ref = new Instance(join(OUT, "reference"), { id: "3b8f1d2e-9a4c-4f6b-8e2d-5c7a1b9e0f43", name: "reference", tier: "public", shard: { records: 2, entities: 2 } });
+const ref = new Instance(join(OUT, "reference"), { id: "3b8f1d2e-9a4c-4f6b-8e2d-5c7a1b9e0f43", name: "reference", shard: { records: 2, entities: 2 } });
 for (const f of ["header", "heading", "cover-page", "label", "paragraph", "definition", "definition-list", "row", "caption", "list", "list-item", "equation", "figure", "table-of-contents", "table", "footnote", "end-mark"])
   copyForm(ref, f);
 ref.term("value", { pred: "definition", val: "a short value printed apart from running text" }, { pred: "reads", val: "text" });
@@ -537,7 +524,7 @@ ref.entity(
 );
 const tex = Object.entries(procRead).find(([, r]) => r.tex)!;
 ref.stores.set("mirror", { id: "8c2e4a1f-0b3d-4c5e-9f7a-2d1e6b8c4a90", driver: "rclone", role: "managed", tags: ["object", "online", "country:gb", "city:glasgow"], encryption: "none" });
-ref.policies.set("public-twice", { select: { tier: "public" }, require: { copies: 2, where: { not: ["local"] }, distinct: "city" }, verify: "180d" });
+ref.policies.set("captures-twice", { select: { origin: "page-capture" }, require: { copies: 2, where: { not: ["local"] }, distinct: "city" }, verify: "180d" });
 ref.rulings.push(
   { id: "r1", pred: "seek", val: { select: { kind: "residence" }, owes: ["council-tax-band"], why: "compare running costs before viewing" }, date: DATE, by: "owner" },
   { id: "r2", pred: "accept", val: { on: `${P}?${tex[0]}`, rev: await rev(tex[1].tex), why: "two-dimensional maths; the hint is in baseline order" }, date: DATE, by: "owner" },
@@ -547,10 +534,8 @@ ref.rulings.push(
 const home = new Instance(join(OUT, "household"), {
   id: "0f4c2a8e-7b1d-4e5a-9c3f-6d2e8b1a4c70",
   name: "household",
-  tier: "private",
   extends: { path: "../reference", commit: "5f2a9c1e7d3b40a86e1f2c9b7d4a3e5f60812c7d" },
   shard: { records: 2, entities: 2 },
-  audiences: { family: ["private"] },
 });
 home.shape(
   "drive-export",
@@ -658,7 +643,7 @@ home.entity(
 home.stores.set("nas", { id: "6b1f0c52-5d0e-4a8e-9c1e-2f0d6f9b2a71", driver: "rclone", role: "managed", tags: ["hdd", "online", "country:ca", "city:winnipeg"], encryption: "none", capacity: "8TB" });
 home.stores.set("offsite", { id: "e3a7c9d1-4f2b-4b6e-8a0c-7d5e1f3b9c26", driver: "rclone", role: "managed", tags: ["object", "online", "country:ca", "city:toronto", "private-ok"], encryption: "client" });
 home.stores.set("phone-share", { id: "a9d4e6f2-1c3b-4e8a-b7d5-0f2c6e9a1b38", driver: "local", role: "observed", tags: ["phone", "local"], links: ["reflink", "hardlink"] });
-home.policies.set("household-in-canada", { select: { tier: "private" }, require: { copies: 2, where: { not: ["local"] }, distinct: "city" }, confine: { all: ["country:ca"] }, verify: "90d" });
+home.policies.set("exports-in-canada", { select: { origin: "google-drive-export" }, require: { copies: 2, where: { not: ["local"] }, distinct: "city" }, confine: { all: ["country:ca"] }, verify: "90d" });
 home.policies.set("testimony-twice", { select: { testimony: true }, require: { copies: 2, where: { all: ["private-ok"] } } });
 home.rulings.push(
   { id: "r1", pred: "seek", val: { select: { kind: "berth" }, owes: ["occupant"], why: "which berth is ours next season" }, date: DATE, by: "owner" },
