@@ -8,8 +8,8 @@
 
 import { Database } from "bun:sqlite";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { buildRegistry } from "@ath/cli/main.ts";
 import { loadAccess, openIndex } from "@ath/custody";
 import { pace } from "@ath/custody/drivers.ts";
@@ -420,6 +420,28 @@ describe("the service unit, bandwidth, availability", () => {
     const kept = new Database(path);
     expect(kept.query("SELECT count(*) AS n FROM copies").get()).toEqual({ n: 1 });
     kept.close();
+    // a reader drops an older one only under the index lock: busy while a writer holds it, rebuilt once it is free
+    set("1");
+    const lock = join(a.h, "state", "athenaeum", "locks", "index.lock");
+    mkdirSync(dirname(lock), { recursive: true });
+    writeFileSync(lock, JSON.stringify({ pid: process.ppid, until: new Date(Date.now() + 60_000).toISOString() }));
+    expect((await a.run(["custody", "status"])).code).toBe(75);
+    const held = new Database(path);
+    expect(held.query("SELECT count(*) AS n FROM copies").get()).toEqual({ n: 1 });
+    held.close();
+    rmSync(lock);
+    expect((await a.run(["custody", "status"])).code).not.toBe(75);
+    expect(existsSync(lock)).toBe(false);
+    const after = openIndex(path);
+    expect(after.copies("h")).toEqual([]);
+    after.putCopy(copy);
+    after.close();
+    // a verb that holds the index lock rebuilds under the lock it holds
+    set("1");
+    expect((await a.run(["custody", "inventory"])).code).not.toBe(75);
+    const own = openIndex(path);
+    expect(own.copies("h")).toEqual([]);
+    own.close();
   });
 
   test("the request client: no socket is no daemon", async () => {

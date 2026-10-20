@@ -294,6 +294,7 @@ export async function execute(
   try {
     if (def.meta.locks?.length)
       held = acquireLocks((s) => (s === "repository" ? instance!.state : ctx.host.state), def.meta.locks, ctx.wall.now());
+    ctx.held = def.meta.locks ?? [];
     if (instance && journalPending(instance.state)) {
       const lock = def.meta.locks?.includes("repository") ? null : acquireLocks(() => instance.state, ["repository"], ctx.wall.now());
       try {

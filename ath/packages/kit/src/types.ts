@@ -137,6 +137,8 @@ export interface KitCtx {
   confirm?: (prompt: string) => Promise<string | null>;
   /** `ath <words>`, for messages. */
   prog: string;
+  /** The locks the running verb holds, set while it runs. */
+  held?: readonly LockScope[];
 }
 
 export interface RunResult<D> {

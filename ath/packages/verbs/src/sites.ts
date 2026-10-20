@@ -2,7 +2,6 @@
 // (`access.yaml`), the host's local store, the policies of the chain, and for each artifact and testimony the
 // instance holds its labels (§18.6.2) and every copy the index believes in, constituents held where their containers
 // are (§18.6.3). Custody is handed all of it; it knows no record.
-import { join } from "node:path";
 import {
   type CopyView,
   type CustodyIndex,
@@ -15,7 +14,6 @@ import {
   loadPolicies,
   loadStores,
   localDriver,
-  openIndex,
   openLocalStore,
   type Policy,
   type Site,
@@ -28,6 +26,7 @@ import { refinesChain } from "@ath/engine/vocab/load.ts";
 import type { Vocabulary } from "@ath/engine/vocab/terms.ts";
 import { AthError } from "@ath/kit/errors.ts";
 import type { KitCtx } from "@ath/kit/types.ts";
+import { custodyIndex } from "./context.ts";
 
 export interface Sites {
   inst: Instance;
@@ -47,7 +46,7 @@ export interface Sites {
 
 export function openSites(ctx: KitCtx, inst: Instance, index?: CustodyIndex): Sites {
   const store = openLocalStore(ctx.host.data);
-  const idx = index ?? openIndex(join(ctx.host.state, "index.sqlite"));
+  const idx = index ?? custodyIndex(ctx);
   const access = loadAccess(ctx.host.config);
   const roots = chain(inst).map((x) => ({ root: x.root, name: x.config.name }));
   const localDecl: StoreDecl = {

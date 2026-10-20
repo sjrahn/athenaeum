@@ -88,19 +88,42 @@ export interface CustodyIndex {
   close(): void;
 }
 
-export function openIndex(path: string): CustodyIndex {
+/**
+ * Open the index at `path`. `lock` takes the host's `index` lock (null when the caller already holds it); it is taken
+ * only to drop an index of an older schema, so a reader never drops one beside a writer.
+ */
+export function openIndex(path: string, lock?: () => { release(): void } | null): CustodyIndex {
   mkdirSync(dirname(path), { recursive: true });
   const db = new Database(path, { create: true, strict: true });
   db.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;");
   // the index is a belief, always safe to delete (§18.4.2): one of an older schema is dropped and re-inventoried; a
   // newer tool's is left as it is, since dropping it would undo what a newer daemon keeps
-  const hasMeta = db.query<{ n: number }, []>("SELECT count(*) AS n FROM sqlite_master WHERE name = 'meta'").get()!.n > 0;
-  const found = hasMeta ? db.query<{ value: string }, []>("SELECT value FROM meta WHERE key = 'schema'").get()?.value : undefined;
-  if (Number(found) > Number(VERSION)) {
-    db.close();
-    throw new AthError("CONFIG", `${path}: index schema ${found}; this tool knows ${VERSION} — a newer ath keeps this index`);
+  const schema = () => {
+    const hasMeta = db.query<{ n: number }, []>("SELECT count(*) AS n FROM sqlite_master WHERE name = 'meta'").get()!.n > 0;
+    const found = hasMeta ? db.query<{ value: string }, []>("SELECT value FROM meta WHERE key = 'schema'").get()?.value : undefined;
+    if (Number(found) > Number(VERSION)) {
+      db.close();
+      throw new AthError("CONFIG", `${path}: index schema ${found}; this tool knows ${VERSION} — a newer ath keeps this index`);
+    }
+    return hasMeta && found !== VERSION;
+  };
+  if (schema()) {
+    let held: { release(): void } | null | undefined;
+    try {
+      held = lock?.();
+    } catch (e) {
+      db.close();
+      throw e;
+    }
+    try {
+      // another process may have rebuilt it while this one waited
+      if (schema()) for (const t of TABLES) db.exec(`DROP TABLE IF EXISTS ${t}`);
+      db.exec(SCHEMA);
+      db.run("INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', ?)", [VERSION]);
+    } finally {
+      held?.release();
+    }
   }
-  if (hasMeta && found !== VERSION) for (const t of TABLES) db.exec(`DROP TABLE IF EXISTS ${t}`);
   db.exec(SCHEMA);
   db.run("INSERT OR IGNORE INTO meta (key, value) VALUES ('schema', ?)", [VERSION]);
   const delivered = (receipt: string) =>
