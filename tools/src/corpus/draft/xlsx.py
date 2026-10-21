@@ -126,6 +126,8 @@ def draft(
         fields["named_ranges"] = complexity["named_ranges"]
     fields["has_pivot_tables"] = complexity["has_pivot_tables"]
     fields["has_macros"] = complexity["has_macros"]
+    if title_cell := _read_title_cell(xlsx_path):
+        fields["title_cell"] = title_cell
 
     segs, issues = _draft_sheet_sections(
         xlsx_path, complexity, detector, algos_for_atom("text", fingerprint)
@@ -438,6 +440,30 @@ def _sheet_formula_metadata(xlsx_path: Path) -> dict[str, dict[str, Any]]:
 
 
 # ---------- frontmatter extraction ---------- #
+
+
+def _read_title_cell(xlsx_path: Path) -> str:
+    """The workbook's printed title, when it prints one: the first populated row of the
+    FIRST worksheet, when that row holds exactly one populated cell and it is text — the
+    shape of a title row (`A1: "Grid Support Solar Inverter List (Full Data)"`). A first
+    row with several cells is a header or data, never a title; a lone number or date is
+    not one either. Verbatim (`transforms.xlsx.cell_text`), whitespace-trimmed; `""` when
+    the workbook has no such row. Declared `role: title` after the docProps `title`, so an
+    author-set title still wins (spec §4.2.3 — the artifact's own words, never composed)."""
+    wb = _openpyxl().load_workbook(xlsx_path, read_only=True, data_only=True)
+    try:
+        if not wb.worksheets:
+            return ""
+        for row in wb.worksheets[0].iter_rows(min_row=1, min_col=1, values_only=True):
+            populated = [v for v in row if v is not None and cell_text(v).strip()]
+            if not populated:
+                continue
+            if len(populated) == 1 and isinstance(populated[0], str):
+                return populated[0].strip()
+            return ""
+        return ""
+    finally:
+        wb.close()
 
 
 def _read_sheet_names(zf: zipfile.ZipFile) -> list[str]:

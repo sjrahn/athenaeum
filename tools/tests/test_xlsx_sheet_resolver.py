@@ -284,3 +284,42 @@ def test_verify_checks_a_cell_anchor_on_a_drafted_record_at_the_cell(tmp_path, b
     else:
         assert res.verified == 0 and len(res.errors) == 1
         assert "derived surface" in res.errors[0]
+
+
+# ---------- the printed title ---------- #
+
+
+def test_a_lone_text_first_row_is_the_derived_title(tmp_path, book):
+    root = _corpus(tmp_path)
+    rid = _stage(root, book)
+    _draft(root, rid)
+    post = records.load(paths.record_path(root, rid))
+    assert (records.artifact_block(post) or {}).get("fields", {}).get("title_cell") == \
+        "Inverter list (title row, not a header)"
+    assert records.title_for(post, root) == "Inverter list (title row, not a header)"
+
+
+def test_a_header_first_row_is_no_title_and_docprops_wins(tmp_path):
+    from corpus.draft import xlsx as xlsx_draft
+
+    header = tmp_path / "header.xlsx"
+    wb = openpyxl.Workbook()
+    wb.active.append(["Name", "Qty"])
+    wb.save(header)
+    assert xlsx_draft._read_title_cell(header) == ""
+
+    number = tmp_path / "number.xlsx"
+    wb = openpyxl.Workbook()
+    wb.active["C2"] = 42
+    wb.save(number)
+    assert xlsx_draft._read_title_cell(number) == ""
+
+    titled = tmp_path / "titled.xlsx"
+    wb = openpyxl.Workbook()
+    wb.active["A1"] = "Printed title"
+    wb.properties.title = "Author title"
+    wb.save(titled)
+    root = _corpus(tmp_path)
+    rid = _stage(root, titled)
+    _draft(root, rid)
+    assert records.title_for(records.load(paths.record_path(root, rid)), root) == "Author title"

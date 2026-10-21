@@ -180,7 +180,7 @@ normalization:
 
     ## Workbook title
 
-    The record's title is derived, never authored: the artifact field `title` (`<dc:title>` from `docProps/core.xml`, `role: title`) supplies it when the author set one. Frontmatter `title` is retired (spec §4.2.3) — do not write one, and do not compose a title from the sheet names or the workbook's purpose. When `docProps` carries no title the record has none. A title printed in the cells (a cover cell like `A1: "Grid Support Solar Inverter List (Full Data)"`) is content: transcribe it in its sheet's segments like any other cell.
+    The record's title is derived, never authored, from two `role: title` artifact fields in order: `title` (`<dc:title>` from `docProps/core.xml`, when the author set one), then `title_cell` (the first worksheet's lone-text first row — a printed title like `A1: "Grid Support Solar Inverter List (Full Data)"` — which the drafter attests verbatim). Frontmatter `title` is retired (spec §4.2.3): do not write one, and do not compose a title from the sheet names or the workbook's purpose. When neither field holds a value the record has no title. Either way the title cell is still content: transcribe it in its sheet's segments like any other cell. A record attested before `title_cell` existed picks it up on `corpus reattest`.
 
     ## Faithfulness reminder
 
@@ -228,6 +228,18 @@ extended_fields:
     role: title
     source: file_metadata
     description: '`<dc:title>` from `docProps/core.xml`, if set by the author.'
+  title_cell:
+    type: string
+    required: false
+    role: title
+    source: file_metadata
+    description: |-
+      The title the workbook prints in its cells, verbatim: the first populated row of the
+      first worksheet, when that row holds exactly one populated cell and it is text (a
+      title row, e.g. `A1: "Grid Support Solar Inverter List (Full Data)"`). Absent when
+      the first populated row has several cells (a header or data) or a lone non-text
+      value. Declared after `title`, so an author-set docProps title wins (spec §4.2.3:
+      the artifact's own words, resolved mechanically, never composed).
   application:
     type: string
     required: false
