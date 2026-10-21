@@ -257,3 +257,30 @@ def test_verify_resolves_a_cell_range_anchor_on_an_unformed_record(tmp_path, boo
     else:
         assert res.verified == 0 and len(res.errors) == 1
         assert "quote not found verbatim in the derived surface" in res.errors[0]
+
+
+@pytest.mark.parametrize(
+    ("quote", "ok"),
+    # "Maker 1833" is on the record (row 1840's band body) — but not at A1841
+    [("Maker 1834", True), ("Maker 1833", False)],
+)
+def test_verify_checks_a_cell_anchor_on_a_drafted_record_at_the_cell(tmp_path, book, quote, ok):
+    """A drafted record's stored segments are bands; a single-cell anchor inside one is
+    finer than any stored address, so it resolves through the resolver — never passes on
+    a record-wide match of a quote that sits in some other row (ledger §13.2.3)."""
+    from ledger.corpora import CorpusJoin, RegisteredCorpus
+    from ledger.verify import verify_ledger
+
+    root = _corpus(tmp_path)
+    rid = _stage(root, book)
+    _draft(root, rid)
+    ledger = root.parent / "ledger"
+    _fact(ledger, rid, _addr(_BIG, "A1841:A1841"), quote)
+    join = CorpusJoin([RegisteredCorpus("corpus", root, private=False)])
+    res = verify_ledger(ledger, join, {}, stamp=False)
+    assert res.unverifiable == 0 and res.record_scoped == 0, res.notes
+    if ok:
+        assert not res.errors and res.verified == 1 and res.derived_resolved == 1
+    else:
+        assert res.verified == 0 and len(res.errors) == 1
+        assert "derived surface" in res.errors[0]

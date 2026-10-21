@@ -893,22 +893,23 @@ def verify_ledger(
                                          "segment text — quote unverifiable")
                         bad(skey)
                         continue
-                    if status == "unchecked" and not _quote_found(str(quote),
-                                                                  content.full_text):
-                        # (1.5) the anchor addresses content the record's own
-                        # markdown doesn't carry (a zip member via ?path=, a
-                        # time range, a `prop=`/`row=` derivation …) — before
-                        # calling that unverifiable, resolve it through the
-                        # corpus resolver itself (the same path `corpus
-                        # resolve` uses): a derivation-op axis in the anchor
-                        # may mechanically produce the cited text even though
-                        # the record's stored body never carries it.
-                        resolved, derived_text, reason, pins = False, "", "", {}
-                        if content.corpus_root is not None:
-                            resolved, derived_text, reason, pins = _derived_resolution(
-                                content.corpus_root, uri, content.media_type,
-                                params, derived_cache,
-                            )
+                    # (1.5, §13.2.3) an anchor the record's stored segments can't scope
+                    # (a zip member via ?path=, a `prop=`/`row=` derivation, a worksheet
+                    # cell range finer than any stored segment …) resolves through the
+                    # corpus resolver itself — the same path `corpus resolve` uses — and
+                    # the quote checks against THAT output. Tried before any record-wide
+                    # match: a quote that merely occurs somewhere else in the record
+                    # (another row of a 3 MB worksheet) must not pass for one at its
+                    # anchor. Only an anchor the resolver can't turn into text falls back
+                    # to the record-wide search below.
+                    resolved, derived_text, reason, pins = False, "", "", {}
+                    if status == "unchecked" and content.corpus_root is not None:
+                        resolved, derived_text, reason, pins = _derived_resolution(
+                            content.corpus_root, uri, content.media_type,
+                            params, derived_cache,
+                        )
+                    if status == "unchecked" and (resolved or not _quote_found(
+                            str(quote), content.full_text)):
                         if resolved:
                             # strip_markup=False: derived_text is raw resolver
                             # output (JSON/CSV/vcard/chat-export bytes), never

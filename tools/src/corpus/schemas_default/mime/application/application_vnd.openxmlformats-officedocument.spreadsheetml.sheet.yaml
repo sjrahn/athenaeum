@@ -124,7 +124,7 @@ normalization:
     Per-sheet signals — read each section's first-pass output:
 
     - A sheet rendered with a populated cell-grid body is static data — refine it into `text/data-table` segment(s).
-    - A sheet rendered with an empty body and a `format-loss` issue stating the reason (N formula cells, external references, chart-only, empty) is a live / chart / empty sheet — refine it into `text/data-table-dynamic` marker(s) and/or the section's own `description`, per "Multi-segment worksheets" and "Chart sheets vs embedded charts" above.
+    - A sheet rendered with an empty body and a `format-loss` issue stating the reason (N formula cells, external references, chart-only, empty) is a live / chart / empty sheet — refine it into `text/data-table-dynamic` marker(s), plus transcribed chart-text segments for a chart sheet, per "Multi-segment worksheets" and "Chart sheets vs embedded charts" above.
 
     Workbook-level signals — read frontmatter:
 
@@ -173,17 +173,18 @@ normalization:
 
     The shape for a chart-dashboard sheet:
 
-    - On the section's own `description`, name each chart region and what its chart shows — title + axes + series, extracted from `<c:title>` / `<a:t>` elements in `xl/charts/chartN.xml` (e.g. "Example A: project-vs-baseline carbon-stock trajectory, project year on X, t CO2e on Y"). Do not invent values.
+    - Transcribe each label cell as its own small `text` segment at its own `bbox`, verbatim (per "Multi-segment worksheets" above) — not as a misleading 2x1 table.
+    - Transcribe each chart's title, axis labels, and series names — the literal `<c:title>` / `<a:t>` text in `xl/charts/chartN.xml` — as a small `text/data-table` (or `text`) segment beside its label. Transcribe, never summarize: there is no section or segment `description` to narrate a chart in (retired, spec §4.3.2.2). Do not invent values.
     - Transcribe any real backing series data that is literally present as a `text/data-table` segment.
-    - The chart visual itself (axes drawn, series colors, gridlines, exact points) is a deferred loss — the resolver cannot yet rasterize `xl/charts/chartN.xml`. Do not mint an `image/chart` segment/embed; the section `description` is the record of what the charts show until rasterization lands.
+    - The chart visual itself (axes drawn, series colors, gridlines, exact points) is a deferred loss — the resolver cannot yet rasterize `xl/charts/chartN.xml`. Do not mint an `image/chart` segment/embed; the transcribed chart text is the record of what the charts say until rasterization lands.
 
-    ## Promoting workbook title
+    ## Workbook title
 
-    `title` (from `docProps/core.xml`) is the artifact's title candidate when set, but it is frequently unset — in which case the record carries no title candidate and the frontmatter `title` stays empty through draft. Author it from the workbook's actual purpose, derived from the cover sheet content, sheet names, or the methodology context (promote `title` when it is set and meaningful). Faithfulness applies — do not invent a title the workbook itself does not support.
+    The record's title is derived, never authored: the artifact field `title` (`<dc:title>` from `docProps/core.xml`, `role: title`) supplies it when the author set one. Frontmatter `title` is retired (spec §4.2.3) — do not write one, and do not compose a title from the sheet names or the workbook's purpose. When `docProps` carries no title the record has none. A title printed in the cells (a cover cell like `A1: "Grid Support Solar Inverter List (Full Data)"`) is content: transcribe it in its sheet's segments like any other cell.
 
     ## Faithfulness reminder
 
-    Cell values the drafter rendered with `data_only=True` are cached computed values, not formulas. For a static-data sheet they are faithful (the displayed numbers Excel would show) and belong in a `text/data-table` segment. For a live-calculation sheet, the region is a body-empty `text/data-table-dynamic` marker described on its header (the snapshot values are not transcribed) and the computation summary goes on the section's own `description` — never in a segment body, and never paraphrase a cached number as if it were an input.
+    Cell values the drafter rendered with `data_only=True` are cached computed values, not formulas. For a static-data sheet they are faithful (the displayed numbers Excel would show) and belong in a `text/data-table` segment. For a live-calculation sheet, the region is a body-empty `text/data-table-dynamic` marker, permanent (the snapshot values are not transcribed, and there is no header or section `description` to summarize the computation in — retired, spec §4.3.2.2). Never paraphrase a cached number as if it were an input. What the calculation does is ledger knowledge, asserted as a claim citing the sheet.
 extended_fields:
   sheet_names:
     type: list[string]
