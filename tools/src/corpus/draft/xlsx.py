@@ -7,10 +7,19 @@ OOXML spreadsheets are zip containers of XML parts. The drafter:
   (`data_only=False`) counts formula cells per sheet; the zip member list surfaces
   external links, pivot tables, macros, and defined names.
 - Emits, per worksheet, a leading STRUCTURAL byte-mark carrying the sheet's own name
-  verbatim (spec §4.3.2.3) followed by one rendered segment — both addressed `sheet=<name>`
+  verbatim (spec §4.3.2.3) followed by its rendered content — both addressed `sheet=<name>`
   (a normalizer carving a sub-region of the content appends `&bbox=<A1-range>`). Flat, no
   `Section` (a section binds a FORM, never a generic drafter's, §7.8/§4.3.2.1). Static-data
-  sheets get a markdown table fingerprinted via simhash. Sheets whose own cells carry
+  sheets get a markdown table fingerprinted via simhash. A sheet longer than `_ROW_BAND`
+  rows is drafted whole, as consecutive row BANDS — one segment each, addressed
+  `sheet=<name>&bbox=A<first>:<last-col><last>` with real sheet row numbers — so no row
+  is dropped and no one segment body grows without bound. `_ROW_CAP` is only a
+  body-size ceiling (rows past it stay citable through the resolver's `bbox=`).
+- Tables carry a BLANK header row and every sheet row as data: which row (if any) names
+  the columns is a normalizer judgment (a 14-row preamble, a two-row header), never a
+  drafter guess. Cells are unpadded; each cell's text is `transforms.xlsx.cell_text` —
+  the same reading the resolver renders for `sheet=…&bbox=…`, so a quote verifies
+  against either surface. Sheets whose own cells carry
   formulas or external references — plus chart-only and empty sheets — get a body-empty
   segment and an address-scoped `format-loss` issue (spec §4.3.3.1 shape; reconciliation #2
   vs the reference's CarbonAi `format_loss`). Per-sheet *classification* stays the
@@ -37,6 +46,7 @@ from corpus.fingerprint import algos_for_atom, text_fingerprints
 from corpus.functional_uri import quote_value
 from corpus.segments import _STRUCTURAL as _STRUCTURAL_ATOM
 from corpus.segments import Segment
+from corpus.transforms.xlsx import cell_text, col_letters
 
 _NS = {
     "main": "http://schemas.openxmlformats.org/spreadsheetml/2006/main",
@@ -47,7 +57,12 @@ _NS = {
     "ep": "http://schemas.openxmlformats.org/officeDocument/2006/extended-properties",
 }
 
-_ROW_CAP = 1000
+#: Rows per drafted band — a sheet longer than this is drafted as consecutive
+#: `bbox`-addressed band segments rather than one segment.
+_ROW_BAND = 1000
+#: Body-size ceiling (rows) for one worksheet; past it the draft stops with a
+#: `format-loss` issue. The rows stay citable through the resolver's `sheet=…&bbox=…`.
+_ROW_CAP = 100_000
 _XLSX_SCHEMA_ID = "application/application_vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
@@ -160,33 +175,41 @@ def _draft_sheet_sections(
     return segments, issues
 
 
-def _sheet_segments(sheet_title: str, child: Segment) -> list[Segment]:
+def _sheet_segments(sheet_title: str, child: Segment | list[Segment]) -> list[Segment]:
     """A worksheet's flat segment pair (spec §4.3.2.3, §7.8/§4.3.2.1 — 3.12
     reconciliation, #153): a leading STRUCTURAL byte-mark carrying the sheet's own name
     verbatim, followed by its rendered content. No `Section` — a section binds a FORM,
     never a generic drafter's. Both share the sheet's own address (`sheet=<name>`): the
     mark says a sheet named X sits here, the segment renders what its cells hold. Shared
-    by the xlsx and xls drafters (the xls drafter has no chart-sheet case)."""
+    by the xlsx and xls drafters (the xls drafter has no chart-sheet case). `child` may be
+    a list — a banded sheet's row-band segments; the mark always carries the bare sheet
+    address."""
+    children = child if isinstance(child, list) else [child]
     return [
-        Segment(atom=_STRUCTURAL_ATOM, address=child.address, level=1, body=sheet_title),
-        child,
+        Segment(
+            atom=_STRUCTURAL_ATOM,
+            address=_segment_address(sheet_title),
+            level=1,
+            body=sheet_title,
+        ),
+        *children,
     ]
 
 
 def _worksheet_segment(
     ws, *, formula_count: int, uses_external_ref: bool, detector: str, text_algos: list[str]
-) -> tuple[Segment, list[dict[str, Any]]]:
-    """Render a worksheet to a Segment + any address-scoped issues."""
+) -> tuple[list[Segment], list[dict[str, Any]]]:
+    """Render a worksheet to its content Segment(s) + any address-scoped issues."""
     address = _segment_address(ws.title)
 
     if formula_count > 0 or uses_external_ref:
-        return _empty_segment(address), [
+        return [_empty_segment(address)], [
             _formula_issue(ws.title, address, formula_count, uses_external_ref, detector)
         ]
 
-    body, truncated = _render_worksheet(ws, _ROW_CAP)
-    if not body.strip():
-        return _empty_segment(address), [_empty_sheet_issue(ws.title, address, detector)]
+    bands, truncated = _render_worksheet_bands(ws, _ROW_CAP, _ROW_BAND)
+    if not bands:
+        return [_empty_segment(address)], [_empty_sheet_issue(ws.title, address, detector)]
 
     issues: list[dict[str, Any]] = []
     if truncated:
@@ -203,13 +226,16 @@ def _worksheet_segment(
                 row_cap=_ROW_CAP,
             )
         )
-    seg = Segment(
-        atom="text",
-        address=address,
-        perceptual=text_fingerprints(body, text_algos),
-        body=body,
-    )
-    return seg, issues
+    segs = [
+        Segment(
+            atom="text",
+            address=address if bbox is None else f"{address}&bbox={bbox}",
+            perceptual=text_fingerprints(body, text_algos),
+            body=body,
+        )
+        for bbox, body in bands
+    ]
+    return segs, issues
 
 
 def _chartsheet_segment(cs, detector: str) -> tuple[Segment, list[dict[str, Any]]]:
@@ -269,89 +295,96 @@ def _segment_address(sheet_title: str) -> str:
 # ---------- worksheet → markdown ---------- #
 
 
+def _trim_rows(rows: list[list[str]]) -> list[list[str]]:
+    """Trailing all-blank rows dropped, every row cut/padded to the last populated
+    column (openpyxl's used range routinely overshoots it). `[]` when nothing is
+    populated."""
+    while rows and not any(cell for cell in rows[-1]):
+        rows.pop()
+    last_col = max((i for r in rows for i, cell in enumerate(r) if cell), default=-1)
+    if last_col < 0:
+        return []
+    width = last_col + 1
+    return [(r + [""] * width)[:width] for r in rows]
+
+
 def _rows_to_markdown(rows: list[list[str]], truncated: bool) -> tuple[str, bool]:
     """Shared worksheet-rows → markdown-table tail for the xlsx + xls drafters. `rows` are
     already `_fmt_cell`'d strings, with leading all-blank rows skipped and the row cap
     applied by the caller (those steps are iteration-specific). Trims trailing blank rows
-    AND trailing all-blank columns, synthesizes a header (column letters where the first
-    row is blank), and emits the table. Returns `(body, truncated)`."""
-    while rows and not any(cell for cell in rows[-1]):
-        rows.pop()
-    if not rows:
-        return ("", truncated)
-    width = max(len(r) for r in rows)
-    for r in rows:
-        if len(r) < width:
-            r.extend("" for _ in range(width - len(r)))
-    last_col = max((i for r in rows for i, cell in enumerate(r) if cell), default=-1)
-    if last_col < 0:
-        return ("", truncated)
-    width = last_col + 1
-    rows = [r[:width] for r in rows]
-    header = rows[0]
-    if all(not cell for cell in header):
-        header = [_col_label(i) for i in range(width)]
-    else:
-        header = [cell or _col_label(i) for i, cell in enumerate(header)]
-    return (_emit_markdown_table(header, rows[1:]), truncated)
+    AND trailing all-blank columns and emits the table (blank header — see
+    `_emit_markdown_table`). Returns `(body, truncated)`."""
+    rows = _trim_rows(rows)
+    return (_emit_markdown_table(rows) if rows else "", truncated)
 
 
-def _render_worksheet(ws, row_cap: int) -> tuple[str, bool]:
-    """Stream cells via `iter_rows(values_only=True)` → markdown table. Returns
-    `(body, truncated)`."""
+def _render_worksheet_bands(
+    ws, row_cap: int, band: int
+) -> tuple[list[tuple[str | None, str]], bool]:
+    """Stream cells via `iter_rows(values_only=True)` → markdown band table(s). Returns
+    `([(bbox, body), …], truncated)`: one `(None, body)` for a sheet of at most `band`
+    rows (the segment keeps the bare `sheet=<name>` address), else one entry per band
+    with its A1 range — real sheet row numbers, the sheet-wide last populated column."""
     rows: list[list[str]] = []
+    first_row = 0
     truncated = False
-    for row_values in ws.iter_rows(values_only=True):
-        if len(rows) >= row_cap:
-            truncated = True
-            break
+    for row_number, row_values in enumerate(
+        ws.iter_rows(min_row=1, min_col=1, values_only=True), start=1
+    ):
         formatted = [_fmt_cell(v) for v in row_values]
         if not rows and not any(cell for cell in formatted):
             continue
+        if len(rows) >= row_cap:
+            truncated = True
+            break
+        if not rows:
+            first_row = row_number
         rows.append(formatted)
-    return _rows_to_markdown(rows, truncated)
+    rows = _trim_rows(rows)
+    if not rows:
+        return [], truncated
+    if len(rows) <= band:
+        return [(None, _emit_markdown_table(rows))], truncated
+    last_col = col_letters(len(rows[0]))
+    out: list[tuple[str | None, str]] = []
+    for start in range(0, len(rows), band):
+        chunk = rows[start:start + band]
+        r0 = first_row + start
+        r1 = r0 + len(chunk) - 1
+        out.append((f"A{r0}:{last_col}{r1}", _emit_markdown_table(chunk)))
+    return out, truncated
+
+
+def _render_worksheet(ws, row_cap: int) -> tuple[str, bool]:
+    """The whole sheet (up to `row_cap` rows) as ONE markdown table — the unbanded
+    reading. Returns `(body, truncated)`."""
+    bands, truncated = _render_worksheet_bands(ws, row_cap, row_cap)
+    return (bands[0][1] if bands else "", truncated)
 
 
 def _fmt_cell(value: Any) -> str:
-    """Format one cell value as a markdown-table-safe string."""
-    if value is None:
-        return ""
-    if isinstance(value, bool):
-        return "TRUE" if value else "FALSE"
-    if isinstance(value, (datetime, date, time)):
-        return value.isoformat()
-    if isinstance(value, (int, float)):
-        return str(value)
-    s = str(value).replace("\\", "\\\\").replace("|", "\\|")
+    """One cell as a markdown-table-safe string: `transforms.xlsx.cell_text` (the
+    resolver's reading of the same cell) with `\\`/`|` escaped and line breaks as `<br>`
+    — both of which quote verification reads back as the cell's own text."""
+    s = cell_text(value)
+    if isinstance(value, (bool, int, float, datetime, date, time)) or value is None:
+        return s
+    s = s.replace("\\", "\\\\").replace("|", "\\|")
     return s.replace("\r\n", "<br>").replace("\n", "<br>").replace("\r", "<br>")
 
 
-def _col_label(index: int) -> str:
-    """Excel-style column label for a 0-indexed position (0 → 'Col A')."""
-    n = index
-    letters = ""
-    while True:
-        letters = chr(ord("A") + (n % 26)) + letters
-        n = n // 26 - 1
-        if n < 0:
-            break
-    return f"Col {letters}"
-
-
-def _emit_markdown_table(header: list[str], data_rows: list[list[str]]) -> str:
-    """Emit a GFM table with padded column widths (renderers ignore the padding)."""
-    cols = len(header)
-    widths = [len(h) for h in header]
-    for row in data_rows:
-        for i, cell in enumerate(row[:cols]):
-            widths[i] = max(widths[i], len(cell))
+def _emit_markdown_table(rows: list[list[str]]) -> str:
+    """Emit a GFM table: a BLANK header row (which row names the columns, if any, is the
+    normalizer's call — never guessed here), then every row as data. Unpadded — padding
+    is raw-source decoration every renderer ignores, and one long cell would pad a whole
+    column."""
+    cols = len(rows[0]) if rows else 0
 
     def line(cells: list[str]) -> str:
-        return "| " + " | ".join(cells[i].ljust(widths[i]) for i in range(cols)) + " |"
+        return "| " + " | ".join(cells) + " |"
 
-    sep = "| " + " | ".join("-" * max(3, widths[i]) for i in range(cols)) + " |"
-    out = [line(header), sep]
-    out.extend(line(row[:cols] + [""] * (cols - len(row))) for row in data_rows)
+    out = [line([""] * cols), "| " + " | ".join(["---"] * cols) + " |"]
+    out.extend(line((row + [""] * cols)[:cols]) for row in rows)
     return "\n".join(out)
 
 

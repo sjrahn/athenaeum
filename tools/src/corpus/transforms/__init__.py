@@ -22,6 +22,9 @@ Kinds:
 - `"csv"`     — `pathlib.Path` (the artifact `.csv`; `row=<N>` selects one data row)
 - `"csvrow"`  — `transforms.csv.CsvRowRef` (a selected row; renders to raw text on demand,
   like `pdfpage`; `col=<name-or-index>` narrows to one field)
+- `"xlsx"`    — `pathlib.Path` (the artifact `.xlsx`; `sheet=<name>` selects one worksheet)
+- `"xlsxsheet"` — `transforms.xlsx.XlsxSheetRef` (a selected worksheet; renders its used
+  range to text on demand; `bbox=<A1-range>` narrows to a cell range)
 - `"bytes"`   — `bytes` (a raw member, cached verbatim)
 """
 
@@ -231,4 +234,5 @@ from . import pdf as _pdf  # noqa: E402, F401
 from . import tar as _tar  # noqa: E402, F401
 from . import vcard as _vcard  # noqa: E402, F401
 from . import video as _video  # noqa: E402, F401
+from . import xlsx as _xlsx  # noqa: E402, F401
 from . import zip as _zip  # noqa: E402, F401

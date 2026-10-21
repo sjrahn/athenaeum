@@ -66,6 +66,13 @@ _FFMPEG_ENGINE_PARAMS: frozenset[str] = frozenset({"time_range", "format", "scen
 # of an already-resolved (and potentially already-cited, `ledger.md` §13.2) result.
 _CSV_OP_PARAMS: frozenset[str] = frozenset({"row", "col"})
 
+# The spreadsheet worksheet op (§6.2 `bbox=` on a spreadsheet, §12.11 `sheet=`) — a
+# deterministic read of the workbook's cached cell values, versioned the same way
+# (`transforms.xlsx.ENGINE_VERSION`). Pinned on `sheet` alone: every spreadsheet reading
+# starts there, and `bbox`/`crop` are polymorphic param names the image crop shares, so
+# pinning them would mislabel an image crop with the spreadsheet engine.
+_XLSX_OP_PARAMS: frozenset[str] = frozenset({"sheet"})
+
 # The vcard property op (§6.2 `prop=`) is likewise a deterministic pure parse (never an
 # external engine), versioned the same way (`transforms.vcard.ENGINE_VERSION`).
 _VCARD_OP_PARAMS: frozenset[str] = frozenset({"prop"})
@@ -395,6 +402,10 @@ def resolve(
         from .transforms import csv as csv_tf
 
         version_label = csv_tf.ENGINE_VERSION
+    elif any(k in _XLSX_OP_PARAMS for k, _ in parsed.params):
+        from .transforms import xlsx as xlsx_tf
+
+        version_label = xlsx_tf.ENGINE_VERSION
     elif any(k in _VCARD_OP_PARAMS for k, _ in parsed.params):
         from .transforms import vcard as vcard_tf
 
@@ -521,6 +532,7 @@ def resolve(
             working = im.copy()
     elif initial_kind in (
         "video", "audio", "epub", "zip", "tar", "mbox", "vcard", "message", "csv",
+        "xlsx",
     ):
         # The working value is the artifact path itself: ffmpeg and the transcriber stream
         # from disk rather than loading the whole media into memory; the epub `spine`
@@ -577,6 +589,13 @@ def resolve(
         # to the page image.
         if current_kind == "csvrow":
             working = working.raw
+            current_kind = "text"
+        # A terminal `xlsxsheet` (bare `sheet=<name>`) renders the worksheet's used range to
+        # text — the same contract, so a stored segment's `address: sheet=<name>` resolves.
+        if current_kind == "xlsxsheet":
+            from .transforms import xlsx as xlsx_tf
+
+            working = xlsx_tf.render_sheet(working)
             current_kind = "text"
         # A terminal `htmlel` (bare `el=N`) materializes to its concrete output: an `<img>`
         # to a PIL image (cache PNG), a media/attachment carrier to raw bytes (cache the
@@ -1427,7 +1446,9 @@ def _init_member_working_value(kind: str, path: Path) -> Any:
         with Image.open(path) as im:
             im.load()
             return im.copy()
-    if kind in ("video", "audio", "epub", "zip", "tar", "mbox", "vcard", "message", "csv"):
+    if kind in (
+        "video", "audio", "epub", "zip", "tar", "mbox", "vcard", "message", "csv", "xlsx",
+    ):
         return path
     raise NotImplementedError(f"member working kind {kind!r} not yet supported")
 
@@ -1637,6 +1658,9 @@ def _predict_final_kind(parsed: furi.ParsedURI, initial_kind: str) -> str:
     # A terminal `csvrow` renders to raw text (see resolve()).
     if current == "csvrow":
         current = "text"
+    # A terminal `xlsxsheet` renders its used range to text (see resolve()).
+    if current == "xlsxsheet":
+        current = "text"
     return current
 
 
@@ -1804,6 +1828,10 @@ def engine_version_for_param(key: str) -> str | None:
         from .transforms import csv as csv_tf
 
         return csv_tf.ENGINE_VERSION
+    if key in _XLSX_OP_PARAMS:
+        from .transforms import xlsx as xlsx_tf
+
+        return xlsx_tf.ENGINE_VERSION
     if key in _VCARD_OP_PARAMS:
         from .transforms import vcard as vcard_tf
 
