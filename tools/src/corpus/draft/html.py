@@ -94,6 +94,7 @@ from corpus.transforms.html import (
     element_ordinals,
     iter_element_children,
     largest_img_src,
+    markup,
     parse_data_uri,
     path_root,
     total_element_count,
@@ -304,7 +305,7 @@ def draft(
 ) -> DrafterResult:
     raw = html_path.read_bytes()
     text_algos = algos_for_atom("text", fingerprint)
-    soup = BeautifulSoup(raw, "html.parser")
+    soup = BeautifulSoup(markup(raw), "html.parser")
 
     fields: dict[str, Any] = {}
     if v := _title(soup):

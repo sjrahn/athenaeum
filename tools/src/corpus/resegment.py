@@ -75,7 +75,7 @@ from bs4 import BeautifulSoup, Tag
 
 from corpus import records, segments
 from corpus.reseat import JUDGEABLE_WORDS, bare_words, reads_off_the_member
-from corpus.transforms.html import EL_PARSER_ID, element_path, path_root
+from corpus.transforms.html import EL_PARSER_ID, element_path, markup, path_root
 
 #: Touch identifier stamped on every record this migration rewrites.
 TOUCH_ID = "migrate.resegment-88"
@@ -283,7 +283,7 @@ def plan_record(
     if not artifact_path.is_file():
         plan.refused = f"artifact missing at {artifact_path}"
         return plan
-    soup = BeautifulSoup(artifact_path.read_bytes(), EL_PARSER_ID)
+    soup = BeautifulSoup(markup(artifact_path.read_bytes()), EL_PARSER_ID)
     root = path_root(soup)
     document = bare_words(soup.get_text(" "))
 

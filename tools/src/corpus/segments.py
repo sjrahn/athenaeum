@@ -902,14 +902,14 @@ def blocks_for_record(post: Any, corpus_root: Path | None = None) -> list[Block]
 
         from . import containment as _containment
         from . import mime as _mime
-        from .transforms.html import EL_PARSER_ID, path_root
+        from .transforms.html import EL_PARSER_ID, markup, path_root
 
         record_id = str(post.metadata.get("id") or "")
         media_type = _records.media_type_for(post)
         artifact_path = _containment.ensure_local_bytes(
             corpus_root, record_id, _mime.extension_for(media_type)
         )
-        soup = BeautifulSoup(artifact_path.read_bytes(), EL_PARSER_ID)
+        soup = BeautifulSoup(markup(artifact_path.read_bytes()), EL_PARSER_ID)
         root = path_root(soup)
     except Exception:
         return iter_blocks(content)

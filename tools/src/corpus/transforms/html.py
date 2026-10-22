@@ -92,6 +92,36 @@ def engine_version_for_addressing(el_addressing: dict | None) -> str:
 #: attested element count, and the resolver refuses a record stamped under any other.
 EL_PARSER_ID = "html.parser"
 
+_META_CHARSET_RE = re.compile(
+    rb"""<meta[^>]+charset\s*=\s*["']?\s*([A-Za-z0-9_.:\-]+)""", re.IGNORECASE
+)
+#: Single-byte Western charsets a page may declare while its bytes are really UTF-8.
+_LATIN_CHARSETS = frozenset(
+    {"iso-8859-1", "iso8859-1", "latin-1", "latin1", "l1", "us-ascii", "ascii",
+     "windows-1252", "cp1252"}
+)
+
+
+def markup(raw: bytes) -> bytes | str:
+    """The HTML bytes as the parser should read them.
+
+    A page that declares a single-byte Western charset (``iso-8859-1``, ``windows-1252``)
+    but whose bytes are valid UTF-8 with non-ASCII content is UTF-8: real Latin-1 text with
+    accented letters is almost never valid UTF-8, while a UTF-8 page read as Latin-1 turns
+    every non-ASCII letter into mojibake ("SudachÅ", "TÃœV"). Rendered-DOM captures write
+    UTF-8 bytes but keep the page's original meta tag, so the declaration lies. Those pages
+    decode as UTF-8 here; every other page goes to the parser as bytes, which then honours
+    its declaration. Text-only: the element tree, and so every ``el=`` ordinal, is the same
+    either way. Content hashes read the raw bytes and never call this."""
+    m = _META_CHARSET_RE.search(raw[:8192])
+    if not m or m.group(1).decode("ascii", "ignore").lower() not in _LATIN_CHARSETS:
+        return raw
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return raw
+    return raw if text.isascii() else text
+
 # Image-only data URI (the `<img>` / `selector=` path keeps its strict shape).
 _DATA_URI_RE = re.compile(
     r"^data:image/([a-z0-9+.\-]+);base64,(.+)$", re.DOTALL | re.IGNORECASE

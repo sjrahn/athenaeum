@@ -524,7 +524,9 @@ def resolve(
     elif initial_kind == "html":
         from bs4 import BeautifulSoup
 
-        working = BeautifulSoup(artifact_binary.read_bytes(), "html.parser")
+        from .transforms import html as html_tf
+
+        working = BeautifulSoup(html_tf.markup(artifact_binary.read_bytes()), "html.parser")
     elif initial_kind == "image":
         # Load + decode into memory so the file handle closes before transforms run.
         with Image.open(artifact_binary) as im:
@@ -1339,7 +1341,7 @@ def _resolve_annotated(
     from bs4 import BeautifulSoup
 
     raw = artifact_binary.read_bytes()
-    soup = BeautifulSoup(raw, html_tf.EL_PARSER_ID)
+    soup = BeautifulSoup(html_tf.markup(raw), html_tf.EL_PARSER_ID)
 
     parser = str(el_addressing.get("parser") or "")
     if parser and parser != html_tf.EL_PARSER_ID:
@@ -1441,7 +1443,9 @@ def _init_member_working_value(kind: str, path: Path) -> Any:
     if kind == "html":
         from bs4 import BeautifulSoup
 
-        return BeautifulSoup(path.read_bytes(), "html.parser")
+        from .transforms import html as html_tf
+
+        return BeautifulSoup(html_tf.markup(path.read_bytes()), "html.parser")
     if kind == "image":
         with Image.open(path) as im:
             im.load()
