@@ -54,6 +54,14 @@ Commands:
                 references rewrite ledger-wide, lineage row added, loser
                 file deleted; dry-run by default, --apply executes, --json
                 for the plan
+  move-claim CLAIM TO --reason split|rekeyed  one claim leaves a file that
+                lives on (§4.1, v49): TO is `fact:short` (the claim moves
+                there, sources re-hoisted) or a bare fact id (the claim
+                became that fact); internal references rewrite, the
+                claim-grain lineage row is added; dry-run by default,
+                --apply executes behind the check gate, --json for the plan;
+                --batch FILE runs many moves (`CLAIM TO [REASON]` per line)
+                behind one gate
   remap-el      §12.28 addressing remap for evidence anchors: legacy el=N →
                 child-index paths, mapped against the artifacts (dry-run by
                 default; --apply writes)
@@ -776,6 +784,102 @@ def _cmd_merge(argv: Sequence[str]) -> int:
     return 0
 
 
+def _cmd_move_claim(argv: Sequence[str]) -> int:
+    ap = _base_parser(
+        "ath ledger move-claim",
+        "Move one claim out of a file that lives on (§4.1, v49) — dry-run by default.",
+    )
+    ap.add_argument("claim", nargs="?", help="the claim id that moves (`file-id:short`)")
+    ap.add_argument("to", nargs="?", help="`fact-id:short` (the claim moves there) or "
+                                          "`fact-id` (the claim became that fact)")
+    ap.add_argument("--reason", choices=["split", "rekeyed"],
+                    help="split: it became, or joined, another fact; rekeyed: it moved "
+                         "to a sibling concept (with --batch: the default for a line that "
+                         "names none)")
+    ap.add_argument("--batch", type=Path, metavar="FILE",
+                    help="many moves, one `CLAIM TO [REASON]` per line (`#` comments), "
+                         "applied in order behind ONE check gate — any refusal or new "
+                         "check error rolls them all back")
+    ap.add_argument("--apply", action="store_true", help="execute (default: dry-run)")
+    ap.add_argument("--json", action="store_true", help="print the full plan as JSON")
+    ns = ap.parse_args(list(argv))
+    if ns.batch is not None:
+        if ns.claim or ns.to:
+            ap.error("--batch takes its moves from FILE, not CLAIM TO")
+        try:
+            moves = _read_move_batch(ns.batch, ns.reason)
+        except (OSError, ValueError) as e:
+            ap.error(str(e))
+    else:
+        if not (ns.claim and ns.to and ns.reason):
+            ap.error("CLAIM, TO and --reason are required (or --batch FILE)")
+        moves = [(ns.claim, ns.to, ns.reason)]
+    ledger_root, join, datasets = _system(ns.root)
+    from ledger.moveclaim import MoveError, apply_moves, preview_moves
+
+    plans = preview_moves(ledger_root, moves)
+    summaries = [{k: v for k, v in plan.items() if not k.startswith("_")} for plan in plans]
+    if ns.json:
+        print(json.dumps(summaries[0] if ns.batch is None else summaries, indent=2))
+    else:
+        for summary in summaries:
+            _print_move(summary, ns.apply)
+    refused = any(summary["errors"] for summary in summaries)
+    if refused:
+        if ns.batch is not None:
+            print(f"\nrefused at move {len(summaries)} of {len(moves)}; nothing applied",
+                  file=sys.stderr)
+        return 1
+    if not ns.apply:
+        print("\n(dry run — pass --apply to execute)")
+        return 0
+    try:
+        apply_moves(ledger_root, moves, join, datasets)
+    except MoveError as e:
+        print(f"ath ledger move-claim: {e}", file=sys.stderr)
+        return 1
+    if ns.batch is None:
+        print(f"\napplied: {ns.claim} → {ns.to}")
+    else:
+        print(f"\napplied {len(moves)} moves behind one check gate")
+    return 0
+
+
+def _read_move_batch(path: Path, default_reason: str | None) -> list[tuple[str, str, str]]:
+    """`CLAIM TO [REASON]` per line; blank lines and `#` comments skipped."""
+    moves: list[tuple[str, str, str]] = []
+    for ln, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        parts = raw.split("#", 1)[0].split()
+        if not parts:
+            continue
+        if len(parts) not in (2, 3):
+            raise ValueError(f"{path}:{ln}: expected `CLAIM TO [REASON]`, got {raw.strip()!r}")
+        reason = parts[2] if len(parts) == 3 else default_reason
+        if reason is None:
+            raise ValueError(f"{path}:{ln}: no REASON and no --reason default")
+        moves.append((parts[0], parts[1], reason))
+    if not moves:
+        raise ValueError(f"{path}: no moves")
+    return moves
+
+
+def _print_move(summary: dict, apply: bool) -> None:
+    print(f"[{'APPLYING' if apply else 'DRY RUN'}] move-claim {summary['claim']} → "
+          f"{summary['to']} ({summary['reason']})")
+    for e in summary["errors"]:
+        print(f"  REFUSED: {e}")
+    for w in summary["warnings"]:
+        print(f"  WARN   {w}")
+    for r in summary["references_rewritten"]:
+        print(f"  rewrite {r['kind']} in {r['file']}")
+    for r in summary["challenges_repinned"]:
+        print(f"  repin  challenge {r['interp']}")
+    for r in summary["lineage_retargeted"]:
+        print(f"  retarget lineage {r['key']}: {r['old_target']} → {r['new_target']}")
+    for key, row in summary["lineage_row"].items():
+        print(f"  lineage {key} → {row['to']} ({row['reason']})")
+
+
 def _cmd_remap_el(argv: Sequence[str]) -> int:
     ap = _base_parser(
         "ath ledger remap-el",
@@ -981,6 +1085,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "scope": _cmd_scope,
         "supersede": _cmd_supersede,
         "merge": _cmd_merge,
+        "move-claim": _cmd_move_claim,
         "remap-el": _cmd_remap_el,
         "remap-el-ordinal": _cmd_remap_el_ordinal,
     }

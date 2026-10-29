@@ -41,7 +41,16 @@ from ledger import views as views_mod
 from ledger import worklist as worklist_mod
 from ledger.corpora import CorpusJoin, RegisteredCorpus
 from ledger.coverage import render_coverage
-from ledger.model import FULL_HASH_RE, is_edge, is_redirect, load_json_dir, load_lineage
+from ledger.model import (
+    CLAIM_ID_RE,
+    FULL_HASH_RE,
+    is_edge,
+    is_redirect,
+    load_claim_lineage_rows,
+    load_json_dir,
+    load_lineage,
+    resolve_claim_ref,
+)
 from ledger.schemas import load_schemas
 from ledger.scope import evaluate_scope
 
@@ -355,26 +364,31 @@ def get_fact(
 
 @router.get("/facts/{fact_id}/claims/{short}")
 def get_claim(
-    fact_id: str, short: str, ctx: Ctx = Depends(get_ctx), plane: str = Depends(get_plane),
-    grants: frozenset[str] = Depends(get_grants),
+    fact_id: str, short: str, request: Request, ctx: Ctx = Depends(get_ctx),
+    plane: str = Depends(get_plane), grants: frozenset[str] = Depends(get_grants),
 ):
-    fact_path = _find_fact_path(ctx.ledger_root, fact_id)
-    if fact_path is None:
-        raise HTTPException(404, "not found")
-    try:
-        fact = json.loads(fact_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as e:
-        raise HTTPException(404, "not found") from e
-    if not isinstance(fact, dict) or is_redirect(fact):
-        raise HTTPException(404, "not found")
-
     cid = f"{fact_id}:{short}"
-    claim = next(
-        (c for c in fact.get("claims") or [] if isinstance(c, dict) and c.get("id") == cid),
-        None,
-    )
+    fact_path = _find_fact_path(ctx.ledger_root, fact_id)
+    fact: object = None
+    if fact_path is not None:
+        try:
+            fact = json.loads(fact_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as e:
+            raise HTTPException(404, "not found") from e
+    claim = None
+    if isinstance(fact, dict) and not is_redirect(fact):
+        claim = next(
+            (c for c in fact.get("claims") or []
+             if isinstance(c, dict) and c.get("id") == cid),
+            None,
+        )
     if claim is None:
-        raise HTTPException(404, "not found")
+        # §4.1: a held claim id resolves through the lineage map, one hop — its own
+        # claim-grain row (v49: the claim left a file that lives on) first, else its
+        # file's row with the short preserved. Visibility is checked on the destination
+        # BEFORE the redirect is emitted, exactly as `get_fact`'s branch does.
+        return _claim_redirect(cid, request, ctx, plane, grants)
+    assert isinstance(fact, dict)
 
     if plane != "owner":
         declared = ctx.instance.declared_tiers
@@ -385,6 +399,44 @@ def get_claim(
                                 declared=declared):
             raise HTTPException(404, "not found")
     return claim
+
+
+def _claim_redirect(
+    cid: str, request: Request, ctx: Ctx, plane: str, grants: frozenset[str],
+) -> Response:
+    """The 307 for a claim id the lineage map moves (§4.1), or a fail-closed 404."""
+    lineage, _ = load_lineage(ctx.ledger_root)
+    claim_lineage = {k: v["to"] for k, v in load_claim_lineage_rows(ctx.ledger_root).items()}
+    to = resolve_claim_ref(cid, claim_lineage, lineage)
+    if to == cid:
+        raise HTTPException(404, "not found")
+    m = CLAIM_ID_RE.match(to)
+    target_fact = _fact_by_id(ctx.ledger_root, m.group(1) if m else to)
+    if target_fact is None:
+        raise HTTPException(404, "not found")
+    target_claim = None
+    if m:
+        target_claim = next((c for c in target_fact.get("claims") or []
+                             if isinstance(c, dict) and c.get("id") == to), None)
+        if target_claim is None:
+            raise HTTPException(404, "not found")
+    if plane != "owner":
+        declared = ctx.instance.declared_tiers
+        if not fact_is_visible(target_fact, ctx.join, ctx.datasets, grants, declared=declared):
+            raise HTTPException(404, "not found")
+        sources = (target_fact.get("sources")
+                   if isinstance(target_fact.get("sources"), dict) else {})
+        if target_claim is not None and not claim_is_visible(
+                target_claim, sources, ctx.join, ctx.datasets, grants, declared=declared):
+            raise HTTPException(404, "not found")
+    etag = _etag(ctx.instance_commit, plane, f"redirect:{cid}:{to}".encode())
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers={"ETag": etag, "Vary": "Authorization"})
+    url = f"/facts/{m.group(1)}/claims/{m.group(2)}" if m else f"/facts/{to}"
+    redirect = RedirectResponse(url=url, status_code=307)
+    redirect.headers["ETag"] = etag
+    redirect.headers["Vary"] = "Authorization"
+    return redirect
 
 
 # --------------------------------------------------------------------- /scope

@@ -92,6 +92,7 @@ from ledger.model import (
     PRESENCE_VALUES,
     derived_uri,
     is_redirect,
+    load_claim_lineage_rows,
     load_json_dir,
     load_lineage_rows,
 )
@@ -608,6 +609,18 @@ def _emit_lineage(
         w.add(_ref(fact_iri(old_id)), _ref(IAO_TERM_REPLACED_BY), _ref(fact_iri(survivor)))
 
 
+def _emit_claim_lineage(w: _Writer, claim_rows: dict[str, dict], visible_target) -> None:
+    """*(v49, §4.1)* A claim that left a living file: its old claim IRI is deprecated and
+    replaced by where it lives now — the claim it became, or the fact it became."""
+    for old_id, row in sorted(claim_rows.items()):
+        to = row.get("to")
+        if not isinstance(to, str) or not visible_target(to):
+            continue
+        new = claim_iri(to) if CLAIM_ID_RE.match(to) else fact_iri(to)
+        w.add(_ref(claim_iri(old_id)), "owl:deprecated", "true")
+        w.add(_ref(claim_iri(old_id)), _ref(IAO_TERM_REPLACED_BY), _ref(new))
+
+
 # --------------------------------------------------------------- roster
 
 
@@ -761,6 +774,18 @@ def export_ledger(
                             references, corpora_roots, unverified, notes)
 
     _emit_lineage(w, lineage_rows, _visible_survivor)
+
+    def _visible_moved(to: str) -> bool:
+        m = CLAIM_ID_RE.match(to)
+        if not m:
+            return _visible_survivor(to)
+        fact = facts_by_id.get(m.group(1))
+        claim = next((c for c in (fact or {}).get("claims") or []
+                      if isinstance(c, dict) and c.get("id") == to), None)
+        return fact is not None and claim is not None and (
+            grants is None or (_visible_fact(fact) and _visible_claim(fact, claim)))
+
+    _emit_claim_lineage(w, load_claim_lineage_rows(ledger_root), _visible_moved)
     unexpressed: list[str] = []
     _emit_invariant_shapes(w, invariants, unexpressed)
 
