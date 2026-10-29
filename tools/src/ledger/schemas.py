@@ -20,8 +20,14 @@ SCHEMA_KEYS = {"type", "description", "fields", "roster_roles", "participants",
 # same grammar plus one extra top-level key.
 DOMAIN_SCHEMA_KEYS = SCHEMA_KEYS | {"domain"}
 FIELD_KEYS = {"target", "description", "expected", "values", "participant",
-              "timeboxed", "elements", "value", "extends", "invariants"}
-ELEMENT_KEYS = {"target", "values", "description", "value"}
+              "timeboxed", "elements", "value", "extends", "invariants",
+              # v47.1 (§4.4): a field whose content a text prints, and the type's
+              # version history
+              "ranged", "expression_ledger"}
+ELEMENT_KEYS = {"target", "values", "description", "value",
+                # v47.1 (§4.4): the identity keys printed byte-for-byte, and a
+                # revision-local printed label
+                "verbatim", "locator"}
 EXPECTATION_KEYS = {"when", "expect", "description", "id"}
 
 
@@ -96,6 +102,13 @@ def _load_one_schema(f: Path, where: str, allowed_keys: set[str]) -> tuple[dict 
             errors.append(f"{where}: field {fname!r} participant must be a bool")
         if not isinstance(fspec.get("timeboxed", False), bool):
             errors.append(f"{where}: field {fname!r} timeboxed must be a bool")
+        for flag in ("ranged", "expression_ledger"):
+            if not isinstance(fspec.get(flag, False), bool):
+                errors.append(f"{where}: field {fname!r} {flag} must be a bool")
+        if fspec.get("ranged") is True and fspec.get("expression_ledger") is True:
+            errors.append(
+                f"{where}: field {fname!r} is both ranged and the expression ledger — "
+                "the version history is facts ABOUT revisions and never ranged (§4.4)")
         value = fspec.get("value")
         if value is not None and not isinstance(value, str):
             errors.append(f"{where}: field {fname!r} value must be a string "
@@ -147,6 +160,18 @@ def _load_one_schema(f: Path, where: str, allowed_keys: set[str]) -> tuple[dict 
                     if evalue is not None and not isinstance(evalue, str):
                         errors.append(f"{ew} value must be a string "
                                       "(a §4.5 kind reference)")
+                    for flag in ("verbatim", "locator"):
+                        if not isinstance(edecl.get(flag, False), bool):
+                            errors.append(f"{ew} {flag} must be a bool")
+                    if edecl.get("verbatim") is True and edecl.get("locator") is True:
+                        errors.append(
+                            f"{ew} is both verbatim and a locator — a verbatim key is "
+                            "element identity, a locator never is (§4.4)")
+    ledgers = sorted(fname for fname, fspec in (fields or {}).items()
+                     if isinstance(fspec, dict) and fspec.get("expression_ledger") is True)
+    if len(ledgers) > 1:
+        errors.append(f"{where}: fields {ledgers} all declare expression_ledger — at most "
+                      "one field per type is its version history (§4.4)")
     roles = data.get("roster_roles")
     if roles is not None and not (
         isinstance(roles, list) and all(isinstance(r, str) for r in roles)

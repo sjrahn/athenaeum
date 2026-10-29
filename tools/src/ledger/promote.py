@@ -17,12 +17,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from ledger import ranged as ranged_mod
 from ledger.model import (
     CLAIM_ID_RE,
     CORPUS_URI_RE,
     REF_URI_RE,
     SLUG_RE,
-    canonical_claim_state,
     ensure_source,
     load_lineage,
 )
@@ -204,7 +204,13 @@ def stamp(ledger_root: Path, interp_id: str) -> str:
     claim = next((c for c in fact.get("claims") or [] if c.get("id") == target), None)
     if claim is None:
         raise PromoteError(f"claim {target!r} not found on {m.group(1)!r}")
-    sources = fact.get("sources") if isinstance(fact.get("sources"), dict) else {}
-    challenges["state"] = canonical_claim_state(claim, sources)
+    if "element" in challenges:
+        # v47.1 (§7.3): re-stamping an element pin refreshes the revision set it covers
+        revs = ranged_mod.stamp_revisions(claim)
+        if revs is None:
+            challenges.pop("revisions", None)
+        else:
+            challenges["revisions"] = revs
+    challenges["state"] = ranged_mod.challenge_state(challenges, claim, fact)
     _save(ipath, interp)
     return challenges["state"]

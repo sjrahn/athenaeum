@@ -62,6 +62,28 @@ Commands:
                 --apply executes behind the check gate, --json for the plan;
                 --batch FILE runs many moves (`CLAIM TO [REASON]` per line)
                 behind one gate
+  migrate-ranged FACT PREDICATE  fold version-split claims into one ranged
+                claim (v47.1, §5.6): revisions from the roster, the oldest
+                claim's indices kept, later claims matched by authored notes
+                or the auto-merge/adjudicate/append-and-close classes, inert
+                migration closures, `ranged` lineage rows; dry-run by
+                default, --apply behind the check gate, --json for the plan,
+                --report PATH writes the plan + projections table
+  project REF   a ranged claim's projection (§12, v47.1): REF is
+                [ledger://]{id}:{short}[@{expression}[/{tag}]|@{tag}][#{N}],
+                resolved through the lineage map's one hop (a `ranged` row
+                applies its projection and remaps #N); --json; rc 1 when
+                unresolvable
+  carry CLAIM --revision R  re-anchor a ranged claim's CARRIED elements at a
+                `diffed` revision (v47.1, §5.6): each unchanged quote that
+                matches exactly one formed segment of R's record becomes
+                evidence there (carried → attested); ambiguity and misses go
+                to the author; dry-run by default, --apply behind the check gate
+  revision-diff CLAIM R1 R2  the derived view of a ranged claim between two
+                reconciled revisions (v47.1, §5.6): opened, closed (with each
+                closure's note and replaced_by), kept, pending-closure; --json
+  projections   the {fact: {old version qualifier: projection}} table the
+                `ranged` lineage rows carry (non-normative view); --json
   remap-el      §12.28 addressing remap for evidence anchors: legacy el=N →
                 child-index paths, mapped against the artifacts (dry-run by
                 default; --apply writes)
@@ -880,6 +902,200 @@ def _print_move(summary: dict, apply: bool) -> None:
         print(f"  lineage {key} → {row['to']} ({row['reason']})")
 
 
+def _cmd_migrate_ranged(argv: Sequence[str]) -> int:
+    ap = _base_parser("ath ledger migrate-ranged",
+                      "Fold one fact's version-split claims of a ranged predicate into one "
+                      "ranged claim (v47.1) — dry-run by default.")
+    ap.add_argument("fact")
+    ap.add_argument("predicate")
+    ap.add_argument("--short", default=None,
+                    help="the folded claim's short (default: the predicate)")
+    ap.add_argument("--apply", action="store_true", help="execute (default: dry-run)")
+    ap.add_argument("--json", action="store_true", help="print the plan as JSON")
+    ap.add_argument("--report", type=Path, default=None, metavar="PATH",
+                    help="write the plan (claim, rows, report, projections) as JSON")
+    ns = ap.parse_args(list(argv))
+    ledger_root, join, datasets = _system(ns.root)
+    from ledger.migrate_ranged import FoldError, apply_fold, plan_fold
+
+    plan = plan_fold(ledger_root, ns.fact, ns.predicate, ns.short)
+    summary = {k: v for k, v in plan.items() if not k.startswith("_")}
+    if ns.report is not None:
+        ns.report.write_text(json.dumps(summary, indent=2, ensure_ascii=False) + "\n",
+                             encoding="utf-8")
+    if ns.json:
+        print(json.dumps(summary, indent=2, ensure_ascii=False))
+    else:
+        mode = "APPLYING" if ns.apply else "DRY RUN"
+        print(f"[{mode}] migrate-ranged {ns.fact} {ns.predicate}")
+        for e in plan["errors"]:
+            print(f"  REFUSED: {e}")
+        rep = plan.get("report") or {}
+        for k in ("revisions", "elements", "closures", "auto_merge", "authored_continue",
+                  "authored_changed", "appended", "migration_closures",
+                  "authored_closures", "lifecycle_closures", "locators_moved",
+                  "note_parts_dropped"):
+            if k in rep:
+                print(f"  {k}: {rep[k]}")
+        if rep.get("adjudicate"):
+            print(f"  adjudicate: {len(rep['adjudicate'])} pair(s) (see --json/--report)")
+        for key, row in plan.get("rows", {}).items():
+            print(f"  lineage {key} → {row['to']} @{row.get('projection')}")
+        for r in plan.get("references_rewritten", []):
+            print(f"  rewrite based_on in {r}")
+    if plan["errors"]:
+        return 1
+    if not ns.apply:
+        print("\n(dry run — pass --apply to execute)")
+        return 0
+    try:
+        apply_fold(ledger_root, plan, join, datasets)
+    except FoldError as e:
+        print(f"ath ledger migrate-ranged: {e}", file=sys.stderr)
+        return 1
+    print(f"\napplied: {', '.join(plan['retired']) or ns.fact} → {plan['claim']['id']}")
+    return 0
+
+
+def _cmd_project(argv: Sequence[str]) -> int:
+    ap = _base_parser("ath ledger project",
+                      "A ranged claim's projection at one revision (§12, v47.1).")
+    ap.add_argument("ref")
+    ap.add_argument("--json", action="store_true")
+    ns = ap.parse_args(list(argv))
+    ledger_root, _, _ = _system(ns.root)
+    from ledger import ranged as ranged_mod
+
+    by_id, claim_rows, lineage, ranged_field = ranged_mod.load_reference_context(ledger_root)
+    r = ranged_mod.resolve_reference(ns.ref, by_id, claim_rows, lineage, ranged_field)
+    doc = ranged_mod.projection_json(r)
+    if ns.json:
+        print(json.dumps(doc, indent=2, ensure_ascii=False))
+    else:
+        for hop in r.hops:
+            print(f"via {hop}")
+        if r.projection is not None:
+            p = r.projection
+            print(f"{r.claim_id} @{r.selection} → revision {p.revision} "
+                  f"(status {p.status}; through {', '.join(p.through)})")
+            for el in doc["elements"]:
+                print(f"  #{el['index']}\t{el['mode']}\t"
+                      f"{json.dumps(el['value'], ensure_ascii=False)[:120]}")
+            for c in p.closures:
+                print(f"  closed #{c.get('element')}: {c.get('note', '')}")
+        elif r.whole is not None:
+            print(f"{r.claim_id}: read whole")
+        if r.error:
+            print(f"unresolvable: {r.error}", file=sys.stderr)
+    return 1 if r.error else 0
+
+
+def _cmd_carry(argv: Sequence[str]) -> int:
+    ap = _base_parser("ath ledger carry",
+                      "Upgrade a ranged claim's carried elements to attested by exact, "
+                      "unique quote match (v47.1) — dry-run by default.")
+    ap.add_argument("claim")
+    ap.add_argument("--revision", required=True)
+    ap.add_argument("--apply", action="store_true")
+    ap.add_argument("--json", action="store_true")
+    ns = ap.parse_args(list(argv))
+    ledger_root, join, datasets = _system(ns.root)
+    from ledger.carry import CarryError, apply_carry, plan_carry
+
+    plan = plan_carry(ledger_root, join, ns.claim, ns.revision)
+    summary = {k: v for k, v in plan.items() if not k.startswith("_")}
+    if ns.json:
+        print(json.dumps(summary, indent=2, ensure_ascii=False))
+    else:
+        print(f"[{'APPLYING' if ns.apply else 'DRY RUN'}] carry {ns.claim} at {ns.revision}: "
+              f"{len(plan['carried'])} re-anchored, {len(plan['to_author'])} to the author")
+        for e in plan["errors"]:
+            print(f"  REFUSED: {e}")
+        for a in plan["to_author"]:
+            print(f"  author #{a['element']}: {a['why']}")
+    if plan["errors"]:
+        return 1
+    if not ns.apply:
+        print("\n(dry run — pass --apply to execute)")
+        return 0
+    try:
+        apply_carry(ledger_root, plan, join, datasets)
+    except CarryError as e:
+        print(f"ath ledger carry: {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
+def _cmd_revision_diff(argv: Sequence[str]) -> int:
+    ap = _base_parser("ath ledger revision-diff",
+                      "What a ranged claim opens and closes between two revisions — a "
+                      "derived view, never authored knowledge (v47.1, §5.6).")
+    ap.add_argument("claim", help="the ranged claim id (`fact:short`)")
+    ap.add_argument("r1")
+    ap.add_argument("r2")
+    ap.add_argument("--json", action="store_true")
+    ns = ap.parse_args(list(argv))
+    ledger_root, _, _ = _system(ns.root)
+    from ledger import ranged as ranged_mod
+
+    by_id, _rows, _lineage, _rf = ranged_mod.load_reference_context(ledger_root)
+    fact = by_id.get(ns.claim.split(":", 1)[0])
+    claim = next((c for c in (fact or {}).get("claims") or []
+                  if isinstance(c, dict) and c.get("id") == ns.claim), None)
+    if claim is None or not ranged_mod.is_folded(claim):
+        print(f"ath ledger revision-diff: no folded ranged claim {ns.claim!r}",
+              file=sys.stderr)
+        return 1
+    try:
+        diff = ranged_mod.revision_diff(claim, fact, ranged_mod.read_roster(fact),
+                                        ns.r1, ns.r2)
+    except ValueError as e:
+        print(f"ath ledger revision-diff: {e}", file=sys.stderr)
+        return 1
+    if ns.json:
+        print(json.dumps(diff, indent=2, ensure_ascii=False))
+        return 0
+    value = claim.get("value") if isinstance(claim.get("value"), list) else []
+
+    def show(i: int) -> str:
+        return json.dumps(value[i], ensure_ascii=False)[:110] if i < len(value) else ""
+
+    print(f"{ns.claim}: {ns.r1} → {ns.r2}: {len(diff['opened'])} opened, "
+          f"{len(diff['closed'])} closed, {len(diff['kept'])} kept, "
+          f"{len(diff['pending'])} pending-closure")
+    for i in diff["opened"]:
+        print(f"  + #{i}\t{show(i)}")
+    for c in diff["closed"]:
+        notes = "; ".join(str(x.get("note", "")) for x in c["closures"])
+        print(f"  - #{c['element']}\t{notes[:110]}")
+    for i in diff["pending"]:
+        print(f"  ? #{i}\tpending-closure (migration, unadjudicated)")
+    return 0
+
+
+def _cmd_projections(argv: Sequence[str]) -> int:
+    ap = _base_parser("ath ledger projections",
+                      "The version-qualifier → projection table the `ranged` lineage "
+                      "rows carry (v47.1, non-normative).")
+    ap.add_argument("--json", action="store_true")
+    ns = ap.parse_args(list(argv))
+    ledger_root, _, _ = _system(ns.root)
+    from ledger import ranged as ranged_mod
+    from ledger.model import load_claim_lineage_rows
+
+    table, conflicts = ranged_mod.projection_table_checked(
+        load_claim_lineage_rows(ledger_root))
+    for c in conflicts:
+        print(f"CONFLICT {c}", file=sys.stderr)
+    if ns.json:
+        print(json.dumps(table, indent=2, ensure_ascii=False, sort_keys=True))
+    else:
+        for fact, m in sorted(table.items()):
+            for q, p in sorted(m.items()):
+                print(f"{fact}\t{q}\t@{p}")
+    return 0
+
+
 def _cmd_remap_el(argv: Sequence[str]) -> int:
     ap = _base_parser(
         "ath ledger remap-el",
@@ -1087,6 +1303,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         "merge": _cmd_merge,
         "move-claim": _cmd_move_claim,
         "remap-el": _cmd_remap_el,
+        "project": _cmd_project,
+        "migrate-ranged": _cmd_migrate_ranged,
+        "projections": _cmd_projections,
+        "revision-diff": _cmd_revision_diff,
+        "carry": _cmd_carry,
         "remap-el-ordinal": _cmd_remap_el_ordinal,
     }
     try:

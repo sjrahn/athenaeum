@@ -63,6 +63,8 @@ REDIRECT_KEYS = {"id", "type", "merged_into"}
 CLAIM_KEYS = {
     "id", "predicate", "value", "object", "presence", "qualifiers", "period", "status",
     "asof", "reasoning", "sensitivity", "provenance", "evidence",
+    # v47.1 (§5.1, §5.6): a ranged claim's reconciliations, closures and corrections
+    "revisions", "closures", "corrections",
 }
 # Presence claims (§5.5): `presence` stands in place of `value`/`object`,
 # asserting the shape of the predicate's extension rather than a value.
@@ -72,10 +74,14 @@ PRESENCE_VALUES = {"none", "some"}
 # per-fact sources table, replacing the old {uri, quote, note, kind, verified}
 # shape. `verified` moves to the sources entry (one stamp per fact/source,
 # not per evidence entry).
-EVIDENCE_KEYS = {"source", "anchor", "quote", "note", "kind", "element"}
+EVIDENCE_KEYS = {"source", "anchor", "quote", "note", "kind", "element",
+                 # v47.1 (§6.1): an element's printed labels in this revision (ranged only)
+                 "locators"}
 SOURCES_ENTRY_KEYS = {"record", "ref", "verified"}
 ROSTER_KEYS = {"uri", "role", "note", "provenance",
-               "modality", "expression", "derived_from", "derivation"}
+               "modality", "expression", "derived_from", "derivation",
+               # v47.1 (§4.2): the text state an entry's record witnesses, and its predecessor
+               "revision", "against"}
 # A hypothesis's `proposes` draft claim (§7.2) predates the fact it targets, so
 # it has no sources table of its own to reference — its evidence stays in the
 # pre-reforge inline-`uri` shape until `ath ledger promote` lands it on the
@@ -103,7 +109,9 @@ NEED_ACTIONS = {"enqueue", "search", "capture", "observe", "promote"}
 # `demand:` names a demand rule (§14) this need blocks — a blocked demand's
 # state is derived from this, never stored on the demand itself.
 NEED_KEYS = {"action", "record", "why", "demand"}
-CHALLENGE_KEYS = {"claim", "state"}
+CHALLENGE_KEYS = {"claim", "state",
+                  # v47.1 (§7.3): an element pin, and the revisions it was stamped over
+                  "element", "revisions"}
 STATE_RE = re.compile(r"^blake3:[0-9a-f]{64}$")
 
 # The lineage row `reason` vocabulary (§4.1) — closed, grown by amendment. A row's GRAIN
@@ -111,7 +119,11 @@ STATE_RE = re.compile(r"^blake3:[0-9a-f]{64}$")
 # a claim-grain key (`file-id:short`, one claim leaving a file that lives on, v49) is
 # `split` (it became, or joined, another fact) or `rekeyed` (it moved to a sibling concept).
 LINEAGE_REASONS = {"merged", "renamed"}
-CLAIM_LINEAGE_REASONS = {"split", "rekeyed"}
+CLAIM_LINEAGE_REASONS = {"split", "rekeyed", "ranged"}
+# v47.1 (§4.1): the keys only a `ranged` row carries — the `elements` remap
+# {"old-index": new-index}, the `projection` the retired claim stood for, and its
+# version `qualifier` as written (informational, never used for resolution)
+RANGED_ROW_KEYS = {"elements", "projection", "qualifier"}
 
 
 def load_json_dir(base: Path, pattern: str) -> tuple[dict[Path, dict], list[str]]:
@@ -178,7 +190,8 @@ def _read_lineage(ledger_root: Path) -> tuple[dict[str, dict], dict[str, dict], 
             errors.append(f"facts/LINEAGE.json: entry {k!r} -> {v!r} must be an object "
                           '{"to": …, "reason": …} (or a legacy string, migrated loudly)')
             continue
-        unknown = set(v) - {"to", "reason"}
+        unknown = set(v) - {"to", "reason"} - (
+            RANGED_ROW_KEYS if claim_grain and v.get("reason") == "ranged" else set())
         if unknown:
             errors.append(f"facts/LINEAGE.json: entry {k!r} unknown keys {sorted(unknown)}")
         to = v.get("to")
@@ -196,7 +209,10 @@ def _read_lineage(ledger_root: Path) -> tuple[dict[str, dict], dict[str, dict], 
             errors.append(f"facts/LINEAGE.json: claim-grain entry {k!r} `to` {to!r} is "
                           "neither a fact id nor a claim id")
             continue
-        (claim_rows if claim_grain else rows)[k] = {"to": to, "reason": reason}
+        row = {"to": to, "reason": reason}
+        if claim_grain and reason == "ranged":
+            row.update({rk: v[rk] for rk in RANGED_ROW_KEYS if rk in v})
+        (claim_rows if claim_grain else rows)[k] = row
     return rows, claim_rows, errors
 
 

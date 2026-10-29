@@ -23,6 +23,7 @@ from ledger import demands as demands_mod
 from ledger import harvest as harvest_mod
 from ledger import invariants as invariants_mod
 from ledger import ontology, views
+from ledger import ranged as ranged_mod
 from ledger import tenancy as tenancy_mod
 from ledger import values as values_mod
 from ledger.corpora import CorpusJoin
@@ -705,6 +706,11 @@ def run_check(
                 elif str(derived_from) not in roster_uris:
                     rep.err(where, f"roster derived_from {derived_from!r} is not itself "
                                    "rostered on this concept (§4.2)")
+        # v47.1 (§4.2, §13.1 Evidence): the revision stratum — tags, the `against`
+        # order, and one revision per record, read off the roster alone
+        roster_revs = ranged_mod.read_roster(o)
+        for msg in roster_revs.errors:
+            rep.err(where, msg)
 
         # the per-fact sources table: claim evidence cites a `source` key
         # (validated in the claims pass below) that resolves here to exactly
@@ -802,7 +808,43 @@ def run_check(
     # *(v49, §4.1)* claim-grain lineage rows — one claim that left a file which lives on.
     # A key is a retired CLAIM id: occupied forever, so it may not name a living claim; its
     # `to` (a fact id, or a claim id) must live, one hop only, like a file-grain row's.
-    claim_lineage = {k: v["to"] for k, v in load_claim_lineage_rows(ledger_root).items()}
+    claim_rows = load_claim_lineage_rows(ledger_root)
+    claim_lineage = {k: v["to"] for k, v in claim_rows.items()}
+    # v47.1 (§4.1, §13.1 Graph): a `ranged` row names a living CLAIM, its `projection`
+    # parses under §12, and its `elements` maps index strings to indices of that claim
+    for key, row in claim_rows.items():
+        if row.get("reason") != "ranged":
+            continue
+        target = row["to"]
+        if not CLAIM_ID_RE.match(target):
+            rep.err("facts/LINEAGE.json", f"ranged row {key!r}: `to` {target!r} must be "
+                                          "the living ranged claim it folded into")
+            continue
+        proj = row.get("projection")
+        if proj is not None and not ranged_mod.selection_well_formed(proj):
+            rep.err("facts/LINEAGE.json", f"ranged row {key!r}: projection {proj!r} is not "
+                                          "`{expression}[/{tag}]` or `{tag}` (§12)")
+        q = row.get("qualifier")
+        if q is not None and not isinstance(q, str):
+            rep.err("facts/LINEAGE.json", f"ranged row {key!r}: qualifier must be a string")
+        els = row.get("elements")
+        if els is None:
+            continue
+        tclaim = claims_by_id.get(target, (None, None, None))[2]
+        tv = tclaim.get("value") if isinstance(tclaim, dict) else None
+        size = len(tv) if isinstance(tv, list) else None
+        if not isinstance(els, dict):
+            rep.err("facts/LINEAGE.json", f"ranged row {key!r}: elements must map "
+                                          "old-index strings to new indices")
+            continue
+        for ok, nv in els.items():
+            if not (isinstance(ok, str) and ok.isdigit()) or isinstance(nv, bool) \
+                    or not isinstance(nv, int):
+                rep.err("facts/LINEAGE.json", f"ranged row {key!r}: elements entry "
+                                              f"{ok!r}: {nv!r} is not \"index\": index")
+            elif size is not None and not 0 <= nv < size:
+                rep.err("facts/LINEAGE.json", f"ranged row {key!r}: elements {ok!r} → {nv} "
+                                              f"is out of range for {target!r}")
     for key, target in claim_lineage.items():
         if key in claims_by_id:
             rep.err("facts/LINEAGE.json", f"claim-grain lineage key {key!r} collides with a "
@@ -828,6 +870,7 @@ def run_check(
 
     # ------------------------------------------------------------------ claims
     private_claims = 0
+    unfolded_claims = 0  # v47.1: claims under a ranged field awaiting their fold
     private_files = 0
 
     for f, o, c in all_claims:
@@ -971,6 +1014,57 @@ def run_check(
                             rep.err(where, f"schema: {o.get('type')}.{pred} element "
                                            f"{ekey!r} {issue}")
 
+        # v47.1 (§4.2, §4.4, §13.1 Schemas): the expression ledger — one element per
+        # version, each naming a rostered `expression`; a `change_summary` is evidence-
+        # bound (printed release notes, never a summary derived from the ledger)
+        if fspec.get("expression_ledger") is True:
+            v = c.get("value")
+            if not isinstance(v, list):
+                rep.err(where, f"schema: {o.get('type')}.{pred} is the expression ledger "
+                               "(§4.4) — its value is an array, one element per version")
+            else:
+                bound = {e.get("element") for e in (c.get("evidence") or [])
+                         if isinstance(e, dict)}
+                for i, el in enumerate(v):
+                    if not isinstance(el, dict):
+                        continue
+                    ex = el.get("expression")
+                    if ex is None:
+                        rep.err(where, f"schema: {o.get('type')}.{pred} element {i} names "
+                                       "no `expression` — each expression-ledger element "
+                                       "names a rostered version (§4.2)")
+                    elif ex not in roster_revs.expressions:
+                        rep.err(where, f"schema: {o.get('type')}.{pred} element {i} "
+                                       f"expression {ex!r} is not rostered on this fact "
+                                       "(§4.2)")
+                    if el.get("change_summary") is not None and i not in bound:
+                        rep.err(where, f"schema: {o.get('type')}.{pred} element {i} "
+                                       "change_summary carries no evidence bound to its "
+                                       "element — it MUST cite printed release notes or "
+                                       "changelog text (§4.2)")
+
+        # v47.1 (§5.6): a claim under a `ranged` field is folded once it carries
+        # `revisions` — then every ranged rule applies — and unfolded (fold-worklist
+        # frontier, read whole) until then; the ranged keys belong on no other claim
+        is_ranged_field = fspec.get("ranged") is True
+        folded = is_ranged_field and ranged_mod.is_folded(c)
+        stray = sorted(set(c) & ranged_mod.RANGED_CLAIM_KEYS)
+        if stray and not is_ranged_field:
+            rep.err(where, f"carries {stray} but {o.get('type')}.{pred} is not a ranged "
+                           "field (§4.4, §5.6)")
+        elif stray and not folded:
+            rep.err(where, f"carries {stray} without `revisions` — closures and "
+                           "corrections belong to a folded ranged claim (§5.6)")
+        if is_ranged_field and not folded:
+            unfolded_claims += 1
+        if folded:
+            for msg in ranged_mod.check_claim(c, o, roster_revs):
+                rep.err(where, msg)
+        if not folded and any(isinstance(e, dict) and "locators" in e
+                              for e in (c.get("evidence") or [])):
+            rep.err(where, "evidence carries `locators` on a claim that is not a folded "
+                           "ranged claim (§6.1)")
+
         fact_sources = o.get("sources") if isinstance(o.get("sources"), dict) else {}
         evs = c.get("evidence") or []
         if not evs:
@@ -988,6 +1082,7 @@ def run_check(
         # (countable, kind, independent-source id, element) so the bar can
         # evaluate whole-claim or per-element *(19, §5.4)*.
         ev_infos: list[tuple[bool, object, tuple[str, str] | None, int | None]] = []
+        bar_infos: list[ranged_mod.BarInfo] = []
         for e in evs:
             if not isinstance(e, dict):
                 rep.err(where, "evidence entries must be objects")
@@ -1062,6 +1157,7 @@ def run_check(
                                        f"{entry['ref']} with anchor {anchor!r} — ref:// "
                                        "citations carry no span parameters (§6.5)")
             ev_infos.append((entry_countable, kind, src_id, el))
+            bar_infos.append((e, entry_countable, kind, src_id))
 
         # derived sensitivity (§6.4) — the one shared computation
         # (`ledger.tenancy`, reused unchanged by the read surface, spec Part I
@@ -1078,7 +1174,17 @@ def run_check(
             srcs = {s for cnt, _k, s, _e in infos if cnt and s is not None}
             return auth, srcs
 
-        if st == "confirmed" and evs:
+        if folded:
+            # v47.1 (§5.4): a folded ranged claim clears the bar per (element,
+            # revision) — its claim-level status is the weakest revision's, checked above
+            for rev, failing in ranged_mod.bar_failures(c, o, roster_revs,
+                                                        bar_infos).items():
+                rep.err(where, f"revision {rev!r} is `confirmed` but fails the "
+                               "authentication bar at element grain (§5.4): element(s) "
+                               f"{', '.join(map(str, failing))} lack an authoritative "
+                               "artifact or ≥2 independent sources from that revision "
+                               "(or, carried, from its `against`)")
+        elif st == "confirmed" and evs:
             if value_is_array and any(inf[3] is not None for inf in ev_infos):
                 # *(19, §5.4)* per-element bar: whole-value entries (no
                 # `element`) count toward every element, bound entries toward
@@ -1133,6 +1239,11 @@ def run_check(
     # beyond `join`'s own per-hash cache) rather than the per-claim `_private`
     # stash this loop used to thread through; same shared function the read
     # surface's public projection calls.
+    if unfolded_claims:
+        # frontier, never an error (§5.6 Folded and unfolded)
+        rep.counts["unfolded_claims"] = unfolded_claims
+        rep.note(f"ranged: {unfolded_claims} unfolded claim(s) under ranged fields — the "
+                 "fold worklist (§4.1 `ranged` rows, §5.6)")
     if resolve_live:
         for _f, o in facts.items():
             if is_redirect(o):
@@ -1355,7 +1466,7 @@ def run_check(
             if kind != "correction":
                 rep.err(where, "challenges belongs on corrections")
             if not isinstance(challenges, dict) or set(challenges) - CHALLENGE_KEYS:
-                rep.err(where, "challenges must be {claim, state}")
+                rep.err(where, "challenges must be {claim, state, element?, revisions?}")
             else:
                 target = str(challenges.get("claim", ""))
                 if target not in claims_by_id:
@@ -1374,7 +1485,22 @@ def run_check(
                         _, claim_fact, claim = claims_by_id[target]
                         claim_sources = claim_fact.get("sources") \
                             if isinstance(claim_fact.get("sources"), dict) else {}
-                        current = canonical_claim_state(claim, claim_sources)
+                        el = challenges.get("element")
+                        cvalue = claim.get("value")
+                        if el is not None and not (
+                                isinstance(el, int) and not isinstance(el, bool)
+                                and isinstance(cvalue, list) and 0 <= el < len(cvalue)):
+                            rep.err(where, f"challenges element {el!r} is not an in-range "
+                                           "index of an array-valued claim (§7.3)")
+                        revs = challenges.get("revisions")
+                        if revs is not None and (el is None or not (
+                                isinstance(revs, list)
+                                and all(isinstance(r, str) for r in revs))):
+                            rep.err(where, "challenges revisions must be a list of revision "
+                                           "names, and only beside `element` (§7.3)")
+                        current = (ranged_mod.challenge_state(challenges, claim, claim_fact)
+                                   if isinstance(el, int) and not isinstance(el, bool)
+                                   else canonical_claim_state(claim, claim_sources))
                         if current != state:
                             rep.warn(where, f"claim {target!r} edited since this challenge "
                                             "was filed — correction needs re-review "

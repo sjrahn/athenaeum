@@ -64,7 +64,10 @@ records attesting one thing converge on **one** concept.
 **The roster is the manifestation tier (§4.2).** The concept is the work; each rostered
 record is one representation of it. When you roster a representation, say *which* one with
 the optional entry fields: `modality` (carrier — `audio`, `video`, `text`, …), `expression`
-(version grouping — a cut, an edition; two entries sharing it are the same content in
+(the version as the issuer names it — a cut, an edition, a ruleset's `v2-1`), `revision` +
+`against` (v47.1: the text state the record witnesses, tagged from its own printed identity —
+`2-1-2`, `d2026-10-27`, `c2026-06-21`, a printed stamp as printed — else the capture time
+`t<ISO>Z`, ordered by its predecessor; entries sharing both fields are the same content in
 different carriers), `derived_from` + `derivation` (this record was mechanically produced
 from a sibling entry's record — `encode`, `remux`, `excerpt`; the referenced URI must itself
 be rostered on the concept). All optional — a bare `{uri, role}` entry stays complete — but
@@ -73,6 +76,22 @@ re-answer later. Promote an `expression` slug to its own concept only when claim
 version itself (an edition's publication date). Never mint a concept per record copy — that
 is the record shadow, prohibited. **Representation demand (§9)**: an uncovered record's work
 item is exactly this — identify the work, stub it if new, roster the manifestation.
+
+**Ranged content (v47.1, §5.6).** A field the schema declares `ranged: true` (a ruleset's
+rules, a methodology's equations) holds ONE claim across every revision of the work — never
+a claim per version, never a `version` qualifier or a `-vN` short. A new text state is a
+new `revisions` row on the existing claim: `transcribed` when you read the revision whole
+(every element holding at `against` then needs evidence from it or a closure at it),
+`diffed` when you record only its differences (unchanged elements carry forward). An element
+**continues** while its `verbatim: true` keys print unchanged and its paraphrase stays
+faithful (a defined-term rename keeps it; append the new quote). Otherwise **close** it at
+the revision (`closures`: the revision's record cited, the replacement quoted, `note` saying
+what changed, `replaced_by`) and append the new element — the value array is append-only
+across revisions. An in-place edit is a correction only, and leaves a `corrections` entry.
+`revisions[].status` is per revision; the claim's `status` is the weakest. Tools:
+`ath ledger project ID:SHORT@EXPR[/TAG]` (what a revision prints), `revision-diff`,
+`carry` (upgrade carried elements by exact quote match), and `migrate-ranged` for folding
+v47 version-split claims.
 
 **Enqueue with intent (§6.3, §4.4).** When you raise normalize demand on a record rostered
 to (or cited by) a typed fact, carry intent in the hint: the type's `normalization_intent`

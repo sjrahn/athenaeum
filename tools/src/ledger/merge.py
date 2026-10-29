@@ -18,11 +18,11 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from ledger import ranged as ranged_mod
 from ledger.check import run_check
 from ledger.corpora import CorpusJoin
 from ledger.model import (
     CLAIM_ID_RE,
-    canonical_claim_state,
     is_redirect,
     load_claim_lineage_rows,
     load_json_dir,
@@ -195,6 +195,7 @@ def _rewrite_fact(fact: dict, loser: str, survivor: str, rel: str, plan: dict) -
 def _rewrite_interp(
     o: dict, loser: str, survivor: str, claim_rename_map: dict[str, str],
     moved_claim_by_id: dict[str, dict], combined_sources: dict, rel: str, plan: dict,
+    artifacts: list | None = None,
 ) -> bool:
     """Rewrite `about`/`based_on`/`proposes`/`challenges` refs to *loser* →
     *survivor* on one interpretation, re-keying claim ids through
@@ -264,7 +265,9 @@ def _rewrite_interp(
                 new_claim = moved_claim_by_id.get(new_target)
                 if new_claim is not None:
                     old_state = challenges["state"]
-                    new_state = canonical_claim_state(new_claim, combined_sources)
+                    new_state = ranged_mod.challenge_state(
+                        challenges, new_claim,
+                        {"sources": combined_sources, "artifacts": artifacts or []})
                     challenges["state"] = new_state
                     plan["challenges_repinned"].append({
                         "interp": o.get("id"), "claim": new_target,
@@ -454,7 +457,7 @@ def plan_merge(ledger_root: Path, join: CorpusJoin | None, loser: str, survivor:
         rel = str(path.relative_to(ledger_root))
         changed = _rewrite_interp(
             obj, loser, survivor, claim_rename_map, moved_claim_by_id,
-            combined_sources, rel, plan,
+            combined_sources, rel, plan, survivor_fact.get("artifacts"),
         )
         if changed:
             touched_paths.add(path)

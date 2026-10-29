@@ -41,6 +41,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from ledger import ranged as ranged_mod
 from ledger.model import FULL_HASH_RE, SOURCE_REF_RE
 
 if TYPE_CHECKING:
@@ -275,13 +276,42 @@ def claim_visible(
         return True
     if claim.get("sensitivity") == "private":
         return False
-    for e in claim.get("evidence") or []:
+    # v47.1: a folded ranged claim's closures and reconciliations cite records too (a
+    # closure may quote one) — the unprojected claim fails closed over them as well
+    cites = [*(claim.get("evidence") or []), *(claim.get("closures") or []),
+             *(claim.get("revisions") or [])]
+    for e in cites:
         if not isinstance(e, dict):
             continue
         skey = e.get("source")
         if not isinstance(skey, str):
             continue
         entry = sources.get(skey) if isinstance(sources, Mapping) else None
+        if entry is not None and not evidence_entry_visible(
+                entry, join, datasets, grants, declared=declared):
+            return False
+    return True
+
+
+def projection_visible(
+    claim: dict, fact: dict, revision: str, join: CorpusJoin,
+    datasets: Mapping[str, Reference], grants: frozenset[str], *,
+    declared: frozenset[str] | None = None,
+) -> bool:
+    """v47.1 (§6.4): a ranged claim's projection at *revision* is visible to `grants`
+    iff every evidence entry, closure and reconciliation cite it carries is visible, and
+    the claim asserts no `sensitivity: private`. That covers *revision*'s own cites and
+    those of each revision its carried elements are carried through. One private
+    draft's evidence therefore never privatizes the public revisions beside it."""
+    if claim.get("sensitivity") == "private":
+        return False
+    rr = ranged_mod.read_roster(fact)
+    p, _why = ranged_mod.project(claim, fact, rr, revision)
+    if p is None:
+        return False  # fail closed: nothing to show
+    sources = fact.get("sources") if isinstance(fact.get("sources"), dict) else {}
+    for skey in ranged_mod.projection_cites(claim, fact, rr, p):
+        entry = sources.get(skey)
         if entry is not None and not evidence_entry_visible(
                 entry, join, datasets, grants, declared=declared):
             return False

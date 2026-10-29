@@ -672,7 +672,11 @@ def verify_ledger(
                 continue
             sev = res.errors if claim.get("status") == "confirmed" else res.warnings
             where = f"{f.parent.name}/{f.name} :: {claim.get('id')}"
-            for e in claim.get("evidence") or []:
+            # v47.1 (§13.2): a ranged claim's closure that carries a quote is verified
+            # exactly like an evidence entry, against its source's record
+            closure_cites = [c for c in claim.get("closures") or []
+                             if isinstance(c, dict) and "quote" in c]
+            for e in [*(claim.get("evidence") or []), *closure_cites]:
                 if not isinstance(e, dict):
                     continue
                 skey = e.get("source")

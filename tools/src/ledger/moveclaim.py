@@ -27,6 +27,7 @@ from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from ledger import ranged as ranged_mod
 from ledger.check import run_check
 from ledger.corpora import CorpusJoin
 from ledger.merge import MergeError, _dump, apply_merge, write_all
@@ -34,7 +35,6 @@ from ledger.model import (
     CLAIM_ID_RE,
     CLAIM_LINEAGE_REASONS,
     SLUG_RE,
-    canonical_claim_state,
     is_redirect,
     load_claim_lineage_rows,
     load_json_dir,
@@ -169,7 +169,7 @@ def plan_move(ledger_root: Path, claim_id: str, to: str, reason: str) -> dict:
             plan["references_rewritten"].append({"file": rel, "kind": "challenges"})
             if ch.get("state") and moved is not None:
                 old_state = ch["state"]
-                ch["state"] = canonical_claim_state(moved, dest.get("sources") or {})
+                ch["state"] = ranged_mod.challenge_state(ch, moved, dest)
                 plan["challenges_repinned"].append(
                     {"interp": o.get("id"), "old_state": old_state, "new_state": ch["state"]})
             touched.add(path)
