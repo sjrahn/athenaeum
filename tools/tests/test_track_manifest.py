@@ -212,7 +212,7 @@ def test_resolve_stream_identity_rejects_multiple_ids(tmp_path):
     fake.write_bytes(b"\x00")
     with pytest.raises(ValueError, match="exactly one track id"):
         resolver._resolve_stream_identity(
-            tmp_path, "corpus://deadbeef?stream_id=0&stream_id=1", "deadbeef", fake,
+            tmp_path, "corpus://deadbeef?stream_id=0&stream_id=1", "deadbeef", lambda: fake,
             [("stream_id", "0"), ("stream_id", "1")], regenerate=False,
         )
 
@@ -222,7 +222,7 @@ def test_resolve_stream_identity_rejects_comma_list(tmp_path):
     fake.write_bytes(b"\x00")
     with pytest.raises(ValueError, match="exactly one track id"):
         resolver._resolve_stream_identity(
-            tmp_path, "corpus://deadbeef?stream_id=0,1", "deadbeef", fake,
+            tmp_path, "corpus://deadbeef?stream_id=0,1", "deadbeef", lambda: fake,
             [("stream_id", "0,1")], regenerate=False,
         )
 
