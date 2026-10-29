@@ -552,6 +552,14 @@ def _derived_resolution(
     op_engine = _op_engine_map(corpus_root, media_type)
     from corpus import resolver as corpus_resolver
 
+    if not any(k == "time_range" for k, _ in params) \
+            and not corpus_resolver.can_yield_text(corpus_root, media_type, params):
+        # the chain can only end in media (a terminal `el=` on HTML) or cannot apply:
+        # resolving it would parse the whole artifact to learn what the registry already
+        # says, so it is never attempted
+        result = (False, "", "the anchor resolves to no textual surface", {})
+        cache[uri] = result
+        return result
     try:
         out_path = corpus_resolver.resolve(uri, corpus_root)
     except Exception as exc:  # tolerant by contract: the op genuinely can't run

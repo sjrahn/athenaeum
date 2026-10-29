@@ -1647,6 +1647,30 @@ def _find_cached_by_stem(corpus_root: Path, urihash_value: str) -> Path | None:
     return None
 
 
+def can_yield_text(corpus_root: Path, media_type: str, params: list[tuple[str, str]]) -> bool:
+    """Could resolving these `params` on a record of `media_type` produce TEXT (a `.txt`
+    or `.json` surface)? This is answered off the registry alone (`_predict_final_kind`),
+    without fetching or parsing the artifact. False when the chain ends in media (a
+    terminal `el=` on HTML materializes an image or carrier bytes, a `time_range=` cuts a
+    clip) or cannot apply at all. A member re-chain stays True: what the member chains to
+    is only known from its bytes.
+
+    `ledger verify` asks before every anchor resolution: on a large captured HTML page, a
+    resolution that was always going to fail cost a full parse per anchor."""
+    from types import SimpleNamespace
+
+    initial = _working_kind_for(corpus_root, media_type)
+    if initial is None:
+        return False
+    try:
+        kind = _predict_final_kind(SimpleNamespace(params=params), initial)
+    except ValueError:
+        return False
+    if kind == "memberchain":
+        return True
+    return KIND_TO_EXTENSION.get(kind) in ("txt", "json")
+
+
 def _predict_final_kind(parsed: furi.ParsedURI, initial_kind: str) -> str:
     """Walk the param chain consulting the registry; return the final kind. No
     transforms invoked. Used to determine the cache extension before the cache
