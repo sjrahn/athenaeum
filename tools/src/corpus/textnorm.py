@@ -16,6 +16,7 @@ onto it, keeping their historical names for verify's own call sites.
 
 from __future__ import annotations
 
+import functools
 import html as _html
 import re
 
@@ -69,6 +70,14 @@ def norm(s: str, *, strip_markup: bool = True) -> str:
     return re.sub(r"\s+(['.,;:!?])", r"\1", s)
 
 
+@functools.lru_cache(maxsize=16)
+def _norm_haystack(haystack: str, strip_markup: bool) -> str:
+    """`norm` of a haystack, memoized. A verify run checks many quotes against one record's
+    full text, and normalizing a multi-megabyte body once per quote was a third of the run.
+    A str caches its own hash, so a repeat lookup on the same body costs nothing."""
+    return norm(haystack, strip_markup=strip_markup)
+
+
 def squash(s: str) -> str:
     """Whitespace and hyphens removed — the retry form. Absorbs list bullets, inline-markup
     word splits, and soft-wrap artifacts; the characters themselves stay verbatim."""
@@ -86,7 +95,7 @@ def quote_found(quote: str, haystack: str, *, strip_markup: bool = True) -> bool
     inline-markup word splits, and soft-wrap artifacts.
 
     `strip_markup=False` — see `norm`."""
-    hay = norm(haystack, strip_markup=strip_markup)
+    hay = _norm_haystack(haystack, strip_markup)
     parts = [p for p in _ELLIPSIS_RE.split(quote) if p.strip()]
 
     def scan(h: str, squashed: bool) -> bool:

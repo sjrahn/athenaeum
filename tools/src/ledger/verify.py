@@ -69,7 +69,7 @@ from __future__ import annotations
 import contextlib
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -599,13 +599,15 @@ def verify_ledger(
     stamp: bool = False,
     only_ids: set[str] | None = None,
     today: str | None = None,
+    progress: Callable[[int, int, str], None] | None = None,
 ) -> VerifyResult:
     # A run resolves thousands of derived surfaces and writes no corpus record, so each
     # corpus's member index (the container route to a promoted member's bytes, one parse of
     # every record) is built at most once for the whole run, not once per resolution.
     with containment.member_index_scope():
         return _verify_ledger(
-            ledger_root, join, datasets, stamp=stamp, only_ids=only_ids, today=today
+            ledger_root, join, datasets, stamp=stamp, only_ids=only_ids, today=today,
+            progress=progress,
         )
 
 
@@ -617,6 +619,7 @@ def _verify_ledger(
     stamp: bool,
     only_ids: set[str] | None,
     today: str | None,
+    progress: Callable[[int, int, str], None] | None = None,
 ) -> VerifyResult:
     res = VerifyResult()
     if not join.complete:
@@ -639,7 +642,10 @@ def _verify_ledger(
             cache[h] = load_record_content(join, h)
         return cache[h]
 
-    for f in sorted(ledger_root.glob("facts/*/*.json")):
+    fact_files = sorted(ledger_root.glob("facts/*/*.json"))
+    for n_done, f in enumerate(fact_files):
+        if progress is not None:
+            progress(n_done, len(fact_files), f.stem)
         try:
             fact = json.loads(f.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):

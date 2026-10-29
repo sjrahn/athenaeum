@@ -267,13 +267,26 @@ def _cmd_verify(argv: Sequence[str]) -> int:
                     help="write snapshot-binding stamps on passing evidence")
     ns = ap.parse_args(list(argv))
     ledger_root, join, datasets = _system(ns.root)
+    import time
     from datetime import date
 
     from ledger.verify import verify_ledger
 
+    started = time.monotonic()
+    last = [0.0]
+
+    def progress(done: int, total: int, current: str) -> None:
+        # stderr, at most every 10 s (and on the first fact): a long run shows how far it is
+        now = time.monotonic()
+        if done and now - last[0] < 10:
+            return
+        last[0] = now
+        print(f"verify: facts {done}/{total} ({100 * done // max(total, 1)}%) "
+              f"{int(now - started)}s — {current}", file=sys.stderr, flush=True)
+
     res = verify_ledger(ledger_root, join, datasets, stamp=ns.stamp,
                         only_ids=set(ns.ids) or None,
-                        today=date.today().isoformat())
+                        today=date.today().isoformat(), progress=progress)
     for n in res.notes:
         print(f"note: {n}")
     for w in res.warnings:
