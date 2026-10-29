@@ -552,7 +552,9 @@ def _derived_resolution(
     op_engine = _op_engine_map(corpus_root, media_type)
     from corpus import resolver as corpus_resolver
 
-    if not any(k == "time_range" for k, _ in params) \
+    # (record-level readings such as `sidecar` are served outside the op registry, so
+    # the registry cannot predict them: those are always attempted)
+    if not any(k == "time_range" or k in _RECORD_LEVEL_READINGS for k, _ in params) \
             and not corpus_resolver.can_yield_text(corpus_root, media_type, params):
         # the chain can only end in media (a terminal `el=` on HTML) or cannot apply:
         # resolving it would parse the whole artifact to learn what the registry already
