@@ -559,6 +559,9 @@ def run_check(
 
     # ------------------------------------------------------------- fact files
     all_claims: list[tuple[Path, dict, dict]] = []
+    # v47.1: each fact's revision stratum, read once here and looked up by fact in the
+    # claims pass below — never carried over from whichever fact this loop saw last
+    roster_revs_by_fact: dict[Path, ranged_mod.RosterRevisions] = {}
     for f, o in facts.items():
         where = rel(f)
         if is_redirect(o):
@@ -708,7 +711,7 @@ def run_check(
                                    "rostered on this concept (§4.2)")
         # v47.1 (§4.2, §13.1 Evidence): the revision stratum — tags, the `against`
         # order, and one revision per record, read off the roster alone
-        roster_revs = ranged_mod.read_roster(o)
+        roster_revs_by_fact[f] = roster_revs = ranged_mod.read_roster(o)
         for msg in roster_revs.errors:
             rep.err(where, msg)
 
@@ -876,6 +879,7 @@ def run_check(
     for f, o, c in all_claims:
         cid = str(c.get("id", "?"))
         where = f"{rel(f)} :: {cid}"
+        roster_revs = roster_revs_by_fact.get(f) or ranged_mod.read_roster(o)
         m = CLAIM_ID_RE.match(cid)
         if not m or m.group(1) != o.get("id"):
             rep.err(where, f"claim id must be '{o.get('id')}:{{short}}'")

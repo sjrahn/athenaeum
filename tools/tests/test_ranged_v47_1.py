@@ -553,3 +553,16 @@ def test_a_closure_quote_is_verified_like_evidence(tmp_path: Path) -> None:
     assert ok.errors == [] and ok.verified == 2
     bad = run("not printed anywhere")
     assert len(bad.errors) == 1
+
+
+def test_each_fact_is_checked_against_its_own_roster(system: Path) -> None:  # noqa: F811
+    """Regression (dev-corpus, 2026-10-29): the claims pass read the roster of the LAST
+    fact the fact-file pass visited, so a folded claim on any other fact failed every
+    revision and source check."""
+    _std(system, _ranged_claim())
+    # a second fact, iterated after `std`, with a roster of its own
+    _fact(system, "ruleset", {"id": "zz-other", "type": "ruleset", "name": "Other",
+                              "artifacts": [{"uri": f"corpus://{H_PUB}",
+                                             "role": "documents",
+                                             "revision": "v2026-10-22"}]})
+    assert _check(system).errors == []
