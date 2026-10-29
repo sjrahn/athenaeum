@@ -950,6 +950,10 @@ def _cmd_migrate_ranged(argv: Sequence[str]) -> int:
                   "note_parts_dropped"):
             if k in rep:
                 print(f"  {k}: {rep[k]}")
+        if rep.get("authored_unmarked"):
+            print(f"  WARN authored_unmarked: {len(rep['authored_unmarked'])} element(s) in "
+                  "an identity-noted claim carry no note — appended as new, their "
+                  "predecessors closed for real (see --json/--report)")
         if rep.get("adjudicate"):
             print(f"  adjudicate: {len(rep['adjudicate'])} pair(s) (see --json/--report)")
         for key, row in plan.get("rows", {}).items():

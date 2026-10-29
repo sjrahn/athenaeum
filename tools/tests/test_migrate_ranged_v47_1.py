@@ -276,3 +276,12 @@ def test_carry_reanchors_unchanged_quotes(tmp_path: Path) -> None:
     f2 = {**fact, "claims": [c]}
     h = compute_holding(c, f2, read_roster(f2))
     assert h.modes["r2"] == {0: ATTESTED, 1: "carried"}
+
+
+def test_unmarked_element_in_an_authored_claim_is_reported(system: Path) -> None:  # noqa: F811
+    claims = _claims()
+    claims[1]["value"][2]["note"] = "§2.1, el=[20-22]"  # the "new in v2.2" note lost
+    ledger = _setup(system, claims)
+    plan = plan_fold(ledger, "std", "program-rule")
+    assert plan["report"]["authored_unmarked"] == [
+        {"claim": "std:program-rule-v2-2", "element": 2}]

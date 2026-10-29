@@ -139,7 +139,7 @@ class _Fold:
                              "appended": 0, "adjudicate": [], "migration_closures": 0,
                              "authored_closures": 0, "lifecycle_closures": 0,
                              "note_parts_dropped": 0, "locators_moved": 0,
-                             "followed_supersession": []}
+                             "followed_supersession": [], "authored_unmarked": []}
 
     # -- revisions
 
@@ -361,6 +361,12 @@ def plan_fold(ledger_root: Path, fact_id: str, predicate: str,
                 if authored:
                     am, cm = _AS_RE.search(note), _CHANGED_RE.search(note)
                     ref = am or cm
+                    if ref is None and not _NEW_RE.search(note):
+                        # authored mode is all-or-nothing per claim: an element carrying
+                        # no identity note is appended as new, and so the predecessor it
+                        # may continue gets a REAL closure. Name every one, loudly.
+                        fold.report["authored_unmarked"].append(
+                            {"claim": cid, "element": j})
                     if ref is not None:
                         src = by_version.get(ref.group("ver"))
                         n = int(ref.group("n"))
