@@ -1069,7 +1069,10 @@ def _verify_ledger(
     # demand aggregate — the citation is itself the pressure signal, so the 1.4
     # needs-warning (enqueue/promote typed beside the discovery) retires. The
     # pre-assertion workspace references such records freely, as ever.
-    for f in sorted(ledger_root.glob("interpretations/*.json")):
+    interp_files = sorted(ledger_root.glob("interpretations/*.json"))
+    if progress is not None:
+        progress(len(fact_files), len(fact_files), f"interpretations ({len(interp_files)})")
+    for f in interp_files:
         try:
             interp = json.loads(f.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
@@ -1098,9 +1101,11 @@ def _verify_ledger(
             if not m or m.group(1) in counted:
                 continue
             h = m.group(1)
-            content = content_for(h)
-            if content is None or content.citation_surface != "segments" \
-                    or content.segment_count != 0:
+            # the one question asked here, "is this a deferred surface?", answered off the
+            # record's raw text (`join.deferred_surface`, the predicate `check` grades the
+            # bar with) — parsing every segment of every interpretation-cited record just
+            # to count them was the bulk of a whole-instance run
+            if join.deferred_surface(h) is not True:
                 continue
             counted.add(h)
             res.demand[h] = res.demand.get(h, 0) + 1
