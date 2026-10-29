@@ -259,7 +259,7 @@ def _grants_for_plane(instance: Instance, plane: str) -> frozenset[str] | None:
 @dataclass(frozen=True)
 class ExportReport:
     plane: str
-    spec_version: int
+    spec_version: str
     instance_commit: str  # "" -> rendered/printed as "absent"
     spine: tuple[spine_mod.SpineBinding, ...]
     unverified_spine_refs: tuple[str, ...] = ()

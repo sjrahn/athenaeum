@@ -16,6 +16,7 @@ from pathlib import Path
 import frontmatter
 import pytest
 
+from ath._version import SPEC_VERSION
 from ath.manifest import Instance, Reference, Snapshot
 from corpus import paths as corpus_paths
 from corpus import records as corpus_records
@@ -291,7 +292,7 @@ def test_reproducibility_stamp_fields(ledger) -> None:
     lines = text.splitlines()
     assert report.plane == "owner"
     assert report.instance_commit == ""  # tmp_path is not a git repo — "absent"
-    assert report.spec_version > 0
+    assert report.spec_version == SPEC_VERSION
     assert [b.dataset for b in report.spine] == ["bfo"]
     assert '<ledger://export> <ledger://meta/plane> "owner" .' in lines
     assert '<ledger://export> <ledger://meta/instanceCommit> "absent" .' in lines

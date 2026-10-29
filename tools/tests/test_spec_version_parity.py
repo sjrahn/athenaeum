@@ -17,11 +17,11 @@ SPEC_DIR = Path(__file__).resolve().parents[2] / "spec"
 PARTS = ("athenaeum.md", "corpus.md", "ledger.md", "custody.md")
 
 
-def _frontmatter_version(path: Path) -> int:
+def _frontmatter_version(path: Path) -> str:
     head = path.read_text(encoding="utf-8").split("\n---", 2)[0]
-    m = re.search(r"^version:\s*(\d+)\s*$", head, re.MULTILINE)
+    m = re.search(r"^version:\s*(\d+(?:\.\d+)?)\s*$", head, re.MULTILINE)
     assert m, f"{path.name}: no `version:` in frontmatter"
-    return int(m.group(1))
+    return m.group(1)
 
 
 @pytest.mark.skipif(not SPEC_DIR.is_dir(), reason="spec/ not present (installed wheel)")
