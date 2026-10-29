@@ -62,6 +62,9 @@ FoldError = MergeError
 _AS_RE = re.compile(r"\bas v(?P<ver>[\d.]+) element (?P<n>\d+)\b")
 _CHANGED_RE = re.compile(r"\bchanged from v(?P<ver>[\d.]+) element (?P<n>\d+)\b:?\s*(?P<what>.*)")
 _NEW_RE = re.compile(r"\bnew (?:in v[\d.]+|at patch [\d.]+)\b")
+# a later element that merges several predecessor elements into one
+_MERGES_RE = re.compile(
+    r"\bmerges v(?P<ver>[\d.]+) elements? (?P<ns>\d+(?:(?:,\s*|\s+and\s+)\d+)*)")
 # prose lifecycle markers inside one claim spanning a patch recapture
 _SUPERSEDED_RE = re.compile(
     r"\bSuperseded at patch (?P<ver>[\d.]+) by elements? (?P<ns>\d+(?:(?:,\s*|\s+and\s+)\d+)*)\.?")
@@ -94,6 +97,7 @@ def _clean_note(el: dict, ev_notes: set[str]) -> tuple[dict, list[str]]:
     keep, dropped = [], []
     for part in _note_parts(el["note"]):
         if (part in ev_notes or _AS_RE.search(part) or _CHANGED_RE.search(part)
+                or _MERGES_RE.search(part)
                 or _NEW_RE.search(part) or _SUPERSEDED_RE.search(part)
                 or _ABSENT_RE.search(part) or not part):
             dropped.append(part)
@@ -139,7 +143,8 @@ class _Fold:
                              "appended": 0, "adjudicate": [], "migration_closures": 0,
                              "authored_closures": 0, "lifecycle_closures": 0,
                              "note_parts_dropped": 0, "locators_moved": 0,
-                             "followed_supersession": [], "authored_unmarked": []}
+                             "followed_supersession": [], "authored_unmarked": [],
+                             "authored_merged": 0}
 
     # -- revisions
 
@@ -352,7 +357,8 @@ def plan_fold(ledger_root: Path, fact_id: str, predicate: str,
             matched: set[int] = set()
             authored = any(isinstance(el, dict) and (
                 _AS_RE.search(str(el.get("note", ""))) or _CHANGED_RE.search(
-                    str(el.get("note", ""))) or _NEW_RE.search(str(el.get("note", ""))))
+                    str(el.get("note", ""))) or _NEW_RE.search(str(el.get("note", "")))
+                    or _MERGES_RE.search(str(el.get("note", ""))))
                 for el in value)
             changed: list[tuple[int, int, str]] = []  # (old survivor idx, new idx, note)
             for j, el in enumerate(value):
@@ -360,8 +366,26 @@ def plan_fold(ledger_root: Path, fact_id: str, predicate: str,
                 target = None
                 if authored:
                     am, cm = _AS_RE.search(note), _CHANGED_RE.search(note)
+                    mm = _MERGES_RE.search(note)
                     ref = am or cm
-                    if ref is None and not _NEW_RE.search(note):
+                    if mm is not None and ref is None:
+                        # "merges v2.2 elements 3, 4": a new element, and each merged
+                        # predecessor closed with it as `replaced_by`
+                        src = by_version.get(mm.group("ver"))
+                        for n in (int(x) for x in re.findall(r"\d+", mm.group("ns"))):
+                            m_idx = fold.maps.get(str(src.get("id")), {}).get(n) \
+                                if src is not None else None
+                            if m_idx is not None and m_idx not in candidates:
+                                m_idx = fold.follow(m_idx, set(candidates))
+                            if m_idx is None:
+                                fold.errors.append(
+                                    f"{cid}#{j}: note merges v{mm.group('ver')} element {n}, "
+                                    "which the fold cannot place")
+                                continue
+                            changed.append((m_idx, -1, f"merged with v{mm.group('ver')} "
+                                            f"elements {mm.group('ns')}"))
+                        fold.report["authored_merged"] += 1
+                    if ref is None and mm is None and not _NEW_RE.search(note):
                         # authored mode is all-or-nothing per claim: an element carrying
                         # no identity note is appended as new, and so the predecessor it
                         # may continue gets a REAL closure. Name every one, loudly.
@@ -418,8 +442,7 @@ def plan_fold(ledger_root: Path, fact_id: str, predicate: str,
                 cmap[j] = fold.append(c, j)
                 fold.move_evidence(c, j, cmap[j])
                 fold.report["appended"] += 1
-                if changed and changed[-1][1] == -1:
-                    changed[-1] = (changed[-1][0], cmap[j], changed[-1][2])
+                changed = [(o, cmap[j] if n == -1 else n, w) for o, n, w in changed]
             for old_i, new_i, what in changed:
                 if old_i in matched:
                     continue  # another element continued it; the change is an addition

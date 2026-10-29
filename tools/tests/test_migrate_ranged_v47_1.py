@@ -285,3 +285,21 @@ def test_unmarked_element_in_an_authored_claim_is_reported(system: Path) -> None
     plan = plan_fold(ledger, "std", "program-rule")
     assert plan["report"]["authored_unmarked"] == [
         {"claim": "std:program-rule-v2-2", "element": 2}]
+
+
+def test_a_merge_note_closes_each_merged_predecessor(system: Path) -> None:  # noqa: F811
+    claims = _claims()
+    # the certified text prints draft elements 1 and 2 as one rule
+    claims[2] = {**claims[2], "value": [
+        _el("flat fee", "§1.2, el=7; as v2.2 element 0", value="10"),
+        _el("Projects disclose, with EACs", "§5.8, el=9; merges v2.2 elements 1, 2"),
+        _el("Proponents disclose audits", "§5.8, el=11; as v2.2 element 3"),
+    ]}
+    ledger = _setup(system, claims)
+    plan = plan_fold(ledger, "std", "program-rule")
+    assert plan["errors"] == [] and plan["report"]["authored_merged"] == 1
+    new = plan["rows"]["std:program-rule-v2-2-0"]["elements"]["1"]
+    closed = {cl["element"]: cl for cl in plan["claim"]["closures"]
+              if cl["revision"] == "2-2-0"}
+    assert closed[5]["replaced_by"] == [new] and closed[6]["replaced_by"] == [new]
+    assert "merged with v2.2 elements 1, 2" in closed[5]["note"]
