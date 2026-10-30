@@ -84,6 +84,8 @@ class CorpusJoin:
         self._touch: dict[str, str] = {}
         self._deferred: dict[str, bool | None] = {}
         self._tenancy_private: dict[str, bool] = {}
+        # (hash, declared tiers) → held tier set; filled by `tenancy._held_tiers`
+        self._held_tiers: dict[tuple[str, frozenset[str] | None], frozenset[str]] = {}
 
     @property
     def complete(self) -> bool:

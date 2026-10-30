@@ -216,11 +216,21 @@ def _held_tiers(
     `CorpusJoin.is_private`'s own holder loop (recomputed here rather than
     read from its cache, since that cache answers the binary question only).
     Empty when `hash_` resolves nowhere — an unresolved citation is `check`'s
-    dangle to flag, not this module's."""
+    dangle to flag, not this module's. Memoized on the join per (hash,
+    declared), the same lifetime as its `is_private` cache: one `check` asks
+    this for the same record once per citing claim, and each answer parses the
+    record and its lineage."""
+    cache = getattr(join, "_held_tiers", None)
+    key = (hash_, declared)
+    if cache is not None and key in cache:
+        return cache[key]
     tiers: set[str] = set()
     for c in join.holders(hash_):
         tiers |= record_tiers(c.root, hash_, default=c.floor, declared=declared)
-    return frozenset(tiers)
+    held = frozenset(tiers)
+    if cache is not None:
+        cache[key] = held
+    return held
 
 
 def evidence_entry_visible(
