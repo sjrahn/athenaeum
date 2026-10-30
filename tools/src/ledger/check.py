@@ -1064,6 +1064,11 @@ def run_check(
         if folded:
             for msg in ranged_mod.check_claim(c, o, roster_revs):
                 rep.err(where, msg)
+            # a reconciliation or closure cites the sources table like evidence does
+            # (§5.6: absence is cited by the record) — so it references the entry (§6.1)
+            for ent in [*(c.get("revisions") or []), *(c.get("closures") or [])]:
+                if isinstance(ent, dict) and isinstance(ent.get("source"), str):
+                    used_sources.setdefault(f, set()).add(ent["source"])
         if not folded and any(isinstance(e, dict) and "locators" in e
                               for e in (c.get("evidence") or [])):
             rep.err(where, "evidence carries `locators` on a claim that is not a folded "

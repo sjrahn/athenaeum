@@ -374,3 +374,20 @@ def test_an_empty_valued_claim_folds_with_its_whole_value_evidence(
     assert [r["revision"] for r in c["revisions"]] == ["2-1-0"]
     apply_fold(ledger, plan, CorpusJoin([]), {})
     assert run_check(ledger, CorpusJoin([]), {}, no_corpus=True).errors == []
+
+
+def test_a_source_cited_only_by_revisions_and_closures_is_referenced(
+        system: Path) -> None:  # noqa: F811
+    """§5.6: absence is cited by the record. A revision whose only citations are its
+    reconciliation row and closures still references its sources entry (§6.1)."""
+    ledger = _setup(system)
+    apply_fold(ledger, plan_fold(ledger, "std", "program-rule"), CorpusJoin([]), {})
+    path = ledger / "facts" / "ruleset" / "std.json"
+    fact = json.loads(path.read_text())
+    claim = fact["claims"][0]
+    claim["evidence"] = [e for e in claim["evidence"] if e["source"] != "s2"]
+    assert any(r.get("source") == "s2" for r in claim["revisions"])
+    assert any(cl.get("source") == "s2" for cl in claim["closures"])
+    path.write_text(json.dumps(fact, indent=1))
+    rep = run_check(ledger, CorpusJoin([]), {}, no_corpus=True)
+    assert not [w for w in rep.warnings if "'s2' is not referenced" in str(w)]
