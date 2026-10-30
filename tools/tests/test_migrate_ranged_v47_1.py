@@ -343,3 +343,34 @@ def test_a_refused_fold_rolls_the_whole_batch_back(system: Path) -> None:  # noq
         raise AssertionError("a refused second fold must raise")
     assert (ledger / "facts" / "ruleset" / "std.json").read_text() == before
     assert not (ledger / "facts" / "LINEAGE.json").exists()
+
+
+def test_whole_value_evidence_carries_over(system: Path) -> None:  # noqa: F811
+    claims = _claims()
+    whole = {"source": "s3", "element": None, "kind": "authoritative",
+             "quote": "the number of Certificates", "note": "the whole list"}
+    claims[1]["evidence"].append(whole)
+    ledger = _setup(system, claims=claims)
+    plan = plan_fold(ledger, "std", "program-rule")
+    assert plan["errors"] == []
+    assert [e for e in plan["claim"]["evidence"] if e.get("element") is None] == [whole]
+    apply_fold(ledger, plan, CorpusJoin([]), {})
+
+
+def test_an_empty_valued_claim_folds_with_its_whole_value_evidence(
+        system: Path) -> None:  # noqa: F811
+    """A transcription that found nothing printed: `value: []`, one whole-read entry."""
+    empty = {"id": "std:program-rule-v2-1", "predicate": "program-rule",
+             "qualifiers": {"version": "2.1"}, "status": "provisional",
+             "asof": "2026-10-27", "reasoning": "no rules are printed in this text",
+             "value": [], "evidence": [{"source": "s1", "element": None,
+                                        "kind": "authoritative",
+                                        "quote": "the number of Credits"}]}
+    ledger = _setup(system, claims=[empty])
+    plan = plan_fold(ledger, "std", "program-rule")
+    assert plan["errors"] == []
+    c = plan["claim"]
+    assert c["value"] == [] and len(c["evidence"]) == 1
+    assert [r["revision"] for r in c["revisions"]] == ["2-1-0"]
+    apply_fold(ledger, plan, CorpusJoin([]), {})
+    assert run_check(ledger, CorpusJoin([]), {}, no_corpus=True).errors == []

@@ -228,6 +228,15 @@ class _Fold:
                     self.report["locators_moved"] += 1
                 self.claim["evidence"].append(e2)
 
+    def move_whole_value(self, claim: dict) -> None:
+        """Carry *claim*'s whole-value entries (no `element`) over unchanged: on the
+        folded claim they still count toward the bar at their revision and attest no
+        element (§5.4). For an empty-valued claim they are the only evidence, so
+        dropping them would leave a revision with no evidence at all."""
+        for e in claim.get("evidence") or []:
+            if isinstance(e, dict) and e.get("element") is None:
+                self.claim["evidence"].append(copy.deepcopy(e))
+
     def close(self, i: int, rev: str, claim: dict, note: str, *, migration: bool,
               replaced_by: list[int] | None = None) -> None:
         for cl in self.claim["closures"]:
@@ -355,6 +364,7 @@ def plan_fold(ledger_root: Path, fact_id: str, predicate: str,
                           "ranged claims are reconciled by hand)")
         revs = span[cid]
         cmap: dict[int, int] = {}
+        fold.move_whole_value(c)
         if ci == 0:
             fold.add_revisions(c, revs)
             for j in range(len(value)):
