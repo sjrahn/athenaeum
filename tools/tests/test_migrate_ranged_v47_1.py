@@ -15,7 +15,7 @@ from pathlib import Path
 from ledger._cli import main as ledger_main
 from ledger.check import run_check
 from ledger.corpora import CorpusJoin
-from ledger.migrate_ranged import apply_fold, plan_fold
+from ledger.migrate_ranged import FoldError, apply_fold, apply_folds, plan_fold
 from ledger.ranged import (
     ATTESTED,
     PENDING,
@@ -303,3 +303,43 @@ def test_a_merge_note_closes_each_merged_predecessor(system: Path) -> None:  # n
               if cl["revision"] == "2-2-0"}
     assert closed[5]["replaced_by"] == [new] and closed[6]["replaced_by"] == [new]
     assert "merged with v2.2 elements 1, 2" in closed[5]["note"]
+
+
+def _two_predicates(system: Path) -> Path:  # noqa: F811
+    """`std` with `program-rule` and a twin `program-parameter`, both unfolded."""
+    params = json.loads(json.dumps(_claims()).replace("program-rule", "program-parameter"))
+    ledger = _setup(system, claims=_claims() + params)
+    (ledger / "schemas" / "ruleset.yaml").write_text(
+        SCHEMA + SCHEMA.split("fields:\n", 1)[1].replace("program-rule", "program-parameter"))
+    return ledger
+
+
+def test_batch_folds_two_predicates_of_one_fact_behind_one_gate(
+        system: Path, tmp_path: Path) -> None:  # noqa: F811
+    ledger = _two_predicates(system)
+    batch = tmp_path / "folds.txt"
+    batch.write_text("# tranche 1\nstd program-rule\nstd program-parameter params\n")
+    assert ledger_main(["migrate-ranged", "--batch", str(batch), "--root", str(system)]) == 0
+    assert len(json.loads((ledger / "facts" / "ruleset" / "std.json").read_text())
+               ["claims"]) == 6  # dry run
+    assert ledger_main(["migrate-ranged", "--batch", str(batch), "--apply", "--no-corpus",
+                        "--root", str(system)]) == 0
+    fact = json.loads((ledger / "facts" / "ruleset" / "std.json").read_text())
+    assert [c["id"] for c in fact["claims"]] == ["std:program-rule", "std:params"]
+    rows = json.loads((ledger / "facts" / "LINEAGE.json").read_text())
+    assert rows["std:program-rule-v2-2"]["to"] == "std:program-rule"
+    assert rows["std:program-parameter-v2-2"]["to"] == "std:params"
+    assert run_check(ledger, CorpusJoin([]), {}, no_corpus=True).errors == []
+
+
+def test_a_refused_fold_rolls_the_whole_batch_back(system: Path) -> None:  # noqa: F811
+    ledger = _two_predicates(system)
+    before = (ledger / "facts" / "ruleset" / "std.json").read_text()
+    try:
+        apply_folds(ledger, [("std", "program-rule", None), ("std", "program-rule", None)])
+    except FoldError as e:
+        assert "already holds a folded" in str(e) and "rolled back all 2" in str(e)
+    else:
+        raise AssertionError("a refused second fold must raise")
+    assert (ledger / "facts" / "ruleset" / "std.json").read_text() == before
+    assert not (ledger / "facts" / "LINEAGE.json").exists()

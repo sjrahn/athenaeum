@@ -34,7 +34,8 @@ claim under the bare short. It does not write anything:
   and the locator keys moved onto evidence.
 
 `apply_fold` writes a refusal-free plan behind the same `ath ledger check` gate `merge`
-and `move-claim` use: any NEW check error rolls every write back.
+and `move-claim` use: any NEW check error rolls every write back. `apply_folds` runs many
+folds behind ONE gate, each planned on the ledger the folds before it left.
 """
 
 from __future__ import annotations
@@ -42,12 +43,18 @@ from __future__ import annotations
 import copy
 import json
 import re
+import shutil
+import tempfile
+from collections.abc import Iterable, Mapping
 from itertools import pairwise
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from ledger import ontology
 from ledger import ranged as ranged_mod
-from ledger.merge import MergeError, _dump, apply_merge
+from ledger.check import run_check
+from ledger.corpora import CorpusJoin
+from ledger.merge import MergeError, _dump, apply_merge, write_all
 from ledger.model import (
     is_redirect,
     load_claim_lineage_rows,
@@ -56,7 +63,12 @@ from ledger.model import (
 )
 from ledger.schemas import load_domain_schemas, load_schemas
 
+if TYPE_CHECKING:
+    from ath.manifest import Reference
+
 FoldError = MergeError
+
+Fold = tuple[str, str, str | None]  # (fact id, predicate, short or None)
 
 # authored identity notes (the instance's v47 transcription convention)
 _AS_RE = re.compile(r"\bas v(?P<ver>[\d.]+) element (?P<n>\d+)\b")
@@ -627,3 +639,65 @@ def apply_fold(ledger_root: Path, plan: dict, join=None, datasets=None) -> None:
     """Execute a refusal-free `plan_fold` behind the `ath ledger check` gate (see
     `merge.apply_merge`): any NEW check error rolls every write back."""
     apply_merge(ledger_root, plan, join, datasets, verb="migrate-ranged")
+
+
+def apply_folds(
+    ledger_root: Path, folds: Iterable[Fold], join: CorpusJoin | None = None,
+    datasets: Mapping[str, Reference] | None = None,
+) -> list[dict]:
+    """Execute `folds` in order behind ONE `ath ledger check` gate (full corpus join when
+    *join* is given, `--no-corpus` mode otherwise). Each fold is planned against the ledger
+    as the folds before it left it, so two predicates of one fact fold in turn. A refused
+    plan, or any NEW check error after the last fold, rolls every fold's writes back and
+    raises `FoldError`."""
+    no_corpus = join is None
+    real_join = join if join is not None else CorpusJoin([])
+    real_datasets = datasets if datasets is not None else {}
+    baseline = run_check(ledger_root, real_join, real_datasets, no_corpus=no_corpus)
+    originals: dict[str, str | None] = {}
+    plans: list[dict] = []
+    try:
+        for fact_id, predicate, short in folds:
+            plan = plan_fold(ledger_root, fact_id, predicate, short)
+            plans.append(plan)
+            if plan["errors"]:
+                raise FoldError(f"{fact_id} {predicate} refused: "
+                                + "; ".join(plan["errors"]))
+            for rel, content in plan["_originals"].items():
+                originals.setdefault(rel, content)
+            write_all(ledger_root, plan["_writes"])
+        if not plans:
+            raise FoldError("no folds given")
+        after = run_check(ledger_root, real_join, real_datasets, no_corpus=no_corpus)
+        new_errors = [e for e in after.errors if e not in baseline.errors]
+        if new_errors:
+            raise FoldError(f"{len(plans)} folds introduced new check errors: "
+                            + "; ".join(new_errors))
+    except BaseException as e:
+        write_all(ledger_root, originals)
+        if isinstance(e, FoldError):
+            raise FoldError(f"{e} — rolled back all {len(plans)} planned folds") from None
+        raise
+    return plans
+
+
+def preview_folds(ledger_root: Path, folds: Iterable[Fold]) -> list[dict]:
+    """Plan `folds` in order without touching the ledger: each plan is computed on, and
+    written to, a scratch copy of `facts/` and `interpretations/` (everything else linked),
+    so a later fold sees the earlier ones. Planning stops at the first refused fold (its
+    plan is the last returned)."""
+    plans: list[dict] = []
+    with tempfile.TemporaryDirectory(prefix="ath-migrate-ranged-") as tmp:
+        scratch = Path(tmp)
+        for child in ledger_root.iterdir():
+            if child.name in ("facts", "interpretations") and child.is_dir():
+                shutil.copytree(child, scratch / child.name)
+            else:
+                (scratch / child.name).symlink_to(child)
+        for fact_id, predicate, short in folds:
+            plan = plan_fold(scratch, fact_id, predicate, short)
+            plans.append(plan)
+            if plan["errors"]:
+                break
+            write_all(scratch, plan["_writes"])
+    return plans

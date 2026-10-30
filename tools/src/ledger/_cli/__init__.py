@@ -68,7 +68,9 @@ Commands:
                 or the auto-merge/adjudicate/append-and-close classes, inert
                 migration closures, `ranged` lineage rows; dry-run by
                 default, --apply behind the check gate, --json for the plan,
-                --report PATH writes the plan + projections table
+                --report PATH writes the plan + projections table; --batch
+                FILE runs many folds (`FACT PREDICATE [SHORT]` per line)
+                behind one gate; --no-corpus gates without the corpus join
   project REF   a ranged claim's projection (§12, v47.1): REF is
                 [ledger://]{id}:{short}[@{expression}[/{tag}]|@{tag}][#{N}],
                 resolved through the lineage map's one hop (a `ranged` row
@@ -915,63 +917,115 @@ def _print_move(summary: dict, apply: bool) -> None:
         print(f"  lineage {key} → {row['to']} ({row['reason']})")
 
 
+def _print_fold(plan: dict, apply: bool) -> None:
+    mode = "APPLYING" if apply else "DRY RUN"
+    print(f"[{mode}] migrate-ranged {plan['fact']} {plan['predicate']}")
+    for e in plan["errors"]:
+        print(f"  REFUSED: {e}")
+    rep = plan.get("report") or {}
+    for k in ("revisions", "elements", "closures", "auto_merge", "authored_continue",
+              "authored_changed", "appended", "migration_closures",
+              "authored_closures", "lifecycle_closures", "locators_moved",
+              "note_parts_dropped"):
+        if k in rep:
+            print(f"  {k}: {rep[k]}")
+    if rep.get("authored_unmarked"):
+        print(f"  WARN authored_unmarked: {len(rep['authored_unmarked'])} element(s) in "
+              "an identity-noted claim carry no note — appended as new, their "
+              "predecessors closed for real (see --json/--report)")
+    if rep.get("adjudicate"):
+        print(f"  adjudicate: {len(rep['adjudicate'])} pair(s) (see --json/--report)")
+    for key, row in plan.get("rows", {}).items():
+        print(f"  lineage {key} → {row['to']} @{row.get('projection')}")
+    for r in plan.get("references_rewritten", []):
+        print(f"  rewrite based_on in {r}")
+
+
 def _cmd_migrate_ranged(argv: Sequence[str]) -> int:
     ap = _base_parser("ath ledger migrate-ranged",
                       "Fold one fact's version-split claims of a ranged predicate into one "
                       "ranged claim (v47.1) — dry-run by default.")
-    ap.add_argument("fact")
-    ap.add_argument("predicate")
+    ap.add_argument("fact", nargs="?")
+    ap.add_argument("predicate", nargs="?")
     ap.add_argument("--short", default=None,
                     help="the folded claim's short (default: the predicate)")
+    ap.add_argument("--batch", type=Path, metavar="FILE",
+                    help="many folds, one `FACT PREDICATE [SHORT]` per line (`#` comments), "
+                         "applied in order behind ONE check gate — any refusal or new "
+                         "check error rolls them all back")
+    ap.add_argument("--no-corpus", action="store_true",
+                    help="gate on `ath ledger check --no-corpus`: skips the corpus join, "
+                         "so resolution and sensitivity are NOT re-checked — run the full "
+                         "check afterwards")
     ap.add_argument("--apply", action="store_true", help="execute (default: dry-run)")
     ap.add_argument("--json", action="store_true", help="print the plan as JSON")
     ap.add_argument("--report", type=Path, default=None, metavar="PATH",
                     help="write the plan (claim, rows, report, projections) as JSON")
     ns = ap.parse_args(list(argv))
+    if ns.batch is not None:
+        if ns.fact or ns.predicate or ns.short:
+            ap.error("--batch takes its folds from FILE, not FACT PREDICATE/--short")
+        try:
+            folds = _read_fold_batch(ns.batch)
+        except (OSError, ValueError) as e:
+            ap.error(str(e))
+    else:
+        if not (ns.fact and ns.predicate):
+            ap.error("FACT and PREDICATE are required (or --batch FILE)")
+        folds = [(ns.fact, ns.predicate, ns.short)]
     ledger_root, join, datasets = _system(ns.root)
-    from ledger.migrate_ranged import FoldError, apply_fold, plan_fold
+    from ledger.migrate_ranged import FoldError, apply_folds, plan_fold, preview_folds
 
-    plan = plan_fold(ledger_root, ns.fact, ns.predicate, ns.short)
-    summary = {k: v for k, v in plan.items() if not k.startswith("_")}
+    plans = (preview_folds(ledger_root, folds) if ns.batch is not None
+             else [plan_fold(ledger_root, ns.fact, ns.predicate, ns.short)])
+    summaries = [{k: v for k, v in plan.items() if not k.startswith("_")} for plan in plans]
+    doc = summaries[0] if ns.batch is None else summaries
     if ns.report is not None:
-        ns.report.write_text(json.dumps(summary, indent=2, ensure_ascii=False) + "\n",
+        ns.report.write_text(json.dumps(doc, indent=2, ensure_ascii=False) + "\n",
                              encoding="utf-8")
     if ns.json:
-        print(json.dumps(summary, indent=2, ensure_ascii=False))
+        print(json.dumps(doc, indent=2, ensure_ascii=False))
     else:
-        mode = "APPLYING" if ns.apply else "DRY RUN"
-        print(f"[{mode}] migrate-ranged {ns.fact} {ns.predicate}")
-        for e in plan["errors"]:
-            print(f"  REFUSED: {e}")
-        rep = plan.get("report") or {}
-        for k in ("revisions", "elements", "closures", "auto_merge", "authored_continue",
-                  "authored_changed", "appended", "migration_closures",
-                  "authored_closures", "lifecycle_closures", "locators_moved",
-                  "note_parts_dropped"):
-            if k in rep:
-                print(f"  {k}: {rep[k]}")
-        if rep.get("authored_unmarked"):
-            print(f"  WARN authored_unmarked: {len(rep['authored_unmarked'])} element(s) in "
-                  "an identity-noted claim carry no note — appended as new, their "
-                  "predecessors closed for real (see --json/--report)")
-        if rep.get("adjudicate"):
-            print(f"  adjudicate: {len(rep['adjudicate'])} pair(s) (see --json/--report)")
-        for key, row in plan.get("rows", {}).items():
-            print(f"  lineage {key} → {row['to']} @{row.get('projection')}")
-        for r in plan.get("references_rewritten", []):
-            print(f"  rewrite based_on in {r}")
-    if plan["errors"]:
+        for plan in plans:
+            _print_fold(plan, ns.apply)
+    if any(plan["errors"] for plan in plans):
+        if ns.batch is not None:
+            print(f"\nrefused at fold {len(plans)} of {len(folds)}; nothing applied",
+                  file=sys.stderr)
         return 1
     if not ns.apply:
         print("\n(dry run — pass --apply to execute)")
         return 0
     try:
-        apply_fold(ledger_root, plan, join, datasets)
+        applied = apply_folds(ledger_root, folds, None if ns.no_corpus else join, datasets)
     except FoldError as e:
         print(f"ath ledger migrate-ranged: {e}", file=sys.stderr)
         return 1
-    print(f"\napplied: {', '.join(plan['retired']) or ns.fact} → {plan['claim']['id']}")
+    print()
+    for plan in applied:
+        print(f"applied: {', '.join(plan['retired']) or plan['fact']} → "
+              f"{plan['claim']['id']}")
+    if ns.batch is not None:
+        print(f"{len(applied)} folds behind one check gate")
+    if ns.no_corpus:
+        print("gated without the corpus join — run `ath ledger check` before committing")
     return 0
+
+
+def _read_fold_batch(path: Path) -> list[tuple[str, str, str | None]]:
+    """`FACT PREDICATE [SHORT]` per line; blank lines and `#` comments skipped."""
+    folds: list[tuple[str, str, str | None]] = []
+    for ln, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        parts = raw.split("#", 1)[0].split()
+        if not parts:
+            continue
+        if len(parts) not in (2, 3):
+            raise ValueError(f"{path}:{ln}: expected `FACT PREDICATE [SHORT]`, "
+                             f"got {raw.strip()!r}")
+        folds.append((parts[0], parts[1], parts[2] if len(parts) == 3 else None))
+    if not folds:
+        raise ValueError(f"{path}: no folds")
+    return folds
 
 
 def _cmd_project(argv: Sequence[str]) -> int:
