@@ -262,3 +262,62 @@ def test_ledger_verifies_quote_against_html_only_message_text(mbox_record):
     res = verify_ledger(ledger, join, {}, stamp=True, today="2026-09-02")
     assert res.unverifiable == 0 and not res.errors, (res.errors, res.notes)
     assert res.verified == 1 and res.derived_resolved == 1
+
+
+# ---------- v47.1: `el=<N>&script`, a script element's text verbatim ---------- #
+
+_FLIGHT = (
+    '<html><body><p>Changelog</p>'
+    '<script>self.__next_f.push([1,"7:{\\"slug\\":\\"std\\",\\"minorVersion\\":\\"1.1\\",'
+    '\\"certifiedAt\\":\\"2024-09-30T12:12:42+00:00\\"} &amp; </b>"])</script>'
+    '</body></html>'
+)
+_FLIGHT_QUOTE = '\\"minorVersion\\":\\"1.1\\",\\"certifiedAt\\":\\"2024-09-30T12:12:42+00:00\\"'
+
+
+def _flight_record(tmp_path):
+    root = _corpus(tmp_path)
+    soup = BeautifulSoup(_FLIGHT, "html.parser")
+    rid = _stage_record(
+        root, _FLIGHT.encode(), mime="text/html", name="flight.html",
+        fields={"addressing": {"parser": "html.parser",
+                               "elements": html_tf.total_element_count(soup),
+                               "scheme": "ordinal"}},
+    )
+    proot = html_tf.path_root(soup)
+    ords = {t.name: html_tf.element_ordinal(t, proot)
+            for t in html_tf.iter_elements_preorder(proot)}
+    return root, rid, ords
+
+
+def test_el_script_reads_the_element_verbatim(tmp_path):
+    root, rid, ords = _flight_record(tmp_path)
+    out = resolver.resolve(f"corpus://{rid}?el={ords['script']}&script", root)
+    assert out.suffix == ".txt"
+    text = out.read_text("utf-8")
+    assert _FLIGHT_QUOTE in text and "&amp; </b>" in text  # nothing decoded
+    assert resolver.can_yield_text(root, "text/html", [("el", str(ords["script"])),
+                                                       ("script", "")])
+    with pytest.raises(Exception, match="cite its text with"):
+        resolver.resolve(f"corpus://{rid}?el={ords['p']}&script", root)
+
+
+def test_ledger_verifies_a_quote_in_embedded_script_data(tmp_path):
+    from ledger.corpora import CorpusJoin, RegisteredCorpus
+    from ledger.verify import verify_ledger
+
+    root, rid, ords = _flight_record(tmp_path)
+    ledger = root.parent / "ledger"
+    (ledger / "facts" / "ruleset").mkdir(parents=True)
+    (ledger / "facts" / "ruleset" / "std.json").write_text(json.dumps({
+        "id": "std", "type": "ruleset", "name": "Std",
+        "sources": {"s1": {"record": rid}},
+        "claims": [{"id": "std:certified", "predicate": "certified", "value": "2024-09-30",
+                    "status": "confirmed", "asof": "2026-01-01",
+                    "evidence": [{"source": "s1", "anchor": f"el={ords['script']}&script",
+                                  "quote": _FLIGHT_QUOTE, "kind": "authoritative"}]}],
+    }))
+    join = CorpusJoin([RegisteredCorpus("corpus", root, private=False)])
+    res = verify_ledger(ledger, join, {}, stamp=True, today="2026-11-05")
+    assert res.unverifiable == 0 and not res.errors, (res.errors, res.notes)
+    assert res.verified == 1 and res.derived_resolved == 1

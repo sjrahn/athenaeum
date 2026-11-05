@@ -969,6 +969,24 @@ def extract_el_text(ref: HtmlElRef, value: str | None, ctx: RenderContext) -> st
     return html_text(ref.tag)
 
 
+# The raw-text elements (HTML §13.1.2) whose content `text` drops: the parser keeps it as
+# one unparsed string, so it can be read back exactly.
+_SCRIPT_READING_TAGS = frozenset({"script", "style"})
+
+
+@register("htmlel", "script", "text")
+def extract_el_script(ref: HtmlElRef, value: str | None, ctx: RenderContext) -> str:
+    """`?el=<N>&script` — a `<script>`/`<style>` element's own text, verbatim: the data a
+    page embeds for its scripts, exactly as stored (escapes intact, nothing decoded or
+    judged). Element-scoped only, spec §6.2 (v47.1)."""
+    if value:
+        raise ValueError("script takes no value")
+    if ref.tag.name not in _SCRIPT_READING_TAGS:
+        raise ValueError(f"script reads a <script> or <style> element; el={ref.index} is "
+                         f"<{ref.tag.name}> — cite its text with `el={ref.index}&text`")
+    return "".join(str(c) for c in ref.tag.contents)
+
+
 def _is_svg_payload(raw: bytes) -> bool:
     """True when `raw` is a valid-looking SVG document — an `<svg` root within the leading
     bytes, tolerating an XML declaration, a DOCTYPE, comments, and a BOM."""

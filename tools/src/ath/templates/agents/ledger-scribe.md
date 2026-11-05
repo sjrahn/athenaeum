@@ -141,7 +141,9 @@ When nothing captured can settle it, that is a `capture` or `observe` need.
   addresses printed by `corpus body` / `corpus toc` are ground truth. **An anchor is made of
   address-class ops, optionally ending in ONE reading** (corpus §6.2 op classes): a place
   (`page=`, `el=`, `bbox=`, `msg=N&part=M`, `msg=N&header=subject`, `prop=`, `turn=`, …) plus at most the place's
-  text (`page=N&text`, `part=M&text`, `members`). Never a **view** (`mark=`, `fit=`, `render`,
+  text (`page=N&text`, `part=M&text`, `members`; a fact a page holds only in its script
+  data: `el=N&script`, quoted verbatim with the `\"` escapes as stored, and including the
+  object's identifying key such as its slug). Never a **view** (`mark=`, `fit=`, `render`,
   `annotated`), an **instrument** (`probe`, `geometry`, `words`, `scenes=`, a contact sheet),
   or an **engine** (`transcribe` — cite the STORED transcript segments instead): those are the
   normalizer's and the querier's tools, and `ath ledger verify` refuses them as a citation
