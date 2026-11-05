@@ -86,6 +86,10 @@ if TYPE_CHECKING:
 
 _SPAN_RE = re.compile(r"^(\d+)(?:-(\d+))?$")
 _UNCHECKED_PARAMS = {"frame", "bbox", "path", "region", "rotate"}
+#: Readings whose surface never lives in a record's segments (corpus §6.2): `el=<N>&script`
+#: reads a script element's own text, which forming never renders, so even a formed
+#: record's segments cannot scope it. Always resolved through the corpus resolver.
+_SEGMENTLESS_READINGS = frozenset({"script"})
 
 
 @dataclass
@@ -422,6 +426,10 @@ def scoped_text(content: RecordContent, params: list[tuple[str, str]]) -> tuple[
     one scopes to the stored page segments it overlaps (overlapping none is a bad anchor).
     A bare axis anchor (`page=2`, `msg=3`) still names the whole unit.
     """
+    if any(k in _SEGMENTLESS_READINGS for k, _ in params):
+        # a reading no segment ever stores (a script element's data): the stored
+        # segments can neither scope nor refute it, so it goes to the resolver
+        return None, "unchecked"
     if any(k in furi.REGION_PARAMS for k, _ in params):
         spelled = _canon_address("&".join(f"{k}={v}" if v else k for k, v in params))
         if spelled in content.addressed:

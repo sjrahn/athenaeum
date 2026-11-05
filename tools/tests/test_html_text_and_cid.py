@@ -321,3 +321,33 @@ def test_ledger_verifies_a_quote_in_embedded_script_data(tmp_path):
     res = verify_ledger(ledger, join, {}, stamp=True, today="2026-11-05")
     assert res.unverifiable == 0 and not res.errors, (res.errors, res.notes)
     assert res.verified == 1 and res.derived_resolved == 1
+
+
+def test_el_script_verifies_on_a_formed_record(tmp_path):
+    """A formed record's segments never hold script data, so `el=<N>&script` must go to
+    the resolver rather than be scoped (and refuted) by the stored segments."""
+    from corpus import segments
+    from corpus.segments import Segment
+    from ledger.corpora import CorpusJoin, RegisteredCorpus
+    from ledger.verify import verify_ledger
+
+    root, rid, ords = _flight_record(tmp_path)
+    rpath = paths.record_path(root, rid)
+    post = frontmatter.load(rpath)
+    post.content = post.content.rstrip("\n") + "\n\n" + segments.emit(
+        [Segment(atom="text", address=f"el={ords['p']}", body="Changelog")])
+    records.dump(post, rpath)
+    ledger = root.parent / "ledger"
+    (ledger / "facts" / "ruleset").mkdir(parents=True)
+    (ledger / "facts" / "ruleset" / "std.json").write_text(json.dumps({
+        "id": "std", "type": "ruleset", "name": "Std",
+        "sources": {"s1": {"record": rid}},
+        "claims": [{"id": "std:certified", "predicate": "certified", "value": "2024-09-30",
+                    "status": "confirmed", "asof": "2026-01-01",
+                    "evidence": [{"source": "s1", "anchor": f"el={ords['script']}&script",
+                                  "quote": _FLIGHT_QUOTE, "kind": "authoritative"}]}],
+    }))
+    join = CorpusJoin([RegisteredCorpus("corpus", root, private=False)])
+    res = verify_ledger(ledger, join, {}, stamp=False, today="2026-11-05")
+    assert not res.errors and not res.warnings, (res.errors, res.warnings)
+    assert res.verified == 1 and res.derived_resolved == 1
