@@ -278,6 +278,8 @@ export class Manifest {
             `no migration path from v1 JSONL manifests; see MANIFEST-SCHEMA.md changelog`,
         );
       }
+      // a manifest begun before `host` was recorded gains it here: the scanner runs on the host that owns the tree
+      db.query("INSERT OR IGNORE INTO meta (key, value) VALUES ('host', ?)").run(hostname());
       const rootRow = db.query<{ value: string }, []>("SELECT value FROM meta WHERE key='root'").get();
       if (rootRow && rootRow.value !== rootAbs) {
         log.warn(`manifest root "${rootRow.value}" != requested "${rootAbs}"; paths are relative, proceeding`);

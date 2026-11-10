@@ -78,7 +78,10 @@ export interface CustodyIndex {
   /** The next inventory generation of a store. */
   nextGeneration(store: string): number;
   /** An observed tree's files as of one inventory: replaces what the index believed of the tree. */
-  putObserved(store: string, rows: readonly Omit<ObservedRow, "store" | "link">[]): void;
+  putObserved(store: string, rows: Iterable<Omit<ObservedRow, "store" | "link">>): void;
+  /** An observed tree's copies made to agree with its files: each hash present is claimed (a verified copy stays
+   * verified at the same size), every other copy believed there is missing. */
+  claimObserved(store: string, generation: number): { present: number; missing: number };
   observed(where: { store?: string; hash?: string; path?: string }): ObservedRow[];
   setObservedLink(store: string, path: string, link: string): void;
   putReceipt(r: ReceiptRow): void;
@@ -95,7 +98,7 @@ export interface CustodyIndex {
 export function openIndex(path: string, lock?: () => { release(): void } | null): CustodyIndex {
   mkdirSync(dirname(path), { recursive: true });
   const db = new Database(path, { create: true, strict: true });
-  db.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;");
+  db.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000; PRAGMA cache_size = -65536;");
   // the index is a belief, always safe to delete (§18.4.2): one of an older schema is dropped and re-inventoried; a
   // newer tool's is left as it is, since dropping it would undo what a newer daemon keeps
   const schema = () => {
@@ -162,23 +165,41 @@ export function openIndex(path: string, lock?: () => { release(): void } | null)
       db.transaction(() => {
         const links = new Map(
           db
-            .query<{ path: string; hash: string; link: string | null }, [string]>("SELECT path, hash, link FROM observed WHERE store = ?")
+            .query<{ path: string; hash: string; link: string }, [string]>(
+              "SELECT path, hash, link FROM observed WHERE store = ? AND link IS NOT NULL",
+            )
             .all(store)
             .map((r) => [r.path, r]),
         );
         db.run("DELETE FROM observed WHERE store = ?", [store]);
+        const put = db.prepare<unknown, [string, string, string, number, string, number, string | null]>(
+          "INSERT INTO observed (store, path, hash, size, mtime, generation, link) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        );
         for (const r of rows) {
           const was = links.get(r.path);
-          db.run("INSERT INTO observed (store, path, hash, size, mtime, generation, link) VALUES (?, ?, ?, ?, ?, ?, ?)", [
-            store,
-            r.path,
-            r.hash,
-            r.size,
-            r.mtime,
-            r.generation,
-            was && was.hash === r.hash ? was.link : null,
-          ]);
+          put.run(store, r.path, r.hash, r.size, r.mtime, r.generation, was && was.hash === r.hash ? was.link : null);
         }
+      })();
+    },
+    claimObserved(store, generation) {
+      return db.transaction(() => {
+        db.run(
+          `INSERT INTO copies (store, tree, hash, state, size, verified_at, generation, link)
+           SELECT store, 'artifacts', hash, 'claimed', max(size), NULL, ?, NULL FROM observed WHERE store = ? GROUP BY hash
+           ON CONFLICT (store, hash) DO UPDATE SET
+             state = CASE WHEN copies.state = 'verified' AND copies.size = excluded.size THEN 'verified' ELSE 'claimed' END,
+             verified_at = CASE WHEN copies.state = 'verified' AND copies.size = excluded.size THEN copies.verified_at END,
+             size = excluded.size, generation = excluded.generation`,
+          [generation, store],
+        );
+        const present = db.query<{ n: number }, [string]>("SELECT count(DISTINCT hash) AS n FROM observed WHERE store = ?").get(store)!.n;
+        const missing = db.run(
+          `UPDATE copies SET state = 'missing', verified_at = NULL, link = NULL, generation = ?
+           WHERE store = ? AND state != 'missing'
+             AND NOT EXISTS (SELECT 1 FROM observed o WHERE o.store = copies.store AND o.hash = copies.hash)`,
+          [generation, store],
+        ).changes;
+        return { present, missing };
       })();
     },
     observed(where) {

@@ -1,8 +1,8 @@
 # Presented-manifest schema — v3
 
-This is the **cross-language contract** between the scanner (TypeScript, the writer) and the
-Athenaeum corpus tooling (Python, the reader). The scanner writes it; nothing else does.
-The corpus side reads the manifest through the share mount and never walks or hashes the
+This is the **contract** between the scanner (the writer) and `ath`'s custody (the reader: the
+observed-tree driver in `packages/custody`). The scanner writes it; nothing else does.
+The reader opens the manifest through the share mount and never walks or hashes the
 share itself. Treat this document as authoritative and version it: any incompatible change
 bumps `schema` (`PRAGMA user_version`) and is recorded in the changelog at the bottom.
 
@@ -144,8 +144,8 @@ or "zero", only as "not captured (yet)".
   16 KiB) of the file, once per new identity, at hash time. **This is a claim, not a
   verdict**: deliberately coarse (magic bytes first, a small extension fallback, then a
   last-resort "looks like UTF-8/ASCII text" heuristic, else NULL for anything unrecognized —
-  see the scanner's `src/sniff.ts`), and never authoritative — the corpus's own
-  content-based format detection (§12.3.2) is the one thing that gets to decide what a file
+  see the scanner's `src/sniff.ts`), and never authoritative — `ath`'s own
+  content-based format detection (spec §10.1) is the one thing that gets to decide what a file
   *is*; nothing normative may depend on this claim. NULL means "not yet sniffed", not
   "definitely unknown forever" — see refresh/backfill below.
 
@@ -232,7 +232,7 @@ opens the manifest dir.
 Compaction (`--compact`) closes and publishes its own generation the same way — a compacted
 tree is a normal complete generation, not a special case.
 
-## Reader procedure (the corpus side)
+## Reader procedure (custody's side)
 
 1. Open `manifest.sqlite` **read-only**, or copy it to local storage first and open the copy
    — never open `state.sqlite`, and never write to `manifest.sqlite`.
@@ -271,6 +271,9 @@ tree is a normal complete generation, not a special case.
 
 ## Changelog
 
+- **Informational addition** (2026-11-09, scanner 0.5.0) — `meta.host` is also written when an
+  existing `state.sqlite` is opened without one, so a manifest begun before 2026-10-18 gains its
+  host on its next run. No `SCHEMA_VERSION` change.
 - **Informational addition** (2026-10-18) — `meta` gained `host`, the scanning host's name, written
   once at creation. Additive — no `SCHEMA_VERSION` change; a reader of an older manifest falls back
   to its own host name. It is the `host` of the per-file testimony (spec §18.5.2) that

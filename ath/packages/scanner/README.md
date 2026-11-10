@@ -1,19 +1,17 @@
 # ath-scan — the residence scanner
 
-> Binary name `ath-scan` is **provisional** — rename to taste.
+A standalone utility that runs **on a storage host** (the machine whose filesystem holds a large
+share) and keeps a *published manifest* there: a continually updated BLAKE3 index of every file
+on the share, written to `.athenaeum/` on the share itself. With it, `ath` treats the share as an
+**observed tree** (spec/athenaeum.md §18.5): custody resolves BLAKE3 → path from the manifest
+alone, **without ever walking or hashing the share over the wire**. A full hash pass over 10GbE
+takes days per share; hashing has to live with the bytes, so it does.
 
-A standalone utility that runs **on a storage host** (the machine that owns a large
-network share) and maintains a *presented manifest*: a continually-updated blake3 index of
-every file on the share, written to a well-known directory on the share itself. With it, the
-Athenaeum corpus tooling can treat a 300+TB read-only share as a self-describing,
-content-addressed residence — resolving blake3 → path — **without ever walking or hashing it
-over the wire**. A full hash pass over 10GbE is ~days per share; hashing has to live with the
-bytes, so it does.
-
-This is a prototype. It does the survey-and-present job and nothing else — no rclone, no
-replication, no corpus-side integration. The one production-intent artifact here is
-[`MANIFEST-SCHEMA.md`](./MANIFEST-SCHEMA.md), the cross-language contract the Python corpus
-tooling reads.
+The scanner is part of the `ath` workspace (`packages/scanner`) and ships as its own binary,
+`ath-scan`. Its manifest is its own versioned contract, [`MANIFEST-SCHEMA.md`](./MANIFEST-SCHEMA.md);
+`ath`'s custody reader (`packages/custody`, the observed-tree driver) is the reader it is kept
+in step with. The scanner only surveys and publishes: copies, replication and policy are
+custody's, on the instance side.
 
 ## Design in one paragraph
 
@@ -39,18 +37,22 @@ on the share except `.athenaeum/` is treated as strictly read-only.
 ## Install / build
 
 Requires [Bun](https://bun.sh) (`bun:sqlite` is built in — no extra dependency, and it
-compiles straight into the single-file binary). Run from source, or compile a self-contained
-single-file binary (the Bun runtime is embedded; the host needs no Bun, no Node, no repo):
+compiles straight into the single-file binary). It builds with the rest of the workspace, into a
+self-contained single-file binary (the Bun runtime is embedded; the host needs no Bun, no Node,
+no repo):
 
 ```bash
+cd ath
 bun install
-bun test                      # the suite
-bun run build                 # -> dist/ath-scan          (linux x64)
-bun run build:arm64           # -> dist/ath-scan-arm64     (linux arm64)
+bun test packages/scanner     # the scanner's suite
+bun run build                 # -> dist/ath, dist/ath-scan                (linux x64)
+bun run build:arm64           # -> dist/ath-arm64, dist/ath-scan-arm64    (linux arm64)
 ```
 
-Drop `dist/ath-scan` on the share host and schedule it (systemd timer or unRAID User Scripts,
-both below). hash-wasm bundles its WASM inside the JS and `bun:sqlite` is a native Bun
+`ath-scan --version` names the scanner's version and the manifest schema it writes; every
+generation records that version in the manifest. Drop `dist/ath-scan` on the share host, a
+native `b3sum` beside it (see "Native b3sum hashing"), and schedule it (systemd timer or unRAID
+User Scripts, both below). hash-wasm bundles its WASM inside the JS and `bun:sqlite` is a native Bun
 built-in, so the compiled binary is genuinely self-contained — no temp extraction, no
 per-arch native blobs to manage separately, no noexec-mount hazard.
 
@@ -261,7 +263,7 @@ ZIP, gzip, xz, zstd, 7z, RAR, tar, SQLite3), then a small extension fallback for
 formats magic can't settle (`.srt`, `.json`, `.csv`, `.md`), then a last-resort "looks like
 UTF-8/ASCII text" heuristic, else `null`. A ZIP is always `application/zip` — this never opens
 the archive to guess `.docx`/`.xlsx`/etc from its members. **`mime_claim` is advisory, not
-authoritative** — the corpus's own content-based format detection is the one thing that gets
+authoritative** — `ath`'s own content-based format detection (spec §10.1) is the one thing that gets
 to decide what a file actually is; nothing normative may ever depend on this claim. Treat it
 as a cheap first filter, never a verdict.
 
@@ -336,30 +338,81 @@ systemd, so progress prints as rate-limited plain lines rather than the `\r`-rew
 ## unRAID deployment
 
 unRAID has no systemd unit files of its own to drop into (the OS partition doesn't persist
-across reboots), so the usual pattern is:
+across reboots), so:
 
-1. **Binary on persistent storage.** Compile with `bun run build` and copy
-   `dist/ath-scan` to somewhere under `/mnt/user/appdata/`, e.g.
-   `/mnt/user/appdata/ath-scan/ath-scan` — anything under `/boot/config/` or `/mnt/user/`
-   survives a reboot; `/usr/local/bin` on the OS partition does not.
-2. **Schedule via the User Scripts plugin** (Community Applications → *User Scripts*). Create
-   a script, e.g.:
+1. **Binary on persistent storage.** `dist/ath-scan` and a static `b3sum` side by side under
+   `/boot/config/…` (the flash drive) or `/mnt/user/appdata/ath-scan/` — both survive a
+   reboot; `/usr/local/bin` on the OS partition does not. `appdata` usually lives on the cache
+   pool, so running the binary from there wakes no array disk.
+2. **Scan user shares, with the direct byte path.** Point it at `/mnt/user/<share>` with
+   `--byte-path unraid` (below): the walk, the identities and every path come from the share
+   view — the names the instance will use — while hashing reads go straight to the backing
+   `/mnt/diskN`. Do **not** scan `/mnt/diskN` roots: their paths are not the share's, and the
+   mover or unbalance relocating a file between disks would read as a deletion and a new file.
+   One root, and so one manifest, per share that matters, rather than all of `/mnt/user`.
+3. **Schedule via the User Scripts plugin** (Community Applications → *User Scripts*), e.g.:
    ```bash
    #!/bin/bash
-   /mnt/user/appdata/ath-scan/ath-scan /mnt/user/film --concurrency 3 --scrub 100
+   mkdir -p /var/log/ath-scan
+   /mnt/user/appdata/ath-scan/ath-scan /mnt/user/film --byte-path unraid \
+     --native-concurrency 2 --scrub 50 --json > /var/log/ath-scan/film.json
    ```
-   and set its cron schedule (User Scripts exposes this directly — daily overnight is
-   typical for a large media share). User Scripts' log view is a plain (non-TTY) pipe too, so
-   it gets the same rate-limited heartbeat lines rather than a silent multi-hour gap.
-3. **Point it at the subtree that matters**, e.g. `/mnt/user/film` rather than all of
-   `/mnt/user` — scope the scan the same way you'd scope any other maintenance job on the
-   array.
-4. **The inode-migration heuristic exists for exactly this deployment.** unRAID's `shfs`
-   (the FUSE layer presenting `/mnt/user/...` as a union of the array's disks) does not
-   guarantee an inode number survives an array start/stop, a disk rebuild, or certain
-   config changes, even for a file that never moved or changed. Without the heuristic
-   (see above), that would look like a whole-tree content change and trigger a full re-hash.
-   `--full` still bypasses it, if you specifically want a verify-everything pass.
+   User Scripts' log view is a plain (non-TTY) pipe, so it gets the rate-limited heartbeat
+   lines on stderr rather than a silent multi-day gap; the run summary goes to stdout (`--json`
+   for a machine-readable one). `/var/log` is in RAM on unRAID, so a status page that reads the
+   summary there wakes no disk.
+4. **Load and heat.** There is no bandwidth limit; the levers are how many files are read at
+   once. `--byte-path unraid` sizes the native (b3sum) pool to the number of disks with work
+   queued, up to 8; set `--native-concurrency 1`–`2` explicitly to keep a hot shelf cool, and
+   `--concurrency` (default 4) bounds the small-file pool. The pool spreads reads across disks
+   (fewest active readers first); it does not work through one disk at a time.
+5. **Parity checks.** The scanner does not look for one. Have the wrapper skip a run while a
+   check is in progress, or stop the scan when one starts: an interrupted run publishes
+   nothing and the next resumes per file (see "Interrupt-safety & resume").
+6. **Spin-down and cadence.** An incremental run walks the whole tree and `lstat`s every file
+   through `shfs`; any directory or inode the kernel no longer caches is read from its disk,
+   which spins it up — so a run wakes every disk under the share unless their metadata stays
+   cached. The *Dynamix Cache Directories* plugin (`cache_dirs`) keeps it in RAM; then an
+   incremental walk over unchanged files touches no platter and only new or changed files are
+   read. Without it, run weekly per share, staggered, outside parity windows; with it, daily
+   overnight is fine. `--scrub N` re-reads N random files each run and wakes their disks: keep
+   it small, or scrub on the weekly run only. A cold pass takes days per share; run them one
+   share at a time.
+7. **The inode-migration heuristic exists for exactly this deployment.** `shfs` (the FUSE layer
+   presenting `/mnt/user/...` as a union of the array's disks) does not guarantee an inode
+   number survives an array start/stop, a disk rebuild, or certain config changes, even for a
+   file that never moved or changed. Without the heuristic (see above), that would look like a
+   whole-tree content change and trigger a full re-hash. `--full` still bypasses it, if you
+   specifically want a verify-everything pass.
+
+**Earlier manifests.** A scan picks up the `state.sqlite` an earlier run left under the same
+manifest directory and resumes from it: a schema-v2 state (scanner 0.2.x) is migrated to v3 in
+place, a v3 one is used as it is, and one begun before the manifest recorded its host gains it
+on that run. A v1 manifest (scanner 0.1, the `snapshot.jsonl`/`manifest.jsonl` pair) has no
+migration: start a cold pass. An interrupted cold pass has published nothing yet: what it hashed lives only in
+`state.sqlite`, so leave that file where it is (copy it only while no scan runs). A manifest
+under another directory is adopted with `--seed-from`, which imports its identities and its
+paths unchanged: a file keeps its hash when its `(dev, ino, size, mtime)` still matches, or when
+its path matches with the same size and mtime. Seeding a share's root from a scan of a
+*parent* root (`/mnt/user` whole) therefore carries hashes over by inode only, which `shfs`
+does not keep across an array restart; keep the roots the earlier scans used where you can. `--byte-path` changes only where hashing reads come from, never the manifest, so
+runs with and without it mix freely.
+
+**The instance side.** `ath` reads an observed tree by path: the host running `ath` (and
+`athd`) mounts each share — read-only is enough — and declares it once, which writes the
+store's id to `<share>/.athenaeum/store.yaml` (the one write, so that mount, or a hand-placed
+file, must allow it):
+
+```bash
+ath store add film --role observed --path /mnt/farspark/film
+```
+
+Custody opens `.athenaeum/manifest.sqlite` read-only through the mount (NFS is the safer of the
+two network filesystems for SQLite; the published file is never written in place, only
+replaced whole), `ath custody inventory film` brings it into the host's index, and `athd`
+re-inventories when it sees a new generation. `ath custody where <blake3>` and
+`ath custody report film` answer from the index; ingest and resolve read a file's bytes through
+the mount. Never point the scanner itself at a network mount (see below).
 
 ## unRAID direct byte path
 
@@ -409,7 +462,7 @@ operator error there is a startup error, not a silent no-op). A run using it log
 front — `direct byte path: unraid` — and the end-of-scan summary gains two lines (`direct
 reads`, `direct fallbacks`) whenever a resolver was active.
 
-## Prototype boundaries / notes
+## Boundaries and notes
 
 - **WASM hashing is single-threaded.** `--concurrency K` overlaps file **reads** (async I/O)
   with hashing, which is the right lever on disk-bound spinning rust, but doesn't hash on K
@@ -424,5 +477,5 @@ reads`, `direct fallbacks`) whenever a resolver was active.
   not point this at an SMB/NFS mount (synthetic inodes) — `/mnt/user/...` on unRAID is a
   local FUSE mount and is fine (that's what the migration heuristic is for); a share mounted
   *from* another host over SMB/NFS is not.
-- Scope is deliberately small: no replication, no routing, no corpus integration — those are
-  later arc work. The manifest schema is the contract that outlives the prototype.
+- Scope is deliberately small: survey and publish. Replication, policy and resolution are
+  `ath`'s custody (spec §18), which reads the manifest through the contract.

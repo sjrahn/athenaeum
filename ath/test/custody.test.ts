@@ -7,7 +7,16 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { type CopyView, DEFAULT_POLICY, evaluate, holdsWithout, type Labels, parsePolicy, type StoreDecl } from "@ath/custody";
+import {
+  type CopyView,
+  DEFAULT_POLICY,
+  evaluate,
+  holdsWithout,
+  type Labels,
+  observedDriver,
+  parsePolicy,
+  type StoreDecl,
+} from "@ath/custody";
 import { blake3Factory } from "@ath/scanner/hasher.ts";
 import { Logger } from "@ath/scanner/log.ts";
 import { scan } from "@ath/scanner/scanner.ts";
@@ -303,6 +312,22 @@ describe("custody", () => {
     // the hardlinked copy is unpersisted until an independent copy is made
     const st = (await a.run(["custody", "status"])).json() as { data: { findings: { kind: string; hash: string }[] } };
     expect(st.data.findings.some((x) => x.kind === "unpersisted" && x.hash === r.hash)).toBe(true);
+    // a later generation: a file gone is missing, the same bytes at a second path one copy, the link kept
+    rmSync(join(tree, "2026", "other.txt"));
+    writeFileSync(join(tree, "2026", "again.txt"), "a day by the lake\n");
+    await scan({ root: tree, manifestDir: join(tree, ".athenaeum"), factory: blake3Factory, log: new Logger("quiet"), concurrency: 2 });
+    const again = await a.ok(["custody", "inventory", "photos"]);
+    expect(again.stores[0]).toMatchObject({ store: "photos", present: 1, missing: 1 });
+    const both = await a.ok(["custody", "where", r.hash]);
+    expect(both.observed).toEqual([
+      { store: "photos", path: "2026/again.txt", link: null },
+      { store: "photos", path: "2026/trip.txt", link: expect.stringContaining("hardlink") },
+    ]);
+    // a hash is looked up in the manifest, not read from the whole tree
+    const d = observedDriver(decl("photos", [], "observed"), tree);
+    expect(await d.has("artifacts", r.hash)).toBe(true);
+    expect(await d.has("artifacts", "0".repeat(64))).toBe(false);
+    expect(new TextDecoder().decode((await d.get("artifacts", r.hash))!)).toBe("a day by the lake\n");
   });
 
   test("a deleted index is rebuilt by inventory, receipts and all", async () => {

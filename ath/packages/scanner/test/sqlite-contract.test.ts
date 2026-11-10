@@ -5,6 +5,7 @@
 import { Database } from "bun:sqlite";
 import { afterAll, expect, test } from "bun:test";
 import { copyFile, rename, stat, unlink, utimes } from "node:fs/promises";
+import { hostname } from "node:os";
 import { join } from "node:path";
 import { identityKey, MANIFEST_DIRNAME, MANIFEST_FILENAME, SCHEMA_VERSION, STATE_FILENAME } from "../src/schema.ts";
 import { cleanupAll, loadState, put, runScan, tmpTree } from "./fixtures.ts";
@@ -154,4 +155,17 @@ test("generation bookkeeping: open/close rows, crash marker NULL on an interrupt
       db.close();
     }
   }
+});
+
+test("a manifest begun before the host was recorded gains it on its next run", async () => {
+  const root = await tmpTree();
+  await put(root, "a.txt", "content", MT);
+  await runScan(root);
+  const state = new Database(join(root, MANIFEST_DIRNAME, STATE_FILENAME));
+  state.run("DELETE FROM meta WHERE key = 'host'");
+  state.close();
+  await runScan(root);
+  const published = new Database(join(root, MANIFEST_DIRNAME, MANIFEST_FILENAME), { readonly: true });
+  expect(published.query("SELECT value FROM meta WHERE key = 'host'").get()).toEqual({ value: hostname() });
+  published.close();
 });

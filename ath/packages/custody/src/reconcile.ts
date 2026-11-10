@@ -320,20 +320,21 @@ export async function inventory(
   if (!site.driver) throw new AthError("EXTERNAL", `${site.decl.name} is not reachable from this host`);
   const d = site.driver;
   const id = site.decl.id;
-  let present: Present[];
-  let generation: number;
   if (d.observed) {
+    // an observed tree holds no testimony, and may hold millions of files: its rows go to the index as they are read,
+    // and its copies are reconciled there
     const files = d.observed();
-    generation = d.manifest?.()?.generation ?? 0;
+    const generation = d.manifest?.()?.generation ?? 0;
     index.putObserved(
       id,
-      files.map((f) => ({ path: f.path, hash: f.hash, size: f.size, mtime: f.mtime, generation: f.generation })),
+      (function* () {
+        for (const f of files) yield { path: f.path, hash: f.hash, size: f.size, mtime: f.mtime, generation: f.generation };
+      })(),
     );
-    present = [...new Map(files.map((f) => [f.hash, { tree: "artifacts" as Tree, hash: f.hash, size: f.size }])).values()];
-  } else {
-    present = await d.inventory();
-    generation = index.nextGeneration(id);
+    return { ...index.claimObserved(id, generation), receipts: 0 };
   }
+  const present: Present[] = await d.inventory();
+  const generation = index.nextGeneration(id);
   const known = new Map(index.copiesOn(id).map((c) => [c.hash, c]));
   const seen = new Set<string>();
   let receipts = 0;

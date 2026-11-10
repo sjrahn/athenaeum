@@ -48,8 +48,8 @@ export interface Driver {
   stat(): Promise<{ used?: number; free?: number }>;
   /** Whether the store answers now: its mark is where the access file says (a disk plugged in, a remote reached). */
   available(): Promise<boolean>;
-  /** An observed tree's files, from the scanner's manifest. */
-  observed?(): ObservedFile[];
+  /** An observed tree's files, from the scanner's manifest, read a row at a time. */
+  observed?(): Iterable<ObservedFile>;
   /** An observed tree's root on this host, for links. */
   root?: string;
   manifest?(): ManifestInfo | null;
@@ -168,24 +168,40 @@ export function observedDriver(decl: StoreDecl, root: string): Driver {
       db.close();
     }
   };
-  const files = (): ObservedFile[] => {
-    if (!existsSync(manifest)) return [];
+  // a tree of millions of files is never held whole: rows stream from the manifest, and a hash is looked up by its index
+  const iso = (ns: bigint) => `${new Date(Number(ns / 1000000n)).toISOString().slice(0, 19)}Z`;
+  function* files(): Generator<ObservedFile> {
+    if (!existsSync(manifest)) return;
     const db = open();
     try {
       const rows = db
         .query<{ path: string; blake3: string; size: bigint; mtime_ns: bigint; btime_ns: bigint | null; generation: bigint }, []>(
           "SELECT p.path, i.blake3, i.size, i.mtime_ns, i.btime_ns, i.generation FROM paths p JOIN identities i ON i.dev = p.dev AND i.ino = p.ino ORDER BY p.path",
         )
-        .all();
-      const iso = (ns: bigint) => `${new Date(Number(ns / 1000000n)).toISOString().slice(0, 19)}Z`;
-      return rows.map((r) => ({
-        path: r.path,
-        hash: r.blake3,
-        size: Number(r.size),
-        mtime: iso(r.mtime_ns),
-        birth: r.btime_ns === null ? null : iso(r.btime_ns),
-        generation: Number(r.generation),
-      }));
+        .iterate();
+      for (const r of rows)
+        yield {
+          path: r.path,
+          hash: r.blake3,
+          size: Number(r.size),
+          mtime: iso(r.mtime_ns),
+          birth: r.btime_ns === null ? null : iso(r.btime_ns),
+          generation: Number(r.generation),
+        };
+    } finally {
+      db.close();
+    }
+  }
+  const pathsOf = (hash: string): string[] => {
+    if (!existsSync(manifest)) return [];
+    const db = open();
+    try {
+      return db
+        .query<{ path: string }, [string]>(
+          "SELECT p.path FROM identities i JOIN paths p ON p.dev = i.dev AND p.ino = i.ino WHERE i.blake3 = ? ORDER BY p.path",
+        )
+        .all(hash)
+        .map((r) => r.path);
     } finally {
       db.close();
     }
@@ -195,12 +211,16 @@ export function observedDriver(decl: StoreDecl, root: string): Driver {
     root,
     capabilities: ["inventory", "get", "stat"],
     available: async () => existsSync(manifest) || existsSync(join(root, ".athenaeum", "store.yaml")),
-    inventory: async () => files().map((f) => ({ tree: "artifacts" as Tree, hash: f.hash, size: f.size })),
-    has: async (t, h) => t === "artifacts" && files().some((f) => f.hash === h),
+    async inventory() {
+      const seen = new Map<string, Present>();
+      for (const f of files()) if (!seen.has(f.hash)) seen.set(f.hash, { tree: "artifacts", hash: f.hash, size: f.size });
+      return [...seen.values()];
+    },
+    has: async (t, h) => t === "artifacts" && pathsOf(h).length > 0,
     async get(t, h) {
       if (t !== "artifacts") return null;
-      for (const f of files().filter((x) => x.hash === h)) {
-        const p = join(root, f.path);
+      for (const path of pathsOf(h)) {
+        const p = join(root, path);
         if (!existsSync(p)) continue;
         const b = new Uint8Array(readFileSync(p));
         if ((await blake3Hex(b)) === h) return b;
