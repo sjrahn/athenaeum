@@ -16,6 +16,7 @@ import { Database } from "bun:sqlite";
 import { copyFile, mkdir, open, rename, rm, stat } from "node:fs/promises";
 import { hostname } from "node:os";
 import { join } from "node:path";
+import { acquireScanLock } from "./lock.ts";
 import type { Logger } from "./log.ts";
 import {
   type IdentityState,
@@ -169,6 +170,7 @@ export class Manifest {
     readonly root: string,
     private readonly log: Logger,
     opts: ManifestOpenOptions,
+    private readonly unlock: () => void,
   ) {
     this.statePath = join(dir, STATE_FILENAME);
     this.manifestPath = join(dir, MANIFEST_FILENAME);
@@ -245,6 +247,23 @@ export class Manifest {
   /** Open (or initialize) `state.sqlite` at `manifestDir`. Cleans up any stale publish `.tmp`. */
   static async open(manifestDir: string, rootAbs: string, log: Logger, opts: ManifestOpenOptions = {}): Promise<Manifest> {
     await mkdir(manifestDir, { recursive: true });
+    // one scan writes a manifest's state at a time (lock.ts); a second finds it held and stops
+    const unlock = acquireScanLock(manifestDir);
+    try {
+      return await Manifest.openLocked(manifestDir, rootAbs, log, opts, unlock);
+    } catch (e) {
+      unlock();
+      throw e;
+    }
+  }
+
+  private static async openLocked(
+    manifestDir: string,
+    rootAbs: string,
+    log: Logger,
+    opts: ManifestOpenOptions,
+    unlock: () => void,
+  ): Promise<Manifest> {
     const statePath = join(manifestDir, STATE_FILENAME);
     const manifestTmpPath = `${join(manifestDir, MANIFEST_FILENAME)}.tmp`;
     await rm(manifestTmpPath, { force: true }).catch(() => {});
@@ -286,7 +305,7 @@ export class Manifest {
       }
     }
 
-    return new Manifest(db, manifestDir, rootAbs, log, opts);
+    return new Manifest(db, manifestDir, rootAbs, log, opts, unlock);
   }
 
   /** True iff neither an identity nor a path has ever been recorded (first run on this root). */
@@ -381,6 +400,39 @@ export class Manifest {
     return this.delPathsNotSeen.run().changes;
   }
 
+  /** A targeted run's deletions: the rows at each listed path, and under it, that this walk did not see. */
+  reconcileScopedDeletions(scopes: readonly string[]): number {
+    const del = this.db.query<never, [string, string, string]>(
+      "DELETE FROM paths WHERE (path = ? OR (path >= ? AND path < ?)) AND path NOT IN (SELECT path FROM walk_seen)",
+    );
+    let n = 0;
+    for (const s of scopes) n += del.run(s, `${s}/`, `${s}0`).changes;
+    return n;
+  }
+
+  /** How many rows a previous generation wrote that this walk has not seen, at a scope or anywhere: what
+   * reconciling would delete of what was there before the run (rows seeded this run do not count). */
+  unseenPrior(generation: number, scopes?: readonly string[]): number {
+    const base = "SELECT COUNT(*) AS c FROM paths WHERE generation < ? AND path NOT IN (SELECT path FROM walk_seen)";
+    if (!scopes) return Number(this.db.query<{ c: bigint }, [number]>(base).get(generation)!.c);
+    const q = this.db.query<{ c: bigint }, [number, string, string, string]>(`${base} AND (path = ? OR (path >= ? AND path < ?))`);
+    let n = 0;
+    for (const s of scopes) n += Number(q.get(generation, s, `${s}/`, `${s}0`)!.c);
+    return n;
+  }
+
+  /** Path rows in the state, now. */
+  pathCount(): number {
+    return Number(this.countPaths.get()!.c);
+  }
+
+  /** Abandon the walk: nothing it wrote (paths, seeds, catalog refreshes, skips) stays. */
+  rollbackWalk(): void {
+    if (this.txOpen) this.db.run("ROLLBACK");
+    this.txOpen = false;
+    this.db.run("DROP TABLE IF EXISTS temp.walk_seen");
+  }
+
   commitWalk(): void {
     this.db.run("COMMIT");
     this.txOpen = false;
@@ -433,6 +485,29 @@ export class Manifest {
     this.updGenClose.run(new Date().toISOString(), JSON.stringify(summary), summary.generation);
   }
 
+  /** Forget a generation opened and then refused before it wrote anything. */
+  genDiscard(generation: number): void {
+    this.db.run("DELETE FROM generations WHERE generation = ? AND finished_at IS NULL", [generation]);
+  }
+
+  /** The newest generation the state finished, and the newest the published manifest carries. */
+  finishedGenerations(): { state: number; published: number } {
+    const q = "SELECT COALESCE(MAX(generation), 0) AS g FROM generations WHERE finished_at IS NOT NULL";
+    const state = Number(this.db.query<{ g: bigint }, []>(q).get()!.g);
+    let published = 0;
+    try {
+      const pub = new Database(this.manifestPath, { readonly: true, safeIntegers: true });
+      try {
+        published = Number(pub.query<{ g: bigint }, []>(q).get()!.g);
+      } finally {
+        pub.close();
+      }
+    } catch {
+      published = 0;
+    }
+    return { state, published };
+  }
+
   // ── scrub ────────────────────────────────────────────────────────────────────────────
 
   /** Up to `n` random (identity, representative live path) pairs, picked in SQL — no full-tree JS load. */
@@ -479,10 +554,8 @@ export class Manifest {
    * file), warn-and-skip for auto-seed (a big scan must not die because one nested child's
    * manifest is stale).
    *
-   * `ATTACH DATABASE` cannot run inside an open transaction. If the walk transaction is open
-   * (mid-walk auto-seed), it's committed first and reopened after import — the walk tx only
-   * holds cheap-to-redo path/skip writes (a fresh stat-walk reproduces them from scratch), so
-   * this early commit is not a durability concern the way losing a hash batch would be.
+   * The rows are written inside the open walk transaction (or one of their own when none is
+   * open), so a seed commits or is abandoned with the walk it belongs to.
    */
   async seedFrom(sourceManifestPath: string, pathPrefix: string, generation: number, explicit: boolean): Promise<number | null> {
     const srcDb = new Database(sourceManifestPath, { readonly: true, safeIntegers: true });
@@ -500,41 +573,62 @@ export class Manifest {
       return null;
     }
     // A v2 source's `identities` table has no catalog columns to select — seed NULL for all
-    // four rather than referencing columns that don't exist on that side of the ATTACH.
-    const identitySelectCols = found === 2 ? "NULL, NULL, NULL, NULL" : "ctime_ns, btime_ns, mode, mime_claim";
+    // four rather than referencing columns that don't exist in that file.
+    const identitySelectCols =
+      found === 2 ? "NULL, NULL, NULL, NULL" : "ctime_ns AS ctimeNs, btime_ns AS btimeNs, mode, mime_claim AS mimeClaim";
 
-    const walkTxWasOpen = this.txOpen;
-    if (walkTxWasOpen) {
-      this.db.run("COMMIT");
-      this.txOpen = false;
+    // Read through a connection of its own and written inside this run's open walk transaction
+    // (no ATTACH, which cannot run inside one): a seed is part of the walk, kept when the walk
+    // commits and gone when it is abandoned (a dry run, a refused generation).
+    const own = !this.txOpen;
+    if (own) {
+      this.db.run("BEGIN");
+      this.txOpen = true;
     }
+    const src = new Database(sourceManifestPath, { readonly: true, safeIntegers: true });
     let imported = 0;
     try {
-      this.db.query<never, [string]>("ATTACH DATABASE ? AS seed").run(sourceManifestPath);
-      try {
-        this.db.run("BEGIN");
-        const idRes = this.db
-          .query<never, [number]>(
-            "INSERT OR IGNORE INTO main.identities (dev,ino,size,mtime_ns,blake3,generation,ctime_ns,btime_ns,mode,mime_claim) " +
-              `SELECT dev,ino,size,mtime_ns,blake3,?,${identitySelectCols} FROM seed.identities`,
-          )
-          .run(generation);
-        this.db
-          .query<never, [string, string, number]>(
-            "INSERT OR IGNORE INTO main.paths (path,dev,ino,generation) " +
-              "SELECT CASE WHEN ?='' THEN path ELSE ? || '/' || path END, dev, ino, ? FROM seed.paths",
-          )
-          .run(pathPrefix, pathPrefix, generation);
+      const insId = this.db.query<
+        never,
+        [bigint, bigint, bigint, bigint, string, number, bigint | null, bigint | null, bigint | null, string | null]
+      >(
+        "INSERT OR IGNORE INTO identities (dev,ino,size,mtime_ns,blake3,generation,ctime_ns,btime_ns,mode,mime_claim) VALUES (?,?,?,?,?,?,?,?,?,?)",
+      );
+      const ids = src
+        .query<
+          {
+            dev: bigint;
+            ino: bigint;
+            size: bigint;
+            mtime_ns: bigint;
+            blake3: string;
+            ctimeNs: bigint | null;
+            btimeNs: bigint | null;
+            mode: bigint | null;
+            mimeClaim: string | null;
+          },
+          []
+        >(`SELECT dev, ino, size, mtime_ns, blake3, ${identitySelectCols} FROM identities`)
+        .iterate();
+      for (const r of ids)
+        imported += insId.run(r.dev, r.ino, r.size, r.mtime_ns, r.blake3, generation, r.ctimeNs, r.btimeNs, r.mode, r.mimeClaim).changes;
+      const insPath = this.db.query<never, [string, bigint, bigint, number]>(
+        "INSERT OR IGNORE INTO paths (path,dev,ino,generation) VALUES (?,?,?,?)",
+      );
+      for (const r of src.query<{ path: string; dev: bigint; ino: bigint }, []>("SELECT path, dev, ino FROM paths").iterate())
+        insPath.run(pathPrefix === "" ? r.path : `${pathPrefix}/${r.path}`, r.dev, r.ino, generation);
+      if (own) {
         this.db.run("COMMIT");
-        imported = idRes.changes;
-      } finally {
-        this.db.run("DETACH DATABASE seed");
+        this.txOpen = false;
       }
+    } catch (e) {
+      if (own) {
+        this.db.run("ROLLBACK");
+        this.txOpen = false;
+      }
+      throw e;
     } finally {
-      if (walkTxWasOpen) {
-        this.db.run("BEGIN");
-        this.txOpen = true;
-      }
+      src.close();
     }
     return imported;
   }
@@ -619,5 +713,6 @@ export class Manifest {
       this.txOpen = false;
     }
     this.db.close();
+    this.unlock();
   }
 }

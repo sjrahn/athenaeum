@@ -76,6 +76,14 @@ export async function runScan(root: string, extra: Partial<ScanOptions> = {}): P
     _hashProgressEvery: extra._hashProgressEvery,
     _hashProgressFloorMs: extra._hashProgressFloorMs,
     _hashProgressTickMs: extra._hashProgressTickMs,
+    excludes: extra.excludes,
+    targets: extra.targets,
+    publish: extra.publish,
+    maxDelete: extra.maxDelete,
+    allowDeletions: extra.allowDeletions,
+    status: extra.status,
+    _deleteFloor: extra._deleteFloor,
+    _walkHeartbeatMs: extra._walkHeartbeatMs,
   });
   return { summary, hashCount: factory.count, manifestDir };
 }

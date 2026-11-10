@@ -17,7 +17,8 @@ A manifest lives in one directory (`--manifest-dir`, default `<root>/.athenaeum/
 | File | Role |
 |---|---|
 | `state.sqlite` (+ `-wal`/`-shm` sidecars) | The scanner's **private** working state. WAL mode. Remote readers MUST NOT open this — it can be mid-write, and its WAL sidecars are meaningless off the writer. |
-| `manifest.sqlite` | The **published** manifest: a complete, checkpointed copy of `state.sqlite`, unveiled atomically (temp-then-rename) at the end of every successful generation. **This is the only file readers open.** |
+| `manifest.sqlite` | The **published** manifest: a complete, checkpointed copy of `state.sqlite`, unveiled atomically (temp-then-rename) at the end of a successful generation, or later by `--publish` for one recorded with `--no-publish`. **This is the only file readers open.** |
+| `scan.lock` | Present while a run writes `state.sqlite` (the writer's pid and host). Readers ignore it. |
 
 Both are ordinary SQLite3 database files, single-main-file (no WAL sidecars — `manifest.sqlite`
 is always checkpointed with `PRAGMA wal_checkpoint(TRUNCATE)` before it's copied, so it opens
@@ -271,6 +272,14 @@ tree is a normal complete generation, not a special case.
 
 ## Changelog
 
+- **Informational addition** (2026-11-10, scanner 0.5.0) — targeted runs and the run lock.
+  `generations.mode` may be `targeted`: a generation that classified only listed paths (and the
+  subtrees of listed directories) and deleted only at and under them; its rows are as a full
+  walk would write them. A generation may be closed in `state.sqlite` and published later
+  (`--no-publish`, then `--publish`), so the published manifest can lag the state by several
+  generations; a reader still takes the newest finished generation the manifest carries. The
+  manifest directory may hold `scan.lock` while a run writes the state; readers ignore it. A
+  generation the deletion limit refuses is never recorded. No `SCHEMA_VERSION` change.
 - **Informational addition** (2026-11-09, scanner 0.5.0) — `meta.host` is also written when an
   existing `state.sqlite` is opened without one, so a manifest begun before 2026-10-18 gains its
   host on its next run. No `SCHEMA_VERSION` change.

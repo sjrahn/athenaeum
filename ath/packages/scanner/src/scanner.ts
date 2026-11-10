@@ -3,17 +3,26 @@
 // hashes just those, appending an identity row in batched transactions (durable within
 // `batchSize` files / `batchIntervalMs`, whichever first — a crash loses at most the last
 // batch). Then an optional scrub sampler, the publish step, and the run summary.
+//
+// A targeted run (`targets`) classifies only the listed paths — a directory among them as a
+// subtree — and deletes only at and under them. A dry run walks and classifies, reports what the
+// run would do, and abandons everything it wrote. Before the walk commits, the deletion breaker
+// refuses a generation that would delete more than a set share of the paths the previous one
+// held: a disk dropping out under a union mount reads as its files vanishing, and nothing of
+// such a walk is kept.
 
 import { open, stat } from "node:fs/promises";
 import { sep } from "node:path";
 import { type BytePathResolver, type HashPathPlan, type HashPathTarget, planHashPath } from "./bytepath.ts";
+import { compileExcludes, type PathExcludes } from "./excludes.ts";
 import { discoverNativeHasher, type Hasher, type HasherFactory, type NativeHasher } from "./hasher.ts";
 import { humanBytes, humanCount, humanDuration, humanRate, type Logger } from "./log.ts";
 import { Manifest } from "./manifest.ts";
 import { type ElementKey, groupByElement, runElementAwarePool } from "./scheduler.ts";
 import { DEFAULT_IGNORE_PATTERNS, identityKey, type ScanMode, type ScanSummary } from "./schema.ts";
 import { readHead, SNIFF_HEAD_BYTES, sniffMime } from "./sniff.ts";
-import { type FileEntry, walkTree } from "./walk.ts";
+import type { StatusFile } from "./status.ts";
+import { type FileEntry, targetEntries, walkTree } from "./walk.ts";
 
 /** Raw stat birth time of `0n` means the filesystem doesn't report one (see walk.ts's
  * FileEntry.birthtimeNs) — the catalog column stores that as SQL NULL, not 0. Exported (like
@@ -35,6 +44,13 @@ export const HASH_PROGRESS_EVERY = 16;
  * mid-file for a long time) — see log.ts's Logger.progress() for the 1s-min-spacing clamp
  * that sits on top of both triggers. */
 export const HASH_PROGRESS_FLOOR_MS = 30_000;
+/** non-TTY walk heartbeat: a line at least this often while the stat-walk runs, however few
+ * files it has reached — a walk over cold directories is slow, and must not look hung. */
+export const WALK_HEARTBEAT_MS = 30_000;
+/** The deletion breaker: a generation may delete at most this share of the paths the previous
+ * one held, once it deletes more than DELETE_FLOOR of them. */
+export const DEFAULT_MAX_DELETE = 0.05;
+export const DELETE_FLOOR = 100;
 
 export interface ScanOptions {
   root: string; // absolute
@@ -67,6 +83,21 @@ export interface ScanOptions {
   /** Files at/above this size use native b3sum instead of WASM, when a b3sum is available
    * (default DEFAULT_NATIVE_THRESHOLD, 1 MiB). */
   nativeThresholdBytes?: number;
+  /** A targeted run: only these paths (POSIX, relative to the root), a directory as its subtree. */
+  targets?: string[];
+  /** Publish the generation when it closes (default true); without, it waits in the state for `publish`. */
+  publish?: boolean;
+  /** Globs over the path relative to the root (`--exclude`), see excludes.ts. */
+  excludes?: string[];
+  /** The deletion breaker's share (default DEFAULT_MAX_DELETE); `allowDeletions` lets one run past it. */
+  maxDelete?: number;
+  allowDeletions?: boolean;
+  /** Where the run's progress is kept for a poller (`--status-file`). */
+  status?: StatusFile;
+  /** test hook: the breaker's floor (default DELETE_FLOOR). */
+  _deleteFloor?: number;
+  /** test hook: the walk heartbeat's interval (default WALK_HEARTBEAT_MS). */
+  _walkHeartbeatMs?: number;
   /** test hook: throw after N successful hashes (each already applied to the open batch) to simulate a kill. */
   _faultAfterHashes?: number;
   /** test/tuning hook: identity batch commit thresholds (default 64 files / 5000ms). */
@@ -87,6 +118,42 @@ export interface ScanOptions {
 }
 
 class SimulatedInterrupt extends Error {}
+
+/** The breaker refused the generation: nothing the walk wrote was kept. */
+export class DeletionRefused extends Error {
+  constructor(
+    readonly deleted: number,
+    readonly prior: number,
+    readonly maxDelete: number,
+  ) {
+    super(
+      `refused: this walk would delete ${deleted} of the ${prior} paths the manifest held (more than ${Math.round(maxDelete * 1000) / 10}%) — ` +
+        "a disk missing from the mount reads this way; nothing was written (--allow-deletions accepts it)",
+    );
+  }
+}
+
+/** What a dry run found: the run it stands for, without hashing, writing or publishing anything. */
+export interface DryRunReport {
+  dryRun: true;
+  mode: ScanMode;
+  generation: number;
+  filesSeen: number;
+  /** Files the run would hash, and their bytes (a decimal string, as in ScanSummary). */
+  toHash: number;
+  bytesToHash: string;
+  moved: number;
+  migrated: number;
+  seeded: number;
+  /** Paths the run would delete, and of them those a previous generation held, of `prior` in all. */
+  deleted: number;
+  deletedPrior: number;
+  prior: number;
+  skipped: number;
+  ignored: number;
+  /** Whether the deletion breaker would refuse the run. */
+  refused: boolean;
+}
 
 /** Streams the file through `hasher`, AND captures its leading bytes (bounded to
  * SNIFF_HEAD_BYTES) for the mime sniffer — free on this path since the first chunk read
@@ -168,61 +235,127 @@ async function runPool<T>(items: T[], k: number, worker: (item: T) => Promise<vo
 }
 
 export async function scan(opts: ScanOptions): Promise<ScanSummary> {
+  return (await run(opts, false)) as ScanSummary;
+}
+
+/** Walk and classify as `scan` would, report what it found, and keep nothing. */
+export async function dryRun(opts: ScanOptions): Promise<DryRunReport> {
+  return (await run(opts, true)) as DryRunReport;
+}
+
+async function run(opts: ScanOptions, dry: boolean): Promise<ScanSummary | DryRunReport> {
   const { root, log } = opts;
   const k = opts.concurrency ?? DEFAULT_CONCURRENCY;
   const chunkBytes = opts.chunkBytes ?? DEFAULT_CHUNK;
   const full = opts.full ?? false;
+  const excludes = compileExcludes(opts.excludes ?? []);
 
   const mf = await Manifest.open(opts.manifestDir, root, log, {
     batchSize: opts._identityBatchSize,
     batchIntervalMs: opts._identityBatchIntervalMs,
   });
-  const isCold = mf.isEmpty();
-  const mode: ScanMode = isCold ? "cold" : "incremental";
-  const gen = mf.generation + 1;
+  try {
+    const isCold = mf.isEmpty();
+    if (opts.targets && isCold) throw new Error("a targeted run updates a manifest a full scan began: run one first");
+    const mode: ScanMode = opts.targets ? "targeted" : isCold ? "cold" : "incremental";
+    const gen = mf.generation + 1;
+    const prior = mf.pathCount();
 
-  // The manifest dir sits under root by default; exclude its subtree from the walk.
-  const manifestUnderRoot = opts.manifestDir === root || opts.manifestDir.startsWith(root + sep);
-  const excludeAbs = manifestUnderRoot ? opts.manifestDir : null;
+    // The manifest dir sits under root by default; exclude its subtree from the walk.
+    const manifestUnderRoot = opts.manifestDir === root || opts.manifestDir.startsWith(root + sep);
+    const excludeAbs = manifestUnderRoot ? opts.manifestDir : null;
 
-  const summary: ScanSummary = {
-    mode,
-    generation: gen,
-    filesSeen: 0,
-    hashed: 0,
-    hashedNative: 0,
-    moved: 0,
-    migrated: 0,
-    seeded: 0,
-    deleted: 0,
-    skipped: 0,
-    ignored: 0,
-    scrubbed: 0,
-    corrupt: 0,
-    sniffed: 0,
-    directReads: 0,
-    directFallbacks: 0,
-    bytesHashed: "0",
-    elapsedMs: 0,
-  };
+    const summary: ScanSummary = {
+      mode,
+      generation: gen,
+      filesSeen: 0,
+      hashed: 0,
+      hashedNative: 0,
+      moved: 0,
+      migrated: 0,
+      seeded: 0,
+      deleted: 0,
+      skipped: 0,
+      ignored: 0,
+      scrubbed: 0,
+      corrupt: 0,
+      sniffed: 0,
+      directReads: 0,
+      directFallbacks: 0,
+      bytesHashed: "0",
+      elapsedMs: 0,
+    };
 
-  mf.genOpen(mode, gen);
-  log.info(`scan ${mode} generation ${gen}: ${root}  (concurrency ${k}${full ? ", full re-hash" : ""})`);
+    if (!dry) mf.genOpen(mode, gen);
+    log.info(
+      `${dry ? "dry run: " : ""}scan ${mode} generation ${gen}: ${root}  (concurrency ${k}${full ? ", full re-hash" : ""}` +
+        `${opts.targets ? `, ${humanCount(opts.targets.length)} paths` : ""})`,
+    );
+    opts.status?.phase("walk", { root, mode, generation: gen, dryRun: dry });
+    const started = performance.now();
 
-  // Explicit --seed-from sources import before the walk starts. Ignored entirely under
-  // --full: full means "trust nothing, ignore every cache, including seeds."
-  if (!full && opts.seedFrom && opts.seedFrom.length > 0) {
-    for (const src of opts.seedFrom) {
-      const imported = await mf.seedFrom(src, "", gen, /* explicit */ true);
-      if (imported !== null) {
-        summary.seeded += imported;
-        log.info(`seeded ${humanCount(imported)} identities from --seed-from ${src}`);
+    // the walk is one transaction: the seeds, the paths, the catalog refreshes and the skips it
+    // writes commit together, or are abandoned together
+    mf.beginWalk();
+    // Explicit --seed-from sources import before the walk starts. Ignored entirely under
+    // --full: full means "trust nothing, ignore every cache, including seeds."
+    if (!full && opts.seedFrom && opts.seedFrom.length > 0) {
+      for (const src of opts.seedFrom) {
+        const imported = await mf.seedFrom(src, "", gen, /* explicit */ true);
+        if (imported !== null) {
+          summary.seeded += imported;
+          log.info(`seeded ${humanCount(imported)} identities from --seed-from ${src}`);
+        }
       }
     }
-  }
+    const { toHash, bytesToHash } = await walkPhase(mf, opts, summary, gen, full, excludeAbs, excludes, dry);
 
-  try {
-    return await runScanBody(mf, opts, summary, gen, full, k, chunkBytes, excludeAbs);
+    const scopes = opts.targets;
+    const deletedPrior = mf.unseenPrior(gen, scopes);
+    const maxDelete = opts.maxDelete ?? DEFAULT_MAX_DELETE;
+    const refused =
+      !opts.allowDeletions && prior > 0 && deletedPrior > (opts._deleteFloor ?? DELETE_FLOOR) && deletedPrior > maxDelete * prior;
+
+    if (dry) {
+      const report: DryRunReport = {
+        dryRun: true,
+        mode,
+        generation: gen,
+        filesSeen: summary.filesSeen,
+        toHash: toHash.length,
+        bytesToHash: bytesToHash.toString(),
+        moved: summary.moved,
+        migrated: summary.migrated,
+        seeded: summary.seeded,
+        deleted: mf.unseenPrior(gen + 1, scopes),
+        deletedPrior,
+        prior,
+        skipped: summary.skipped,
+        ignored: summary.ignored,
+        refused,
+      };
+      mf.rollbackWalk();
+      opts.status?.phase("done", { summary: report });
+      return report;
+    }
+    if (refused) {
+      mf.rollbackWalk();
+      mf.genDiscard(gen);
+      throw new DeletionRefused(deletedPrior, prior, maxDelete);
+    }
+
+    summary.deleted = scopes ? mf.reconcileScopedDeletions(scopes) : mf.reconcileDeletions();
+    mf.commitWalk();
+    log.info(
+      `walk done: ${humanCount(summary.filesSeen)} files seen, ${humanCount(toHash.length)} to hash ` +
+        `(${humanBytes(bytesToHash)}), ${humanCount(summary.moved)} moved, ${humanCount(summary.migrated)} migrated, ` +
+        `${humanCount(summary.deleted)} deleted, ${humanCount(summary.skipped)} skipped, ` +
+        `${humanCount(summary.ignored)} ignored`,
+    );
+    return await hashPhase(mf, opts, summary, gen, k, chunkBytes, toHash, bytesToHash, started);
+  } catch (e) {
+    opts.status?.phase(e instanceof DeletionRefused ? "refused" : "failed", { error: (e as Error).message });
+    throw e;
   } finally {
     // Always roll back any open batch and close the connection — even on interrupt, so a
     // killed run leaves state.sqlite consistent (crash marker: this generation's finished_at
@@ -231,18 +364,17 @@ export async function scan(opts: ScanOptions): Promise<ScanSummary> {
   }
 }
 
-async function runScanBody(
+async function walkPhase(
   mf: Manifest,
   opts: ScanOptions,
   summary: ScanSummary,
   gen: number,
   full: boolean,
-  k: number,
-  chunkBytes: number,
   excludeAbs: string | null,
-): Promise<ScanSummary> {
-  const { root, log, factory } = opts;
-  const started = performance.now();
+  excludes: PathExcludes,
+  dry: boolean,
+): Promise<{ toHash: FileEntry[]; bytesToHash: bigint }> {
+  const { root, log } = opts;
 
   // Custom --ignore patterns always apply, layered on top of the built-in defaults unless
   // --no-default-ignores dropped them.
@@ -254,122 +386,153 @@ async function runScanBody(
   const queuedKeys = new Set<string>(); // identities already queued this run (dedupe hardlinks)
   let walkCount = 0;
 
-  mf.beginWalk();
-  for await (const entry of walkTree(root, excludeAbs, ignorePatterns)) {
-    if (entry.kind === "skip") {
-      summary.skipped++;
-      mf.putSkip(entry.relpath, entry.reason, gen);
-      log.debug(`skip ${entry.relpath} (${entry.reason})`);
-      continue;
-    }
-    if (entry.kind === "ignored") {
-      // Never marked seen: a previously-indexed junk row (predating the deny-list, or newly
-      // matched by a --ignore addition) reconciles away as a deletion via the normal
-      // "not seen this walk" path — no special-case cleanup needed.
-      summary.ignored++;
-      log.debug(`ignored ${entry.relpath} (${entry.isDir ? "dir pruned" : "file"})`);
-      continue;
-    }
-    if (entry.kind === "nested-manifest") {
-      if (full) {
-        log.debug(`nested manifest at ${entry.relpath || "."} — auto-seed disabled under --full`);
+  const walkMsg = () => `walk: ${humanCount(walkCount)} files, ${humanCount(toHash.length)} to hash`;
+  let lastWalkLine = performance.now();
+  const heartbeatMs = opts._walkHeartbeatMs ?? WALK_HEARTBEAT_MS;
+  const heartbeat = setInterval(
+    () => {
+      opts.status?.update({ filesSeen: walkCount, toHash: toHash.length, bytesToHash: bytesToHash.toString() });
+      if (performance.now() - lastWalkLine >= heartbeatMs) {
+        log.progress(walkMsg());
+        lastWalkLine = performance.now();
+      }
+    },
+    Math.min(1000, heartbeatMs),
+  );
+
+  const entries = opts.targets
+    ? targetEntries(root, opts.targets, excludeAbs, ignorePatterns, excludes)
+    : walkTree(root, excludeAbs, ignorePatterns, { excludes });
+  try {
+    for await (const entry of entries) {
+      if (entry.kind === "skip") {
+        summary.skipped++;
+        mf.putSkip(entry.relpath, entry.reason, gen);
+        log.debug(`skip ${entry.relpath} (${entry.reason})`);
         continue;
       }
-      const imported = await mf.seedFrom(entry.abspath, entry.relpath, gen, /* explicit */ false);
-      if (imported !== null) {
-        summary.seeded += imported;
-        log.info(`seeded ${humanCount(imported)} identities from nested manifest at ${entry.relpath || "."}`);
+      if (entry.kind === "ignored") {
+        // Never marked seen: a previously-indexed junk row (predating the deny-list, or newly
+        // matched by a --ignore or --exclude addition) reconciles away as a deletion via the
+        // normal "not seen this walk" path — no special-case cleanup needed.
+        summary.ignored++;
+        log.debug(`ignored ${entry.relpath} (${entry.isDir ? "dir pruned" : "file"})`);
+        continue;
       }
-      continue;
-    }
-    summary.filesSeen++;
-    mf.markSeen(entry.relpath);
-
-    const prevPath = mf.getPathIdentity(entry.relpath);
-    const pathChanged = !prevPath || prevPath.dev !== entry.dev || prevPath.ino !== entry.ino;
-
-    // Inode-migration heuristic (FUSE/shfs remounts, e.g. unRAID's /mnt/user): the SAME path
-    // now presents a NEW (dev,ino). If the OLD identity that path referenced has an exactly
-    // matching (size, mtimeNs), carry its blake3 forward onto the new identity — zero re-hash.
-    // Disabled under --full, which means "ignore every cache, including this one."
-    let migrated = false;
-    if (!full && prevPath && pathChanged) {
-      const oldIdentity = mf.getIdentity(prevPath.dev, prevPath.ino);
-      if (oldIdentity && oldIdentity.size === entry.size && oldIdentity.mtimeNs === entry.mtimeNs) {
-        // Stat facts are the NEW inode's own; mimeClaim is carried forward (content is
-        // unchanged by definition here — re-sniffing would be pure waste).
-        mf.putMigratedIdentity(
-          entry.dev,
-          entry.ino,
-          entry.size,
-          entry.mtimeNs,
-          oldIdentity.blake3,
-          gen,
-          entry.ctimeNs,
-          toBtimeNs(entry.birthtimeNs),
-          entry.mode,
-          oldIdentity.mimeClaim,
-        );
-        summary.migrated++;
-        migrated = true;
-      }
-    }
-
-    const key = identityKey(entry.dev, entry.ino);
-    const existing = migrated ? undefined : mf.getIdentity(entry.dev, entry.ino);
-    const contentKnown = migrated || (!!existing && existing.size === entry.size && existing.mtimeNs === entry.mtimeNs);
-    // Identities are materialized as they're hashed, so a second hardlink/path to the same
-    // inode in this run must dedupe against what's already queued, not just prior state.
-    const needHash = !queuedKeys.has(key) && !migrated && (full || !contentKnown);
-
-    if (pathChanged) {
-      // A new path onto an already-known, unchanged identity is a rename or new hardlink to
-      // pre-existing content: zero re-hash. (A brand-new file is counted by `hashed`.)
-      if (!prevPath && contentKnown) summary.moved++;
-      mf.putPath(entry.relpath, entry.dev, entry.ino, gen);
-    }
-
-    if (needHash) {
-      queuedKeys.add(key);
-      toHash.push(entry);
-      bytesToHash += entry.size;
-    } else if (!migrated && existing) {
-      // A KNOWN, unchanged identity (no re-hash this walk): refresh drifted/NULL stat facts,
-      // and backfill mime_claim for a pre-v3 (or previously-unsniffed) row — both zero-hash,
-      // walk-time-only writes inside the open walk transaction. Safe against duplicate work
-      // across multiple hardlinked paths to the same identity in one walk: getIdentity() reads
-      // back this transaction's own prior writes, so a second path here already sees the
-      // refreshed/backfilled row and does nothing further.
-      const btimeNs = toBtimeNs(entry.birthtimeNs);
-      if (existing.ctimeNs !== entry.ctimeNs || existing.btimeNs !== btimeNs || existing.mode !== entry.mode) {
-        mf.updateIdentityStat(entry.dev, entry.ino, entry.ctimeNs, btimeNs, entry.mode);
-      }
-      if (existing.mimeClaim === null) {
-        let claim: string | null = null;
-        try {
-          claim = sniffMime(await readHead(entry.abspath), entry.relpath);
-        } catch {
-          claim = null; // vanished/unreadable between the walk-stat and this backfill read — best-effort, not fatal
+      if (entry.kind === "nested-manifest") {
+        if (full) {
+          log.debug(`nested manifest at ${entry.relpath || "."} — auto-seed disabled under --full`);
+          continue;
         }
-        if (claim !== null) {
-          mf.updateIdentityMime(entry.dev, entry.ino, claim);
-          summary.sniffed++;
+        const imported = await mf.seedFrom(entry.abspath, entry.relpath, gen, /* explicit */ false);
+        if (imported !== null) {
+          summary.seeded += imported;
+          log.info(`seeded ${humanCount(imported)} identities from nested manifest at ${entry.relpath || "."}`);
+        }
+        continue;
+      }
+      summary.filesSeen++;
+      mf.markSeen(entry.relpath);
+
+      const prevPath = mf.getPathIdentity(entry.relpath);
+      const pathChanged = !prevPath || prevPath.dev !== entry.dev || prevPath.ino !== entry.ino;
+
+      // Inode-migration heuristic (FUSE/shfs remounts, e.g. unRAID's /mnt/user): the SAME path
+      // now presents a NEW (dev,ino). If the OLD identity that path referenced has an exactly
+      // matching (size, mtimeNs), carry its blake3 forward onto the new identity — zero re-hash.
+      // Disabled under --full, which means "ignore every cache, including this one."
+      let migrated = false;
+      if (!full && prevPath && pathChanged) {
+        const oldIdentity = mf.getIdentity(prevPath.dev, prevPath.ino);
+        if (oldIdentity && oldIdentity.size === entry.size && oldIdentity.mtimeNs === entry.mtimeNs) {
+          // Stat facts are the NEW inode's own; mimeClaim is carried forward (content is
+          // unchanged by definition here — re-sniffing would be pure waste).
+          mf.putMigratedIdentity(
+            entry.dev,
+            entry.ino,
+            entry.size,
+            entry.mtimeNs,
+            oldIdentity.blake3,
+            gen,
+            entry.ctimeNs,
+            toBtimeNs(entry.birthtimeNs),
+            entry.mode,
+            oldIdentity.mimeClaim,
+          );
+          summary.migrated++;
+          migrated = true;
         }
       }
-    }
 
-    if (++walkCount % 2000 === 0) log.progress(`walk: ${humanCount(walkCount)} files, ${humanCount(toHash.length)} to hash`);
+      const key = identityKey(entry.dev, entry.ino);
+      const existing = migrated ? undefined : mf.getIdentity(entry.dev, entry.ino);
+      const contentKnown = migrated || (!!existing && existing.size === entry.size && existing.mtimeNs === entry.mtimeNs);
+      // Identities are materialized as they're hashed, so a second hardlink/path to the same
+      // inode in this run must dedupe against what's already queued, not just prior state.
+      const needHash = !queuedKeys.has(key) && !migrated && (full || !contentKnown);
+
+      if (pathChanged) {
+        // A new path onto an already-known, unchanged identity is a rename or new hardlink to
+        // pre-existing content: zero re-hash. (A brand-new file is counted by `hashed`.)
+        if (!prevPath && contentKnown) summary.moved++;
+        mf.putPath(entry.relpath, entry.dev, entry.ino, gen);
+      }
+
+      if (needHash) {
+        queuedKeys.add(key);
+        toHash.push(entry);
+        bytesToHash += entry.size;
+      } else if (!migrated && existing) {
+        // A KNOWN, unchanged identity (no re-hash this walk): refresh drifted/NULL stat facts,
+        // and backfill mime_claim for a pre-v3 (or previously-unsniffed) row — both zero-hash,
+        // walk-time-only writes inside the open walk transaction. Safe against duplicate work
+        // across multiple hardlinked paths to the same identity in one walk: getIdentity() reads
+        // back this transaction's own prior writes, so a second path here already sees the
+        // refreshed/backfilled row and does nothing further. A dry run reads no file's bytes.
+        const btimeNs = toBtimeNs(entry.birthtimeNs);
+        if (existing.ctimeNs !== entry.ctimeNs || existing.btimeNs !== btimeNs || existing.mode !== entry.mode) {
+          mf.updateIdentityStat(entry.dev, entry.ino, entry.ctimeNs, btimeNs, entry.mode);
+        }
+        if (existing.mimeClaim === null && !dry) {
+          let claim: string | null = null;
+          try {
+            claim = sniffMime(await readHead(entry.abspath), entry.relpath);
+          } catch {
+            claim = null; // vanished/unreadable between the walk-stat and this backfill read — best-effort, not fatal
+          }
+          if (claim !== null) {
+            mf.updateIdentityMime(entry.dev, entry.ino, claim);
+            summary.sniffed++;
+          }
+        }
+      }
+
+      if (++walkCount % 2000 === 0) {
+        log.progress(walkMsg());
+        lastWalkLine = performance.now();
+      }
+    }
+  } finally {
+    clearInterval(heartbeat);
+    log.endProgress();
   }
-  log.endProgress();
+  opts.status?.update({ filesSeen: walkCount, toHash: toHash.length, bytesToHash: bytesToHash.toString() }, true);
+  return { toHash, bytesToHash };
+}
 
-  summary.deleted = mf.reconcileDeletions();
-  mf.commitWalk();
-  log.info(
-    `walk done: ${humanCount(summary.filesSeen)} files seen, ${humanCount(toHash.length)} to hash ` +
-      `(${humanBytes(bytesToHash)}), ${humanCount(summary.moved)} moved, ${humanCount(summary.migrated)} migrated, ` +
-      `${humanCount(summary.deleted)} deleted, ${humanCount(summary.skipped)} skipped, ` +
-      `${humanCount(summary.ignored)} ignored`,
-  );
+async function hashPhase(
+  mf: Manifest,
+  opts: ScanOptions,
+  summary: ScanSummary,
+  gen: number,
+  k: number,
+  chunkBytes: number,
+  toHash: FileEntry[],
+  bytesToHash: bigint,
+  started: number,
+): Promise<ScanSummary> {
+  const { root, log, factory } = opts;
+  opts.status?.phase("hash", { toHash: toHash.length, bytesToHash: bytesToHash.toString() });
 
   // ── phase 2: hash pool(s) ─────────────────────────────────────────────────────────
   // Route files at/above the native threshold to a discovered b3sum binary (multi-core,
@@ -435,6 +598,7 @@ async function runScanBody(
   const emitHashProgress = (): void => {
     log.progress(hashProgressMsg());
     lastHashProgressAt = performance.now();
+    opts.status?.update({ hashed: summary.hashed, bytesHashed: hashedBytes.toString() });
   };
 
   let ticker: ReturnType<typeof setInterval> | null = null;
@@ -561,6 +725,7 @@ async function runScanBody(
 
   // ── optional scrub ──────────────────────────────────────────────────────────────
   if (opts.scrub && opts.scrub > 0) {
+    opts.status?.phase("scrub", { hashed: summary.hashed, bytesHashed: summary.bytesHashed });
     const res = await scrubSample(mf, root, opts.scrub, gen, factory, chunkBytes, log, resolver, summary);
     summary.scrubbed = res.scrubbed;
     summary.corrupt = res.corrupt;
@@ -568,8 +733,27 @@ async function runScanBody(
 
   summary.elapsedMs = Math.round(performance.now() - started);
   mf.genClose(summary); // only reached on the success path
-  await mf.publish(); // unveil this complete generation to remote readers
+  if (opts.publish !== false) {
+    opts.status?.phase("publish");
+    await mf.publish(); // unveil this complete generation to remote readers
+  }
+  opts.status?.phase("done", { summary, hashed: summary.hashed, bytesHashed: summary.bytesHashed, published: opts.publish !== false });
   return summary;
+}
+
+/** Publish what the state holds when it finished a generation the published manifest lacks (the
+ * targeted runs a wrapper ran with `publish: false`). Returns the generation published, or null. */
+export async function publishPending(root: string, manifestDir: string, log: Logger): Promise<number | null> {
+  const mf = await Manifest.open(manifestDir, root, log);
+  try {
+    const { state, published } = mf.finishedGenerations();
+    if (state === 0 || state <= published) return null;
+    await mf.publish();
+    log.info(`published generation ${state} (the manifest carried ${published})`);
+    return state;
+  } finally {
+    await mf.close();
+  }
 }
 
 /** Re-hash N randomly-sampled identities and compare to the stored digest. `resolver` is the

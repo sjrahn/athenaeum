@@ -62,6 +62,10 @@ per-arch native blobs to manage separately, no noexec-mount hazard.
 ath-scan <root> [options]           incremental scan (first run on a root = cold full pass)
 ath-scan <root> --bench             benchmark hash vs read throughput; write no manifest
 ath-scan <root> --compact           drop orphaned identities, VACUUM, republish
+ath-scan <root> --paths-from <file|->  targeted update of the listed paths (see below)
+ath-scan <root> --dry-run [...]     what the run would hash, move and delete; writes nothing
+ath-scan <root> --publish           publish generations recorded with --no-publish
+ath-scan <root> --testimony <path>  what the published manifest observed of one file, as testimony
 
   --full                 force a re-hash of every file (ignores the stat cache, the
                          inode-migration heuristic, AND all seeding — trust nothing, verify
@@ -85,12 +89,26 @@ ath-scan <root> --compact           drop orphaned identities, VACUUM, republish
                          layers on top of the built-in junk deny-list — see "Ignoring
                          filesystem-metadata junk" below
   --no-default-ignores   drop the built-in deny-list; --ignore patterns still apply
+  --exclude <glob>       a path relative to the root to leave out (repeatable) — see "Path
+                         excludes" below
+  --no-publish           record the generation in the state without publishing it
+  --max-delete <pct>     the deletion limit (default 5%, past 100 paths) — see below
+  --allow-deletions      let this run past the deletion limit
+  --status-file <path>   keep the run's progress as JSON in <path> — see below
   --json                 emit the run summary / bench result as JSON on stdout
   --quiet | --verbose    log level
   --version | --help
 ```
 
-Exit codes:  0 ok   1 usage/error   2 scrub found corruption
+Exit codes:
+
+| code | meaning |
+|---|---|
+| 0 | ok; for a dry run, the run would be accepted |
+| 1 | usage or error |
+| 2 | the scrub found corruption (the generation is still recorded and published) |
+| 3 | the deletion limit refused the generation and nothing was written; for a dry run, it would refuse |
+| 4 | another scan holds this manifest (the run lock); nothing was done |
 
 The scanner reads content only under `<root>` and writes only under the manifest dir. Human
 logs and progress go to stderr; the summary block (or `--json`) goes to stdout.
@@ -127,6 +145,127 @@ native` is the subset of `hashed` that went through native b3sum rather than WAS
 junk deny-list this walk — see "Ignoring filesystem-metadata junk" below. `sniffed` counts
 `mime_claim` values written this run (new files plus backfilled pre-existing ones) — see
 "Catalog metadata" below.
+
+## Following a share as it changes
+
+A full walk stats every file. To keep a manifest current between walks, a wrapper that watches the
+share (inotify, on unRAID the backing `/mnt/diskN` and pool mounts, each path mapped to its
+`/mnt/user/<share>` path) hands the scanner what changed:
+
+```bash
+printf '%s\n' film/new.mkv film/old-name.mkv film/renamed-dir | \
+  ath-scan /mnt/user/media --paths-from - --no-publish
+```
+
+- **Targeted runs** (`--paths-from <file|->`, one path per line relative to the root) classify
+  only the listed paths: a file as it is now, a directory as a whole subtree (a renamed or
+  removed directory is one event, not one per file), and a path that is gone deletes its rows
+  and every row under it. List both sides of a rename. A targeted run is a generation of its
+  own (mode `targeted`) and needs a manifest a full walk began. It does everything else as a
+  full walk does: excludes, ignores, the deletion limit, hashing, `--scrub` — and, as there, a
+  listed path it cannot read (a permissions error) counts under `skipped` and its rows go.
+- **A refused batch stays refused.** When the deletion limit refuses a targeted run (exit 3,
+  the counts in `--json`), nothing of it is recorded and a later full walk sees the same
+  deletions. Keep the batch, show the counts, and run it again with `--allow-deletions` once
+  they are confirmed real.
+- **The state lives on the share.** `state.sqlite` is in `<root>/.athenaeum/`, on whichever disk
+  holds that directory; every targeted run writes it and every publish writes the manifest
+  beside it, so that disk stays spun up while updates flow. Readers find the manifest only
+  there.
+- **Publishing is separate.** A publish copies the whole state database to `manifest.sqlite`
+  (a few hundred MB per million files) and every reader re-reads it, so publish on a slower
+  clock than you update: run targeted updates with `--no-publish`, and `ath-scan <root>
+  --publish` every hour or so; it publishes only when the state finished a generation the
+  manifest lacks.
+- **A periodic full walk stays** as the net for missed events (with the directory cache warm,
+  it touches no platter where nothing changed).
+- **The run lock** (`<manifest dir>/scan.lock`) lets one run write a manifest's state at a time;
+  a second exits 4 at once, and the wrapper retries later. A lock left by a process that is
+  gone is taken over.
+
+## The deletion limit
+
+A walk that cannot see part of the tree reads it as deleted — a disk dropping out of a union
+mount, an unmounted share, a directory gone unreadable. Before the walk commits, a generation
+that would delete more than 5% of the paths the manifest held (once that is more than 100
+paths) is refused: nothing of the walk is written, the published manifest stays as it was, and
+the scanner exits 3. `--max-delete <pct>` sets the share; `--allow-deletions` lets one run
+through after you have checked the deletions are real. A newly excluded subtree reads as
+deletions too.
+
+## Dry runs
+
+`--dry-run` walks and classifies as the run would (full or targeted, seeds included), reports
+how many files it would hash, move, migrate and delete and whether the deletion limit would
+refuse it, and abandons everything — nothing is hashed, written (beyond upgrading a v2 state to
+v3 in place and recording the host on a state that lacks it) or published, and no file's bytes
+are read. It is the preflight for adopting an
+earlier manifest: `toHash` near zero means its hashes carry over. Exit 0 if the run would be
+accepted, 3 if the limit would refuse it.
+
+## Path excludes
+
+`--exclude <glob>` (repeatable) leaves out paths by their path relative to the root, beside the
+basename deny-list below. A pattern names files or directories, and a matched directory is
+pruned, never entered. A trailing `/` (or `/**`) makes it name directories only. `*` stays
+within one path segment, `**` crosses them:
+
+| pattern | leaves out |
+|---|---|
+| `downloads/` | the root's `downloads` directory |
+| `**/incomplete/` | every directory named `incomplete` |
+| `**/*.part` | every `*.part` file |
+| `*.tmp` | `*.tmp` files at the root only |
+
+Full and targeted runs honour the same excludes, so pass the same ones to both. What a walk
+indexed before a pattern was added reconciles away as deletions.
+
+## Status file
+
+`--status-file <path>` keeps one JSON object describing the run, rewritten whole (temp, then
+rename) every couple of seconds and at each change of phase. Put it on a RAM filesystem
+(`/var/log` on unRAID) so a status page never wakes a disk. Every field is present from the
+first write:
+
+```json
+{
+  "root": "/mnt/user/film",
+  "phase": "hash",
+  "mode": "incremental",
+  "generation": 42,
+  "dryRun": false,
+  "pid": 12345,
+  "host": "farspark",
+  "started_at": "2026-11-10T01:22:45.282Z",
+  "updated_at": "2026-11-10T03:10:02.913Z",
+  "filesSeen": 1250311,
+  "toHash": 812,
+  "bytesToHash": "96412844032",
+  "hashed": 304,
+  "bytesHashed": "35123118080",
+  "published": false,
+  "summary": null,
+  "error": null
+}
+```
+
+| field | |
+|---|---|
+| `phase` | `walk` · `hash` · `scrub` · `publish` · `done` · `refused` (the deletion limit) · `failed` |
+| `mode` | `cold` · `incremental` · `targeted` (null until the run has opened the manifest) |
+| `generation` | the generation the run writes (null as for `mode`) |
+| `dryRun` | true for `--dry-run` |
+| `pid`, `host`, `started_at`, `updated_at` | the process, and when it started and last wrote the file (ISO 8601 UTC); a `pid` gone with `phase` not `done`/`refused`/`failed` is a run that died |
+| `filesSeen`, `toHash` | files the walk has classified, and how many of them need hashing |
+| `bytesToHash`, `bytesHashed` | byte counts as decimal strings (they can pass 2^53) |
+| `hashed` | files hashed so far |
+| `published` | whether the finished generation was published (false under `--no-publish`) |
+| `summary` | at `done`: the run summary (`--json`'s object), or a dry run's report |
+| `error` | at `refused` or `failed`: the message |
+
+Fields may be added; none is removed or renamed without a note in this section. The run
+summary of a finished generation is also `--json` on stdout and `generations.summary_json` in
+the manifest.
 
 ## Ignoring filesystem-metadata junk
 
@@ -271,8 +410,10 @@ as a cheap first filter, never a verdict.
 
 Piped to a file, over plain ssh, or run from cron/User Scripts, stderr isn't a TTY, so the
 `\r`-rewrite progress ticker (meaningless without a terminal) is replaced with plain,
-newline-terminated heartbeat lines during the hash phase — otherwise a multi-day cold pass's
-log would go completely silent between "walk done" and the final summary. Cadence: one line
+newline-terminated heartbeat lines — otherwise a multi-day cold pass's log would go completely
+silent between "walk done" and the final summary. The walk prints one every 2,000 files and at
+least every 30 seconds however few files it has reached, so a slow stat-walk over cold
+directories never looks hung. Cadence: one line
 every 16 hashed files, with a 1-second minimum spacing between lines (so a burst of tiny files
 crossing that boundary rapidly doesn't flood a cron log), and a 30-second time floor so a
 stretch of huge files (hashed count not advancing for a long time) still heartbeats. TTY
@@ -355,20 +496,24 @@ across reboots), so:
    #!/bin/bash
    mkdir -p /var/log/ath-scan
    /mnt/user/appdata/ath-scan/ath-scan /mnt/user/film --byte-path unraid \
-     --native-concurrency 2 --scrub 50 --json > /var/log/ath-scan/film.json
+     --native-concurrency 2 --scrub 50 --status-file /var/log/ath-scan/film.status.json \
+     --json > /var/log/ath-scan/film.json
    ```
    User Scripts' log view is a plain (non-TTY) pipe, so it gets the rate-limited heartbeat
    lines on stderr rather than a silent multi-day gap; the run summary goes to stdout (`--json`
-   for a machine-readable one). `/var/log` is in RAM on unRAID, so a status page that reads the
-   summary there wakes no disk.
+   for a machine-readable one) and the progress to the status file. `/var/log` is in RAM on
+   unRAID, so a status page that reads them wakes no disk. Between full walks, a watcher hands
+   targeted updates over (see "Following a share as it changes").
 4. **Load and heat.** There is no bandwidth limit; the levers are how many files are read at
    once. `--byte-path unraid` sizes the native (b3sum) pool to the number of disks with work
    queued, up to 8; set `--native-concurrency 1`–`2` explicitly to keep a hot shelf cool, and
    `--concurrency` (default 4) bounds the small-file pool. The pool spreads reads across disks
    (fewest active readers first); it does not work through one disk at a time.
-5. **Parity checks.** The scanner does not look for one. Have the wrapper skip a run while a
-   check is in progress, or stop the scan when one starts: an interrupted run publishes
-   nothing and the next resumes per file (see "Interrupt-safety & resume").
+5. **Parity checks and a degraded array.** The scanner does not look for either. Have the
+   wrapper skip a run while a check is in progress or a disk is missing, or stop the scan when
+   one starts: an interrupted run publishes nothing and the next resumes per file (see
+   "Interrupt-safety & resume"). The deletion limit is the last line: a walk that cannot see a
+   disk's files is refused before it writes (exit 3).
 6. **Spin-down and cadence.** An incremental run walks the whole tree and `lstat`s every file
    through `shfs`; any directory or inode the kernel no longer caches is read from its disk,
    which spins it up — so a run wakes every disk under the share unless their metadata stays
@@ -389,14 +534,16 @@ across reboots), so:
 manifest directory and resumes from it: a schema-v2 state (scanner 0.2.x) is migrated to v3 in
 place, a v3 one is used as it is, and one begun before the manifest recorded its host gains it
 on that run. A v1 manifest (scanner 0.1, the `snapshot.jsonl`/`manifest.jsonl` pair) has no
-migration: start a cold pass. An interrupted cold pass has published nothing yet: what it hashed lives only in
-`state.sqlite`, so leave that file where it is (copy it only while no scan runs). A manifest
+migration: start a cold pass. An interrupted cold pass has published nothing yet: what it
+hashed lives only in `state.sqlite`, so leave that file where it is (copy it only while no scan
+runs). A `--dry-run` first says how much of it carries over. A manifest
 under another directory is adopted with `--seed-from`, which imports its identities and its
 paths unchanged: a file keeps its hash when its `(dev, ino, size, mtime)` still matches, or when
 its path matches with the same size and mtime. Seeding a share's root from a scan of a
 *parent* root (`/mnt/user` whole) therefore carries hashes over by inode only, which `shfs`
-does not keep across an array restart; keep the roots the earlier scans used where you can. `--byte-path` changes only where hashing reads come from, never the manifest, so
-runs with and without it mix freely.
+does not keep across an array restart; keep the roots the earlier scans used where you can.
+`--byte-path` changes only where hashing reads come from, never the manifest, so runs with and
+without it mix freely.
 
 **The instance side.** `ath` reads an observed tree by path: the host running `ath` (and
 `athd`) mounts each share — read-only is enough — and declares it once, which writes the

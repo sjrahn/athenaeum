@@ -8,6 +8,7 @@
 
 import { lstat, readdir, stat } from "node:fs/promises";
 import { join, relative, sep } from "node:path";
+import { NO_EXCLUDES, type PathExcludes } from "./excludes.ts";
 import { DEFAULT_IGNORE_PATTERNS, MANIFEST_DIRNAME, MANIFEST_FILENAME } from "./schema.ts";
 
 export interface FileEntry {
@@ -45,7 +46,8 @@ export interface NestedManifestEntry {
   relpath: string;
 }
 
-/** A basename matched the ignore-pattern deny-list (see schema.ts's DEFAULT_IGNORE_PATTERNS):
+/** A basename matched the ignore-pattern deny-list (see schema.ts's DEFAULT_IGNORE_PATTERNS), or the
+ * path an `--exclude` glob (excludes.ts):
  * a file was skipped, or a directory was pruned (its subtree never entered). Never marked
  * seen by the caller — so a previously-indexed junk row reconciles away as a deletion on the
  * next scan, healing rows that predate the deny-list without any special-case cleanup. */
@@ -103,8 +105,11 @@ export async function* walkTree(
   rootAbs: string,
   excludeAbs: string | null,
   ignorePatterns: readonly string[] = DEFAULT_IGNORE_PATTERNS,
+  opts: { excludes?: PathExcludes; start?: string } = {},
 ): AsyncGenerator<WalkEntry> {
-  const stack: string[] = [rootAbs];
+  const excludes = opts.excludes ?? NO_EXCLUDES;
+  // `start` walks one subtree of the root (a targeted run); paths stay relative to the root
+  const stack: string[] = [opts.start ?? rootAbs];
 
   while (stack.length > 0) {
     const dir = stack.pop()!;
@@ -141,14 +146,14 @@ export async function* walkTree(
 
       if (st.isSymbolicLink()) continue; // never follow; not a regular file
       if (st.isDirectory()) {
-        if (isIgnoredName(name, ignorePatterns)) {
+        if (isIgnoredName(name, ignorePatterns) || excludes.dir(toPosix(relative(rootAbs, abs)))) {
           yield { kind: "ignored", relpath: toPosix(relative(rootAbs, abs)), abspath: abs, isDir: true };
           continue; // pruned — never pushed onto the stack, subtree never entered
         }
         stack.push(abs);
         continue;
       }
-      if (isIgnoredName(name, ignorePatterns)) {
+      if (isIgnoredName(name, ignorePatterns) || excludes.file(toPosix(relative(rootAbs, abs)))) {
         yield { kind: "ignored", relpath: toPosix(relative(rootAbs, abs)), abspath: abs, isDir: false };
         continue;
       }
@@ -172,4 +177,84 @@ export async function* walkTree(
       };
     }
   }
+}
+
+/** Whether a path a targeted run was handed lies under something the walk would never enter or
+ * index: a manifest directory, an ignored basename, an excluded directory, or is itself an
+ * excluded file. `isDir` says what the path is now, when it exists. */
+export function outsideWalk(rel: string, ignorePatterns: readonly string[], excludes: PathExcludes, isDir: boolean): boolean {
+  const parts = rel.split("/");
+  for (let i = 0; i < parts.length; i++) {
+    const name = parts[i]!;
+    if (name === MANIFEST_DIRNAME || isIgnoredName(name, ignorePatterns)) return true;
+    const prefix = parts.slice(0, i + 1).join("/");
+    const last = i === parts.length - 1;
+    if ((!last || isDir) && excludes.dir(prefix)) return true;
+  }
+  return !isDir && excludes.file(rel);
+}
+
+/** The entries a targeted run classifies: each listed path (POSIX, relative to the root) as it is
+ * now — a file, a directory walked as a subtree, or nothing when it is gone (the caller deletes
+ * its rows and those under it). */
+export async function* targetEntries(
+  rootAbs: string,
+  targets: readonly string[],
+  excludeAbs: string | null,
+  ignorePatterns: readonly string[],
+  excludes: PathExcludes,
+): AsyncGenerator<WalkEntry> {
+  for (const rel of targets) {
+    const abs = join(rootAbs, rel);
+    if (excludeAbs !== null && (abs === excludeAbs || abs.startsWith(excludeAbs + sep))) continue;
+    let st: import("node:fs").BigIntStats;
+    try {
+      st = await lstat(abs, { bigint: true });
+    } catch (e) {
+      if (errCode(e) !== "enoent" && errCode(e) !== "enotdir") yield { kind: "skip", relpath: rel, abspath: abs, reason: errCode(e) };
+      continue;
+    }
+    if (outsideWalk(rel, ignorePatterns, excludes, st.isDirectory())) {
+      yield { kind: "ignored", relpath: rel, abspath: abs, isDir: st.isDirectory() };
+      continue;
+    }
+    if (st.isSymbolicLink()) continue;
+    if (st.isDirectory()) {
+      yield* walkTree(rootAbs, excludeAbs, ignorePatterns, { excludes, start: abs });
+      continue;
+    }
+    if (!st.isFile()) {
+      yield { kind: "skip", relpath: rel, abspath: abs, reason: "special-file" };
+      continue;
+    }
+    yield {
+      kind: "file",
+      relpath: rel,
+      abspath: abs,
+      dev: st.dev,
+      ino: st.ino,
+      size: st.size,
+      mtimeNs: st.mtimeNs,
+      ctimeNs: st.ctimeNs,
+      birthtimeNs: st.birthtimeNs,
+      mode: st.mode,
+    };
+  }
+}
+
+/** A targeted run's list, one path per line relative to the root: blank lines dropped, `./` and
+ * leading or trailing slashes trimmed, duplicates once. A path naming the root itself or leaving
+ * it is refused. */
+export function parseTargets(text: string): string[] {
+  const out = new Set<string>();
+  for (const raw of text.split("\n")) {
+    const line = raw.replace(/\r$/, "");
+    if (!line.trim()) continue;
+    const rel = line.replace(/^(\.\/)+/, "").replace(/^\/+|\/+$/g, "");
+    const parts = rel.split("/");
+    if (!rel || rel === "." || parts.includes("..") || parts.includes(".") || parts.includes(""))
+      throw new Error(`--paths-from: ${JSON.stringify(line)} is not a path inside the root`);
+    out.add(rel);
+  }
+  return [...out];
 }

@@ -16,7 +16,7 @@ export const STATE_FILENAME = "state.sqlite";
 /** The published manifest: a checkpointed copy of state.sqlite, unveiled atomically. */
 export const MANIFEST_FILENAME = "manifest.sqlite";
 
-export type ScanMode = "cold" | "incremental" | "scrub" | "compact" | "bench";
+export type ScanMode = "cold" | "incremental" | "targeted" | "scrub" | "compact" | "bench";
 
 /**
  * Default basename deny-list for filesystem-metadata junk — a CURATED POSITIVE list,

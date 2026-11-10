@@ -12,17 +12,40 @@ import { parseArgs } from "node:util";
 import { benchmark } from "./bench.ts";
 import { type BytePathResolver, createUnraidResolver } from "./bytepath.ts";
 import { blake3Factory } from "./hasher.ts";
+import { ScanBusy } from "./lock.ts";
 import { Logger, type LogLevel } from "./log.ts";
-import { compact, DEFAULT_CONCURRENCY, DEFAULT_NATIVE_CONCURRENCY, DEFAULT_NATIVE_THRESHOLD, formatSummary, scan } from "./scanner.ts";
+import {
+  compact,
+  DEFAULT_CONCURRENCY,
+  DEFAULT_MAX_DELETE,
+  DEFAULT_NATIVE_CONCURRENCY,
+  DEFAULT_NATIVE_THRESHOLD,
+  DELETE_FLOOR,
+  DeletionRefused,
+  dryRun,
+  formatSummary,
+  publishPending,
+  type ScanOptions,
+  scan,
+} from "./scanner.ts";
 import { DEFAULT_IGNORE_PATTERNS, MANIFEST_DIRNAME, MANIFEST_FILENAME, SCANNER_VERSION, SCHEMA_VERSION } from "./schema.ts";
+import { StatusFile } from "./status.ts";
 import { fileTestimony, observationOf } from "./testimony.ts";
+import { parseTargets } from "./walk.ts";
 
 const HELP = `ath-scan ${SCANNER_VERSION} — residence scanner (manifest schema v${SCHEMA_VERSION})
 
 USAGE
   ath-scan <root> [options]           incremental scan (first run on a root = cold full pass)
   ath-scan <root> --bench             benchmark hash vs read throughput; write no manifest
-  ath-scan <root> --compact           fold the journal into a fresh snapshot
+  ath-scan <root> --compact           drop orphaned identities, VACUUM, publish
+  ath-scan <root> --paths-from <file|->  targeted update: only the listed paths (one per line,
+                                      relative to the root; a directory as its subtree; a path
+                                      gone deletes its rows and those under it)
+  ath-scan <root> --dry-run [...]     report what the run would hash, move and delete; hash,
+                                      write and publish nothing
+  ath-scan <root> --publish           publish the generations the state finished since the
+                                      last publish (runs made with --no-publish); else nothing
   ath-scan <root> --testimony <path>  print what the published manifest observed of one file, as testimony
 
 OPTIONS
@@ -56,6 +79,15 @@ OPTIONS
                          junk, matched dirs are pruned (never entered):
                          ${DEFAULT_IGNORE_PATTERNS.join(" ")}
   --no-default-ignores   drop the built-in deny-list above; --ignore patterns still apply
+  --exclude <glob>       a path relative to the root to leave out (repeatable): "downloads/"
+                         prunes that directory, "**/incomplete/" one at any depth, "**/*.part"
+                         such files anywhere; honoured by full and targeted runs alike
+  --no-publish           record the generation in the state without publishing it
+  --max-delete <pct>     refuse a generation deleting more than this share of the paths the
+                         manifest held (default ${DEFAULT_MAX_DELETE * 100}%, once more than ${DELETE_FLOOR} paths); nothing is written
+  --allow-deletions      let this run past the deletion limit
+  --status-file <path>   keep the run's progress as JSON in <path>, rewritten every few seconds
+                         (put it on a RAM filesystem, e.g. /var/log on unRAID)
   --bench                benchmark only
   --compact              compact only
   --json                 emit the run summary / bench result as JSON on stdout
@@ -63,7 +95,11 @@ OPTIONS
   --version | --help
 
 EXIT CODES
-  0 ok   1 usage/error   2 scrub found corruption`;
+  0  ok (a dry run: the run would be accepted)
+  1  usage or error
+  2  the scrub found corruption (the generation is still recorded and published)
+  3  the deletion limit refused the generation, nothing written (a dry run: would refuse)
+  4  another scan holds this manifest; nothing done`;
 
 function die(msg: string): never {
   process.stderr.write(`error: ${msg}\n`);
@@ -143,6 +179,14 @@ const OPTIONS = {
   "byte-path": { type: "string" },
   ignore: { type: "string", multiple: true },
   "no-default-ignores": { type: "boolean", default: false },
+  exclude: { type: "string", multiple: true },
+  "paths-from": { type: "string" },
+  "dry-run": { type: "boolean", default: false },
+  publish: { type: "boolean", default: false },
+  "no-publish": { type: "boolean", default: false },
+  "max-delete": { type: "string" },
+  "allow-deletions": { type: "boolean", default: false },
+  "status-file": { type: "string" },
   json: { type: "boolean", default: false },
   quiet: { type: "boolean", default: false },
   verbose: { type: "boolean", default: false },
@@ -227,6 +271,13 @@ async function main(): Promise<number> {
     return 0;
   }
 
+  if (values.publish) {
+    const gen = await publishPending(root, manifestDir, log);
+    if (values.json) process.stdout.write(`${JSON.stringify({ published: gen })}\n`);
+    else process.stdout.write(gen === null ? "nothing to publish\n" : `published generation ${gen}\n`);
+    return 0;
+  }
+
   if (values.testimony !== undefined) {
     const o = observationOf(manifestDir, values.testimony);
     if (!o) die(`the published manifest lists no path ${values.testimony}`);
@@ -251,7 +302,30 @@ async function main(): Promise<number> {
     }
   }
 
-  const summary = await scan({
+  let targets: string[] | undefined;
+  if (values["paths-from"] !== undefined) {
+    const from = values["paths-from"];
+    let text: string;
+    try {
+      text = from === "-" ? await Bun.stdin.text() : await Bun.file(from).text();
+    } catch (e) {
+      die(`--paths-from ${from}: ${(e as Error).message}`);
+    }
+    try {
+      targets = parseTargets(text);
+    } catch (e) {
+      die((e as Error).message);
+    }
+  }
+  let maxDelete = DEFAULT_MAX_DELETE;
+  if (values["max-delete"] !== undefined) {
+    const pct = Number(values["max-delete"].replace(/%$/, ""));
+    if (!Number.isFinite(pct) || pct < 0 || pct > 100) die(`--max-delete is a percentage from 0 to 100 (got "${values["max-delete"]}")`);
+    maxDelete = pct / 100;
+  }
+
+  const status = values["status-file"] ? new StatusFile(resolve(values["status-file"]), { root }) : undefined;
+  const opts: ScanOptions = {
     root,
     manifestDir,
     factory,
@@ -265,13 +339,43 @@ async function main(): Promise<number> {
     nativeConcurrency,
     ignorePatterns: values.ignore,
     noDefaultIgnores: values["no-default-ignores"],
+    excludes: values.exclude,
     bytePathResolver,
-  });
+    targets,
+    publish: !values["no-publish"],
+    maxDelete,
+    allowDeletions: values["allow-deletions"],
+    status,
+  };
 
-  if (values.json) process.stdout.write(`${JSON.stringify(summary)}\n`);
-  else process.stdout.write(`${formatSummary(summary, root, { bytePathActive: !!bytePathResolver })}\n`);
-
-  return summary.corrupt > 0 ? 2 : 0;
+  try {
+    if (values["dry-run"]) {
+      const report = await dryRun(opts);
+      if (values.json) process.stdout.write(`${JSON.stringify(report)}\n`);
+      else
+        process.stdout.write(
+          `dry run — generation ${report.generation} (${report.mode}) of ${root}\n` +
+            `  files seen    ${report.filesSeen}\n  to hash       ${report.toHash}  (${report.bytesToHash} bytes)\n` +
+            `  moved         ${report.moved}\n  migrated      ${report.migrated}\n  seeded        ${report.seeded}\n` +
+            `  deleted       ${report.deleted}  (${report.deletedPrior} of the ${report.prior} paths held)\n` +
+            `  skipped       ${report.skipped}\n  ignored       ${report.ignored}\n` +
+            `  verdict       ${report.refused ? "the deletion limit would refuse this run" : "would run"}\n`,
+        );
+      return report.refused ? 3 : 0;
+    }
+    const summary = await scan(opts);
+    if (values.json) process.stdout.write(`${JSON.stringify(summary)}\n`);
+    else process.stdout.write(`${formatSummary(summary, root, { bytePathActive: !!bytePathResolver })}\n`);
+    return summary.corrupt > 0 ? 2 : 0;
+  } catch (e) {
+    if (e instanceof DeletionRefused) {
+      if (values.json)
+        process.stdout.write(`${JSON.stringify({ refused: "deletions", deleted: e.deleted, prior: e.prior, maxDelete: e.maxDelete })}\n`);
+      process.stderr.write(`error: ${e.message}\n`);
+      return 3;
+    }
+    throw e;
+  }
 }
 
 // Guarded so tests can import resolveSeedFromArg/assertNoSeedFromWithFull without triggering
@@ -280,6 +384,10 @@ if (import.meta.main) {
   main()
     .then((code) => process.exit(code))
     .catch((e) => {
+      if (e instanceof ScanBusy) {
+        process.stderr.write(`busy: ${e.message}\n`);
+        process.exit(4);
+      }
       process.stderr.write(`fatal: ${e?.stack ?? String(e)}\n`);
       process.exit(1);
     });

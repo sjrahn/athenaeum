@@ -105,3 +105,11 @@ test("_hashProgressEvery/_hashProgressFloorMs default to the exported constants 
   });
   expect(log.progressCalls.length).toBe(0);
 });
+
+test("the walk heartbeats on time alone, however few files it has reached", async () => {
+  const root = await tmpTree();
+  for (let i = 0; i < 300; i++) await put(root, `d${i % 30}/f${i}.txt`, `content-${i}`);
+  const log = new SpyLogger();
+  await scan({ root, manifestDir: join(root, MANIFEST_DIRNAME), factory: blake3Factory, log, _noNativeHasher: true, _walkHeartbeatMs: 0 });
+  expect(log.progressCalls.some((m) => m.startsWith("walk: "))).toBe(true);
+});
