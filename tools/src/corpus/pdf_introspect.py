@@ -210,16 +210,43 @@ def read_outline_tree(doc: Any) -> list[dict[str, Any]]:
 # ---------- per-word boxes ---------- #
 
 
+def display_frame(page: Any):
+    """A function mapping a text-layer box to the page's DISPLAY frame: the frame the
+    rendered page image uses, so the one `page=<N>&bbox=` crops.
+
+    pypdfium2 reports character boxes as `(left, bottom, right, top)` in PDF user space,
+    before `/Rotate` (and offset by the crop box's origin), while `page.get_size()` is
+    already the displayed size. The returned function takes such a box to
+    `(x0, y0, x1, y1)` in `[0, 1]` fractions of the displayed page, origin top-left, with
+    `/Rotate` (clockwise, multiples of 90) applied."""
+    cl, cb, cr, ct = page.get_cropbox()
+    w0, h0 = (cr - cl) or 1.0, (ct - cb) or 1.0
+    rot = int(page.get_rotation() or 0) % 360
+
+    def to_display(left: float, bottom: float, right: float, top: float):
+        if rot == 90:  # user +y runs display right, user +x runs display down
+            return ((bottom - cb) / h0, (left - cl) / w0, (top - cb) / h0, (right - cl) / w0)
+        if rot == 180:
+            return ((cr - right) / w0, (bottom - cb) / h0, (cr - left) / w0, (top - cb) / h0)
+        if rot == 270:  # user +y runs display left, user +x runs display up
+            return ((ct - top) / h0, (cr - right) / w0, (ct - bottom) / h0, (cr - left) / w0)
+        return ((left - cl) / w0, (ct - top) / h0, (right - cl) / w0, (ct - bottom) / h0)
+
+    return to_display
+
+
 def page_words(doc: Any, index0: int) -> dict[str, Any]:
     """Page `index0` (0-indexed) text-layer words with per-word bounding boxes.
 
-    Each word is `{text, bbox: [x, y, w, h]}` with bbox in [0, 1] fractions of the page,
-    origin top-left (matching the `bbox=` address convention) — pypdfium2 reports char
-    boxes in PDF points with origin bottom-left, so the y axis is flipped. Words are
-    assembled from characters, split on whitespace; the box is the union of its chars'.
+    Each word is `{text, bbox: [x, y, w, h]}` with bbox in [0, 1] fractions of the
+    displayed page, origin top-left (matching the `bbox=` address convention): the union
+    of its chars' boxes, taken to the display frame by `display_frame`, so a `/Rotate`d
+    page's boxes land where its render shows them. Words are assembled from characters,
+    split on whitespace.
     """
     page = doc[index0]
     width, height = page.get_size()
+    to_display = display_frame(page)
     textpage = page.get_textpage()
     words: list[dict[str, Any]] = []
     try:
@@ -230,15 +257,15 @@ def page_words(doc: Any, index0: int) -> dict[str, Any]:
         def flush() -> None:
             nonlocal box, chars
             if chars and box is not None and width > 0 and height > 0:
-                left, bottom, right, top = box
+                x0, y0, x1, y1 = to_display(*box)
                 words.append(
                     {
                         "text": "".join(chars),
                         "bbox": [
-                            round(left / width, 5),
-                            round((height - top) / height, 5),
-                            round((right - left) / width, 5),
-                            round((top - bottom) / height, 5),
+                            round(x0, 5),
+                            round(y0, 5),
+                            round(x1 - x0, 5),
+                            round(y1 - y0, 5),
                         ],
                     }
                 )
@@ -316,7 +343,11 @@ def assemble_lines(page: Any) -> list[dict]:
     addresses from it.
     """
     tp = page.get_textpage()
-    pw, ph = page.get_width(), page.get_height()
+    to_display = display_frame(page)  # bands in the frame the render shows (`/Rotate`)
+    # the tolerance is a fraction of the page's UNROTATED height, in points: a turned page
+    # bands exactly as it would upright, and an unrotated page exactly as it always has
+    _cl, cb, _cr, ct = page.get_cropbox()
+    tol = _LINE_TOLERANCE * (ct - cb) / (page.get_height() or 1.0)
     n = tp.count_chars()
     text = tp.get_text_range()
 
@@ -327,29 +358,22 @@ def assemble_lines(page: Any) -> list[dict]:
         if ch in "\r\n":
             cur = None  # hard break; next glyph opens a line
             continue
-        left, bottom, right, top = tp.get_charbox(i)
-        # Band on the BASELINE, not the top edge. Glyph tops vary within a line by more
-        # than a line's worth — a period's top sits well below a capital's — so
-        # top-banding shreds each line into words. Baselines agree closely; the
-        # tolerance only has to absorb descenders.
-        base = 1 - bottom / ph
-        if cur is not None and abs(base - cur["_base"]) > _LINE_TOLERANCE:
+        x0, y0, x1, y1 = to_display(*tp.get_charbox(i))
+        # Band on the BASELINE (the glyph box's displayed bottom edge), not the top edge.
+        # Glyph tops vary within a line by more than a line's worth — a period's top sits
+        # well below a capital's — so top-banding shreds each line into words. Baselines
+        # agree closely; the tolerance only has to absorb descenders.
+        base = y1
+        if cur is not None and abs(base - cur["_base"]) > tol:
             cur = None
         if cur is None:
-            cur = {
-                "_base": base,
-                "_top": 1 - top / ph,
-                "h": (top - bottom) / ph,
-                "x0": left / pw,
-                "x1": right / pw,
-                "text": "",
-            }
+            cur = {"_base": base, "_top": y0, "h": y1 - y0, "x0": x0, "x1": x1, "text": ""}
             lines.append(cur)
         cur["text"] += ch
-        cur["_top"] = min(cur["_top"], 1 - top / ph)
-        cur["h"] = max(cur["h"], (top - bottom) / ph)
-        cur["x0"] = min(cur["x0"], left / pw)
-        cur["x1"] = max(cur["x1"], right / pw)
+        cur["_top"] = min(cur["_top"], y0)
+        cur["h"] = max(cur["h"], y1 - y0)
+        cur["x0"] = min(cur["x0"], x0)
+        cur["x1"] = max(cur["x1"], x1)
 
     out: list[dict] = []
     for line in lines:
