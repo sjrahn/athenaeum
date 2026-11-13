@@ -226,6 +226,6 @@ def test_inspect_prints_each_ops_class(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "page= -> pdfpage [address]" in out
     assert "text= -> text [reading]" in out
-    assert "geometry= -> json [instrument]" in out
+    assert "geometry= -> json [engine: pdf-geometry@2] [instrument]" in out
     assert "render= -> image [view]" in out
     assert "body -> markdown [reading]" in out
