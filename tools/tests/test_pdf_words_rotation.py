@@ -126,3 +126,11 @@ def _rebuild_xref(raw: bytes) -> bytes:
         out += f"{off:010d} 00000 n \n".encode()
     out += f"trailer\n<< /Size {n} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF".encode()
     return bytes(out)
+
+
+def test_geometry_ops_carry_a_version_pin_in_the_cache_key():
+    """A changed frame must not be served from a cache filled before the change."""
+    from corpus import resolver
+
+    assert resolver.engine_version_for_param("words") == "pdf-geometry@2"
+    assert resolver.engine_version_for_param("geometry") == "pdf-geometry@2"

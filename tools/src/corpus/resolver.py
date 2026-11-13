@@ -38,7 +38,7 @@ from typing import Any
 import pypdfium2 as pdfium
 from PIL import Image
 
-from . import containment, paths, records, transforms
+from . import containment, paths, pdf_introspect, records, transforms
 from . import functional_uri as furi
 from . import mime as mime_mod
 from .store import ArtifactStore, get_store
@@ -109,6 +109,12 @@ _EML_HEADER_OP_PARAMS: frozenset[str] = frozenset({"header"})
 # member's `el=`), that op's more-specific id wins — `archive-path@2` folds in only for the
 # member-selection/terminal-decode step itself, when nothing more specific also matched.
 _ARCHIVE_PATH_OP_PARAMS: frozenset[str] = frozenset({"path"})
+
+# The PDF text-layer geometry instruments (§6.2 `page=<N>&words`, `page=<N>&geometry`) —
+# pinned by `pdf_introspect.GEOMETRY_ENGINE_VERSION`, so a change to the frame the boxes are
+# reported in (`@2`: the display frame, `/Rotate` and the crop box applied) is a new cache
+# identity rather than a stale answer served from before it.
+_PDF_GEOMETRY_OP_PARAMS: frozenset[str] = frozenset({"words", "geometry"})
 
 # The HTML el= LIVE element-scoping op (§6.2, §12.11 `el=`) — the htmlel working-kind resolver
 # path only, never the persisted-segment `address: el=N` read (`transforms.html.ENGINE_VERSION`).
@@ -448,6 +454,8 @@ def resolve(
         from .transforms import zip as zip_tf
 
         version_label = zip_tf.ENGINE_VERSION
+    elif any(k in _PDF_GEOMETRY_OP_PARAMS for k, _ in parsed.params):
+        version_label = pdf_introspect.GEOMETRY_ENGINE_VERSION
     else:
         version_label = None
     key_uri = f"{canonical_uri}|engine={version_label}" if version_label else canonical_uri
@@ -1909,6 +1917,8 @@ def engine_version_for_param(key: str) -> str | None:
         return units_tf.ENGINE_VERSION
     if key in _SIDECAR_OP_PARAMS:
         return SIDECAR_ENGINE_VERSION
+    if key in _PDF_GEOMETRY_OP_PARAMS:
+        return pdf_introspect.GEOMETRY_ENGINE_VERSION
     return None
 
 

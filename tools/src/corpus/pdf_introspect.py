@@ -31,6 +31,11 @@ log = logging.getLogger(__name__)
 # `probe` op reports it and the agent decides), not a drafter switch.
 SCANNED_COVERAGE = 0.9
 
+# The text-layer geometry ops' version (`page=<N>&words`, `page=<N>&geometry`), folded into
+# their cache key. `@2`: boxes in the page's display frame (`display_frame`); `@1` reported
+# user-space boxes against the displayed size, wrong on `/Rotate`d or crop-offset pages.
+GEOMETRY_ENGINE_VERSION = "pdf-geometry@2"
+
 
 # ---------- /Info metadata ---------- #
 
