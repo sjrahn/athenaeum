@@ -19,16 +19,30 @@ Address scheme: `block=<N>` (or `block=<start>-<end>`) — the 1-indexed ordinal
 block-level element in document order (Word has no fixed pages in the XML). Mode is
 `body-draft`; the body is faithful (no interpretation). Tables markdown can't express
 (merged/nested cells) are rendered best-effort; the normalizer upgrades to HTML.
+
+Exposable members (spec §7.1 OOXML, v47.1): every embedded part a block references — a
+picture (`a:blip r:embed`, legacy VML `v:imagedata r:id`) or an OLE object
+(`o:OLEObject r:id`, Type Embed) — is a member row addressed `block=<N>&el=<K>`: the K-th
+such reference inside block N, 1-indexed, in document order, skipping `mc:Fallback`
+(the copy a consumer reading `mc:Choice` never draws). External (linked) parts are not
+members. `member_refs` is shared with `transforms/docx.py`, so a recorded address
+selects the same part on materialization.
 """
 
 from __future__ import annotations
 
+import io
+import posixpath
 import re
 import zipfile
 from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree as ET
 
+import blake3 as _blake3
+from PIL import Image
+
+from corpus import mime as mime_mod
 from corpus import recordbuild
 from corpus.draft import DrafterResult, register
 from corpus.fingerprint import algos_for_atom, text_fingerprints
@@ -36,6 +50,18 @@ from corpus.segments import _STRUCTURAL as _STRUCTURAL_ATOM
 from corpus.segments import Segment
 
 _W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+_R = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+_A = "http://schemas.openxmlformats.org/drawingml/2006/main"
+_V = "urn:schemas-microsoft-com:vml"
+_O = "urn:schemas-microsoft-com:office:office"
+_MC = "http://schemas.openxmlformats.org/markup-compatibility/2006"
+_PKG_REL = "http://schemas.openxmlformats.org/package/2006/relationships"
+# The embedded-part references a block can carry, as (element, relationship-id attribute).
+_MEMBER_REFS = {
+    f"{{{_A}}}blip": f"{{{_R}}}embed",
+    f"{{{_V}}}imagedata": f"{{{_R}}}id",
+    f"{{{_O}}}OLEObject": f"{{{_R}}}id",
+}
 _NS = {
     "w": _W,
     "cp": "http://schemas.openxmlformats.org/package/2006/metadata/core-properties",
@@ -81,12 +107,8 @@ def draft(
         if "docProps/app.xml" in members:
             fields.update(_read_app_props(zf))
         fields["has_images"] = any(m.startswith("word/media/") for m in members)
-
-    blocks: list[tuple[str, ET.Element]] = []
-    if doc_xml:
-        body = ET.fromstring(doc_xml).find(_q("body"))
-        if body is not None:
-            blocks = list(_iter_block_items(body))
+        blocks = read_blocks(doc_xml)
+        embeds = _block_embeds(zf, blocks, read_rels(zf))
 
     fields["paragraph_count"] = sum(1 for kind, _ in blocks if kind == "para")
     fields["table_count"] = sum(1 for kind, _ in blocks if kind == "table")
@@ -94,12 +116,110 @@ def draft(
     recordbuild.add_blocks(build, _build_segments(blocks, algos_for_atom("text", fingerprint)))
     return {
         "fields": fields,
-        "embeds": [],
+        "embeds": embeds,
         "issues": [],
     }
 
 
 register(_DOCX_SCHEMA_ID)(draft)
+
+
+# ---------- exposable members (`block=<N>&el=<K>`) ---------- #
+
+
+def read_blocks(doc_xml: bytes) -> list[tuple[str, ET.Element]]:
+    """`word/document.xml`'s block-level elements in document order (the `block=` axis)."""
+    if not doc_xml:
+        return []
+    body = ET.fromstring(doc_xml).find(_q("body"))
+    return list(_iter_block_items(body)) if body is not None else []
+
+
+def read_rels(zf: zipfile.ZipFile) -> dict[str, str]:
+    """Relationship id → zip part name for the main document's INTERNAL relationships
+    (`word/_rels/document.xml.rels`). External (linked) targets are not parts."""
+    name = "word/_rels/document.xml.rels"
+    if name not in zf.namelist():
+        return {}
+    out: dict[str, str] = {}
+    for rel in ET.fromstring(zf.read(name)).iter(f"{{{_PKG_REL}}}Relationship"):
+        rid, target = rel.get("Id"), rel.get("Target")
+        if not rid or not target or rel.get("TargetMode") == "External":
+            continue
+        part = target.lstrip("/") if target.startswith("/") else posixpath.normpath(
+            posixpath.join("word", target))
+        out[rid] = part
+    return out
+
+
+def member_refs(block: ET.Element, rels: dict[str, str]) -> list[str]:
+    """The relationship ids of the embedded parts `block` references, in document order —
+    `el=<K>` is the K-th (1-indexed). Only a reference `rels` resolves to a package part
+    counts: an external (linked) target, or an OLE object linked rather than embedded
+    (`Type="Link"`), is no member and takes no index. An `mc:Fallback` subtree is skipped:
+    it repeats the `mc:Choice` content for consumers that cannot read it."""
+    refs: list[str] = []
+
+    def walk(node: ET.Element) -> None:
+        for child in node:
+            if child.tag == f"{{{_MC}}}Fallback":
+                continue
+            attr = _MEMBER_REFS.get(child.tag)
+            if attr is not None and child.get(attr) in rels and child.get("Type") != "Link":
+                refs.append(str(child.get(attr)))
+            walk(child)
+
+    walk(block)
+    return refs
+
+
+def _block_embeds(zf: zipfile.ZipFile, blocks: list[tuple[str, ET.Element]],
+                  rels: dict[str, str]) -> list[dict[str, Any]]:
+    """One member row per distinct embedded part (deduped by byte hash), each listing every
+    `block=<N>&el=<K>` it is drawn at — the EPUB drafter's embed shape."""
+    names = set(zf.namelist())
+    by_hash: dict[str, dict[str, Any]] = {}
+    for n, (_kind, el) in enumerate(blocks, start=1):
+        for k, rid in enumerate(member_refs(el, rels), start=1):
+            part = rels[rid]
+            if part not in names:
+                continue  # a dangling relationship: no bytes to roster (resolving says so)
+            data = zf.read(part)
+            digest = _blake3.blake3(data).hexdigest()
+            slot = by_hash.get(digest)
+            if slot is None:
+                media_type = mime_mod.sniff_head(data[:8192], posixpath.basename(part))
+                fields: dict[str, Any] = {"bytes": len(data)}
+                try:
+                    with Image.open(io.BytesIO(data)) as im:
+                        fields["width"], fields["height"] = im.size
+                except Exception:
+                    pass
+                slot = by_hash[digest] = {
+                    "media_type": media_type if media_type != "unknown"
+                    else "application/octet-stream",
+                    "addresses": [], "fields": fields,
+                }
+            slot["addresses"].append(f"block={n}&el={k}")
+    return [
+        {"media_type": e["media_type"],
+         "address": e["addresses"][0] if len(e["addresses"]) == 1 else e["addresses"],
+         "transport": f"blake3:{digest}", "fields": e["fields"]}
+        for digest, e in by_hash.items()
+    ]
+
+
+def render_block(kind: str, el: ET.Element) -> str:
+    """One block's markdown exactly as the drafter writes it into a segment body — what a
+    `block=<N>` resolution returns."""
+    if kind == "table":
+        return _render_table(el)
+    style = _para_style(el)
+    level = _heading_level(el, style)
+    text = _collapse(_para_text(el))
+    if level == 1:
+        return f"## {text}" if text else ""
+    return _render_para(el, style, level, text)
 
 
 # ---------- body walk + section assembly ---------- #

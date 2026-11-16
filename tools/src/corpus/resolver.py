@@ -144,8 +144,8 @@ MEMBERS_ENGINE_VERSION = "members@2"
 # arrive later") — harmless to list now: `_resolve_handler` simply finds no handler for them
 # until a schema declares one, exactly as for any other unimplemented axis.
 _MEMBER_RECHAIN_PARAMS: frozenset[str] = frozenset(
-    {"path", "msg", "part", "card", "entry", "item"}
-)
+    {"path", "msg", "part", "card", "entry", "item", "el"}
+)  # `el` re-chains only where it yields `bytes`: a docx block's embedded part (v47.1)
 
 # The turn= unit op and its att= companion (§6.2) — the form-mapping unit-array resolution
 # (`shape.units.ENGINE_VERSION`). RECORD-LEVEL (resolved by `_resolve_turn`, which recognizes
@@ -407,7 +407,13 @@ def resolve(
     # versions the same way ("cuts, muxes, and conversions are version-labeled ops", §6.2).
     # Either way the cache key includes the engine id and the sidecar records it —
     # determinism holds per engine/version.
-    if any(k == "transcribe" for k, _ in parsed.params):
+    if initial_kind == "docx":
+        # docx's `block=`/`el=` share names with other formats' axes (a message's
+        # `block=`, HTML's `el=`), so the pin keys on the record's kind, not the param.
+        from .transforms import docx as docx_tf
+
+        version_label = docx_tf.ENGINE_VERSION
+    elif any(k == "transcribe" for k, _ in parsed.params):
         version_label = getattr(transcriber, "engine", None)
     elif any(k in _FFMPEG_ENGINE_PARAMS for k, _ in parsed.params):
         from .transforms import video as video_tf
@@ -552,7 +558,7 @@ def resolve(
             working = im.copy()
     elif initial_kind in (
         "video", "audio", "epub", "zip", "tar", "mbox", "vcard", "message", "csv",
-        "xlsx",
+        "xlsx", "docx",
     ):
         # The working value is the artifact path itself: ffmpeg and the transcriber stream
         # from disk rather than loading the whole media into memory; the epub `spine`
@@ -616,6 +622,13 @@ def resolve(
             from .transforms import xlsx as xlsx_tf
 
             working = xlsx_tf.render_sheet(working)
+            current_kind = "text"
+        # A terminal `docxblock` (bare `block=N`) renders the blocks' markdown exactly as
+        # the drafter writes it, so a stored `address: block=N` resolves to its own text.
+        if current_kind == "docxblock":
+            from .transforms import docx as docx_tf
+
+            working = docx_tf.render(working)
             current_kind = "text"
         # A terminal `htmlel` (bare `el=N`) materializes to its concrete output: an `<img>`
         # to a PIL image (cache PNG), a media/attachment carrier to raw bytes (cache the
@@ -1708,6 +1721,9 @@ def _predict_final_kind(parsed: furi.ParsedURI, initial_kind: str) -> str:
         current = "text"
     # A terminal `xlsxsheet` renders its used range to text (see resolve()).
     if current == "xlsxsheet":
+        current = "text"
+    # A terminal `docxblock` renders its blocks' markdown (see resolve()).
+    if current == "docxblock":
         current = "text"
     return current
 

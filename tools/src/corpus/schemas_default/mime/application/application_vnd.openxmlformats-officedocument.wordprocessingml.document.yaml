@@ -14,13 +14,21 @@ applies_to:
   content_types:
   - application/vnd.openxmlformats-officedocument.wordprocessingml.document
   - application/vnd.ms-word.document.macroEnabled.12
+# Resolver's initial working kind (`transforms/docx.py`): `block=` selects blocks and a
+# terminal one renders their markdown as the drafter writes it; `block=<N>&el=<K>` serves
+# the K-th embedded part block N references (spec §7.1 OOXML exposable members, v47.1).
+working_kind: docx
 mode: body-draft
 artifact_kind: self_contained
 address_scheme:
 - param: block
   type: string
   description: |-
-    1-indexed ordinal of a block-level element (a paragraph `<w:p>` or a table `<w:tbl>`) in `word/document.xml` document order, after `<w:sdt>` content controls are unwrapped. A single element is `block=<N>`; a span is `block=<start>-<end>`. Word documents carry no fixed pages in the XML (pagination is render-time), so block position — not page — is the stable structural locator. Unlike `pdf`'s `page=` axis, `block=` addresses are NOT resolvable to rasterized images; the resolver does not render docx.
+    1-indexed ordinal of a block-level element (a paragraph `<w:p>` or a table `<w:tbl>`) in `word/document.xml` document order, after `<w:sdt>` content controls are unwrapped. A single element is `block=<N>`; a span is `block=<start>-<end>`. Word documents carry no fixed pages in the XML (pagination is render-time), so block position — not page — is the stable structural locator. `block=` resolves to the blocks' text, rendered as the drafter renders it; it is NOT a rasterized image — the resolver does not render docx.
+- param: el
+  type: integer
+  description: |-
+    1-indexed position of an embedded part WITHIN block N: every picture (`a:blip r:embed`, legacy VML `v:imagedata r:id`) and OLE object (`o:OLEObject r:id`, embedded, not linked) the block references, in document order, `mc:Fallback` copies skipped. `block=<N>&el=<K>` addresses one exposable member (spec §7.1) — its member row, and its bytes verbatim on resolution.
 normalization:
   guidance: |
     This guidance applies to every normalize pass — both the initial pass against fresh drafter output and any later re-pass. The docx drafter is the structural-content authority for a docx record: deterministically, it walks `word/document.xml` (unwrapping `<w:sdt>` content controls), populates frontmatter (`paragraph_count`, `table_count`, `page_count`, `word_count`, `docx_*` from docProps, `has_images`), and emits one `<!--section-->` per top-level heading. **The drafter still writes `entry:` directly from the heading text on each section** (a write-path defect tracked separately, not yet closed) — `entry:` retired from the section header in 3.5 (spec §4.3.2.1) and is migration residue on sight, not a field to preserve or extend. Every normalize pass converts it: open each section with a `<!--segment structural addr=block=<N> level=1-->` whose body is the heading text verbatim (spec §4.3.2.3), and strip the section's own `entry:`. Each section then holds that structural mark plus one `atom: text` segment whose body is the rendered markdown for that section.
@@ -109,7 +117,7 @@ normalization:
 
     ## Images and embedded objects
 
-    `has_images: true` means the zip carries `word/media/` parts. **The v1 drafter does not emit `atom: image` segments or member rows for docx** — inline figures (CDM "Figure 1 / Figure 2" project-boundary diagrams, often stored as `word/media/*` images or `<w:object>` OLE embeds) are not yet surfaced as image segments. If a docx genuinely centers on figures, note the gap in your report (and a record-scope `partial-content` issue if a figure is load-bearing and absent from the body) — surfacing the limitation is correct; do not invent alt text for an image you can't see. Drafter image support for docx is a deferred enhancement.
+    Every embedded part a block draws — a picture (`word/media/*`) or an OLE object (`word/embeddings/*`) — is a member row addressed `block=<N>&el=<K>` (the K-th such reference inside block N), with its byte hash as transport. A figure belongs in the body as an `atom: image` segment at that address (`seg image addr=block=<N>&el=<K>`), placed where the document draws it; `corpus resolve 'corpus://<hash>?block=<N>&el=<K>'` returns the part's bytes, and `?members` lists every one with its dimensions. A record attested before members were rostered for docx (v47.1) has none until `corpus reattest`. Do not invent alt text: describe nothing the record cannot carry (spec §4.3.2.2).
 
     ## Faithfulness
 
@@ -142,7 +150,7 @@ extended_fields:
     required: true
     source: file_metadata
     description: |-
-      True iff the OOXML zip contains any `word/media/` part. A discoverability signal; the v1 drafter does not yet emit image segments for docx (see normalization guidance).
+      True iff the OOXML zip contains any `word/media/` part. A discoverability signal; the parts a block actually draws are member rows at `block=<N>&el=<K>` (see normalization guidance).
   title:
     # (3.2) Deliberately NOT role: title — this field's own description records that it's
     # "often a document-management code rather than a readable title." An origin overlay MAY
