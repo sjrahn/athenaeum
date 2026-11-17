@@ -1126,6 +1126,14 @@ def run_check(
             entry_countable = True  # flipped only by a provably deferred surface
             src_id: tuple[str, str] | None = None
             anchor = e.get("anchor")
+            for key in ("anchor", "quote"):
+                if e.get(key) is not None and not isinstance(e[key], str):
+                    # a scratch object left in the slot reads to verify as "no anchor" /
+                    # "no quote": the entry would pass as a record-level cite it never was
+                    rep.err(where, f"evidence `{key}` must be a string, not "
+                                   f"{type(e[key]).__name__} (§6.1)")
+            if not isinstance(anchor, str):
+                anchor = None
             if isinstance(anchor, str) and anchor.startswith("?"):
                 rep.err(where, f"anchor {anchor!r} must not carry a leading '?'")
             elif isinstance(anchor, str) and (unknown := _anchor_unknown_param(anchor)):

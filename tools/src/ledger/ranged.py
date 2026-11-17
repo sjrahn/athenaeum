@@ -585,6 +585,9 @@ def check_claim(claim: dict, fact: dict, rr: RosterRevisions) -> list[str]:
         if basis == "migration" and h.entries[rev].get("mode") != "transcribed":
             errs.append(f"{w} is a migration closure on a {h.entries[rev].get('mode')!r} "
                         "revision — it stands only on `transcribed` (§5.6)")
+        for key in ("anchor", "quote"):
+            if cl.get(key) is not None and not isinstance(cl[key], str):
+                errs.append(f"{w} `{key}` must be a string, not {type(cl[key]).__name__}")
         skey = cl.get("source")
         if not isinstance(skey, str) or skey not in sources:
             errs.append(f"{w} source {skey!r} does not resolve in this fact's sources")

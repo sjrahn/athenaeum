@@ -950,6 +950,13 @@ def _verify_ledger(
                 surface_deferred = (content.citation_surface == "segments"
                                     and content.segment_count == 0)
                 anchor = e.get("anchor")
+                if anchor is not None and not isinstance(anchor, str):
+                    # never read as "no anchor": the quote would pass record-wide for a
+                    # citation that named a place nobody can resolve
+                    sev.append(f"{where}: anchor is a {type(anchor).__name__}, not a "
+                               f"functional-URI string — nothing to resolve")
+                    bad(skey)
+                    continue
                 uri = derived_uri(sources, skey, anchor) or f"corpus://{h}"
                 from corpus import functional_uri
 
