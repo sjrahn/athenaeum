@@ -261,14 +261,39 @@ def _print_expectation_satisfaction(
                   f"({row['concepts']} concept{plural})")
 
 
+def _fact_ids(args: Sequence[str]) -> set[str]:
+    """Fact ids from command-line arguments that may be ids or fact-file paths: an
+    argument naming an existing `.json` file reads as the `id` that file declares."""
+    out: set[str] = set()
+    for a in args:
+        p = Path(a)
+        if a.endswith(".json") or p.is_file():
+            try:
+                fid = json.loads(p.read_text(encoding="utf-8")).get("id")
+            except (OSError, json.JSONDecodeError, AttributeError) as e:
+                raise ValueError(f"{a}: not a readable fact file ({e})") from e
+            if not isinstance(fid, str):
+                raise ValueError(f"{a}: declares no fact id")
+            out.add(fid)
+        else:
+            out.add(a)
+    return out
+
+
 def _cmd_verify(argv: Sequence[str]) -> int:
     ap = _base_parser("ath ledger verify",
                       "Verify evidence content: anchors + verbatim quotes (§13.2).")
-    ap.add_argument("ids", nargs="*", help="fact ids to verify (default: all)")
+    ap.add_argument("ids", nargs="*",
+                    help="fact ids or fact-file paths to verify (default: all)")
     ap.add_argument("--stamp", action="store_true",
                     help="write snapshot-binding stamps on passing evidence")
     ns = ap.parse_args(list(argv))
     ledger_root, join, datasets = _system(ns.root)
+    try:
+        wanted = _fact_ids(ns.ids)
+    except ValueError as e:
+        print(f"ath ledger verify: {e}", file=sys.stderr)
+        return 2
     import time
     from datetime import date
 
@@ -287,8 +312,13 @@ def _cmd_verify(argv: Sequence[str]) -> int:
               f"{int(now - started)}s — {current}", file=sys.stderr, flush=True)
 
     res = verify_ledger(ledger_root, join, datasets, stamp=ns.stamp,
-                        only_ids=set(ns.ids) or None,
+                        only_ids=wanted or None,
                         today=date.today().isoformat(), progress=progress)
+    if missing := sorted(wanted - res.visited):
+        # a named fact that matched nothing must never read as a clean pass
+        print(f"ath ledger verify: no fact with id {', '.join(missing)} — nothing "
+              "verified for it", file=sys.stderr)
+        return 2
     for n in res.notes:
         print(f"note: {n}")
     for w in res.warnings:

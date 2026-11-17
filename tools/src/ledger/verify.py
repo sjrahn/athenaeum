@@ -160,6 +160,9 @@ class VerifyResult:
     # mechanically (a derivation op the record markdown itself can't scope) —
     # verified, at full anchor precision, via a library call to `corpus.resolver`
     derived_resolved: int = 0
+    # the fact ids this run actually visited — lets a caller that named ids tell an id
+    # matching no fact from a fact with nothing to verify
+    visited: set[str] = field(default_factory=set)
 
     @property
     def ok(self) -> bool:
@@ -723,6 +726,8 @@ def _verify_ledger(
             continue
         if only_ids and fact.get("id") not in only_ids:
             continue
+        if isinstance(fact.get("id"), str):
+            res.visited.add(fact["id"])
         sources = fact.get("sources")
         if not isinstance(sources, dict):
             sources = {}
