@@ -51,7 +51,7 @@ from typing import Any
 import pypdfium2 as pdfium
 from pypdf import PdfReader
 
-from corpus import content_hash, pdf_introspect, recordbuild, records
+from corpus import content_hash, pdf_introspect, recordbuild, records, touches
 from corpus.draft import DrafterResult, register
 from corpus.fingerprint import algos_for_atom, text_fingerprints
 from corpus.segments import Segment
@@ -141,9 +141,68 @@ def draft(
     return {
         "fields": fields,
         "embeds": embeds,
-        "issues": [],
+        "issues": _annotation_overlay_issues(reader),
         "canonical": canonical,
     }
+
+
+_DETECTOR = touches.script_identifier("draft.application/application_pdf")
+
+#: Annotation subtypes that draw content over the page the text layer does not hold: typed
+#: text, opaque shapes that can hide what lies beneath, stamps, ink, redactions, and a
+#: strike-out marking a value superseded. Link, Popup, Text (a note icon), Highlight and
+#: Underline change nothing a reader takes as the page's content.
+_OVERLAY_SUBTYPES = frozenset({"FreeText", "Square", "Circle", "Polygon", "PolyLine", "Line",
+                               "Ink", "Stamp", "Redact", "StrikeOut"})
+_ANNOT_HIDDEN, _ANNOT_NOVIEW = 2, 32
+
+
+def _widget_has_value(annot: Any) -> bool:
+    """A form widget drawing a filled value (its own `/V`, or its field's up the chain)."""
+    node, seen = annot, 0
+    while node is not None and seen < 8:
+        v = node.get("/V")
+        if v is not None:
+            return str(v) not in ("", "/Off")
+        parent = node.get("/Parent")
+        node = parent.get_object() if parent is not None else None
+        seen += 1
+    return False
+
+
+def _annotation_overlay_issues(reader: PdfReader) -> list[dict[str, Any]]:
+    """`format-loss/annotation-overlay` at `page=<N>` for every page that draws visible
+    annotations over its content (§4.3.3.2): the drafted body is the text layer, which
+    holds none of what they draw and still holds what they may cover — a correction typed
+    over a white box reads, in the text layer, as the value it replaced."""
+    issues: list[dict[str, Any]] = []
+    for n, page in enumerate(reader.pages, start=1):
+        try:
+            annots = page.get("/Annots")
+            annots = annots.get_object() if annots is not None else []
+            kinds: list[str] = []
+            for ref in annots or []:
+                a = ref.get_object()
+                flags = int(a.get("/F", 0) or 0)
+                if flags & (_ANNOT_HIDDEN | _ANNOT_NOVIEW):
+                    continue
+                sub = str(a.get("/Subtype", "")).lstrip("/")
+                if sub in _OVERLAY_SUBTYPES or (sub == "Widget" and _widget_has_value(a)):
+                    kinds.append(sub)
+        except Exception as exc:  # a malformed annotation array never sinks the draft
+            log.debug("annotation scan failed on page %d: %s", n, exc)
+            continue
+        if kinds:
+            issues.append({
+                "id": "format-loss",
+                "subtype": "annotation-overlay",
+                "severity": "warning",
+                "detector": _DETECTOR,
+                "address": f"page={n}",
+                "fields": {"annotation_subtypes": sorted(set(kinds)),
+                           "annotation_count": len(kinds)},
+            })
+    return issues
 
 
 def _attachment_embeds(doc: Any) -> list[dict[str, Any]]:

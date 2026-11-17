@@ -1,0 +1,26 @@
+# A PDF page carries annotations that draw content over it — typed corrections (FreeText),
+# opaque boxes (Square/Circle with a fill), stamps, ink, redactions, filled form fields —
+# which the page's text layer does not hold. Emitted at `page=<N>` by the PDF drafter.
+
+description: |
+  The page renders content its text layer does not hold: annotations drawn over the page
+  (a correction typed over a struck value, a white box hiding the original, a stamp, a
+  filled form field). The drafted body is the text layer, so it can read a value the page
+  no longer shows and miss the one it does. The rendered page is the source of truth:
+  transcribe the annotated region from pixels. A quote that verifies against the drafted
+  body here may be quoting a covered, superseded value.
+
+applies_at: [segment]
+
+extended_fields:
+  annotation_subtypes:
+    type: list[string]
+    required: true
+    description: |
+      The distinct PDF annotation subtypes drawing on the page (`FreeText`, `Square`,
+      `Stamp`, `Widget`, …), sorted.
+  annotation_count:
+    type: int
+    required: true
+    description: |
+      How many such annotations the page carries.

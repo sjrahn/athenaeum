@@ -49,6 +49,10 @@ normalization:
 
     An Acrobat **portfolio** drafts as its cover page alone (often a single "open this in Acrobat" sheet): the documents are **exposable members**, rostered on the record at `attachment=<N>`. The cover page is not the content. Read a member through the resolver (`corpus resolve 'corpus://<hash>?attachment=<N>&page=1'`), cite it there, and when it needs a formed surface of its own, raise a `promote` need for `attachment=<N>` rather than normalizing the cover.
 
+    ## Annotation overlays — the text layer is not what the page shows
+
+    A page carrying a `format-loss` issue of subtype `annotation-overlay` draws content over itself that its text layer does not hold: a correction typed in a FreeText box over a white Square hiding the original value, a filled form field, a stamp, a strike-out. The drafted body is the text layer, so it can read the **covered, superseded** value and miss the visible one. On such a page the render is the only source: transcribe the annotated regions from pixels (crop to them), and never let a value the drafted body carries stand where the page shows another.
+
     ## Page addresses are content bands, not whole pages — and bodies are not bands
 
     The address and the body of a `text` segment carry independent facts, and conflating them is the most common misreading of a fresh draft:
