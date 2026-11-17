@@ -117,6 +117,13 @@ class RecordContent:
     # record-wide verbatim quotes are honest even on a formless record
     citation_surface: str = "raw"
     segment_count: int = 0  # addressable leaf segments the record actually persists
+    # *(§6.3, corpus §7.1)* `full_text` carries the decoded artifact text of a formless
+    # `raw`-surface `text/*` record — its derived body, record-wide citable — so quotes
+    # against it compare verbatim (`strip_markup=False`): the bytes are not markdown.
+    raw_body: bool = False
+    # …and True when that body exists but its bytes can't be reached here: a quote absent
+    # from what IS on hand is then unverifiable, never wrong.
+    body_unreachable: bool = False
     corpus_root: Path | None = None  # the holding corpus root — for resolver calls (1.5)
     # *(v47, §13.2)* a stored address → the text of the block(s) stored AT it (canonical
     # spelling, `_canon_address`); a list address registers its block under every part.
@@ -404,12 +411,58 @@ def load_record_content(join: CorpusJoin, hash_: str) -> RecordContent | None:
     media_type = records.media_type_for(post)
     surface = _citation_surface_for(media_type, corpus_root=corpus_root)
     segment_count = sum(1 for _ in segments.leaf_segments(blocks))
+    raw_body = body_unreachable = False
+    if surface == "raw" and segment_count == 0 and media_type.startswith("text/"):
+        # A formless raw-surface text record (a `.txt` table, an unformed CSV): its derived
+        # body IS the decoded artifact, and record-wide quotes against it are honest (§6.3,
+        # corpus §7.1) — without it, a record `corpus inspect` calls citable verified nothing.
+        body = _artifact_text(corpus_root, hash_, media_type)
+        if body is not None:
+            texts.append(body)
+            raw_body = True
+        else:
+            body_unreachable = True
     return RecordContent(
-        spans=spans, full_text="\n".join(texts), touch=touch,
+        spans=spans, full_text="\n".join(texts), touch=touch, raw_body=raw_body,
+        body_unreachable=body_unreachable,
         media_type=media_type, citation_surface=surface, segment_count=segment_count,
         corpus_root=corpus_root, el_paths=el_paths, el_scheme=el_scheme,
         addressed=addressed, regions=regions,
     )
+
+
+_TEXT_BOMS = ((b"\xef\xbb\xbf", "utf-8-sig"), (b"\xff\xfe\x00\x00", "utf-32"),
+              (b"\x00\x00\xfe\xff", "utf-32"), (b"\xff\xfe", "utf-16"),
+              (b"\xfe\xff", "utf-16"))
+
+
+def decode_text_artifact(data: bytes) -> str:
+    """A text artifact's bytes as text, by sniffed charset: a byte-order mark names its
+    encoding; else UTF-8 when the bytes are valid UTF-8; else Windows-1252 (the de facto
+    superset of Latin-1 untagged Western text is written in), replacing what it can't map.
+    Records carry no declared charset for a standalone `text/*` artifact, so the sniff is
+    the only source."""
+    for bom, enc in _TEXT_BOMS:
+        if data.startswith(bom):
+            return data.decode(enc, errors="replace")
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data.decode("cp1252", errors="replace")
+
+
+def _artifact_text(corpus_root: Path, hash_: str, media_type: str) -> str | None:
+    """The decoded artifact text of `hash_`, or None when its bytes can't be reached here
+    (absent, remote and unhydrated) — the quote is then unverifiable, never wrong."""
+    try:
+        from corpus import containment
+        from corpus import mime as mime_mod
+
+        path = containment.ensure_local_bytes(corpus_root, hash_,
+                                              mime_mod.extension_for(media_type))
+        return decode_text_artifact(path.read_bytes())
+    except Exception:  # tolerant by contract: unreachable bytes are a gap, not a failure
+        return None
 
 
 def scoped_text(content: RecordContent, params: list[tuple[str, str]]) -> tuple[str | None, str]:
@@ -955,8 +1008,9 @@ def _verify_ledger(
                             content.corpus_root, uri, content.media_type,
                             params, derived_cache,
                         )
+                    verbatim = content.raw_body  # bytes, not markdown: no markup strip
                     if status == "unchecked" and (resolved or not _quote_found(
-                            str(quote), content.full_text)):
+                            str(quote), content.full_text, strip_markup=not verbatim)):
                         if resolved:
                             # strip_markup=False: derived_text is raw resolver
                             # output (JSON/CSV/vcard/chat-export bytes), never
@@ -997,15 +1051,25 @@ def _verify_ledger(
                         res.notes.append(note)
                         bad(skey)
                         continue
-                    if not _quote_found(str(quote), haystack):
+                    if not _quote_found(str(quote), haystack, strip_markup=not verbatim):
                         if surface_deferred:
                             # (1.8) the quote isn't on the record's byte-fact
                             # surfaces and its real surface hasn't formed —
                             # held, never soup-matched, never failed
                             defer(skey, h)
                             continue
+                        if content.body_unreachable:
+                            # the record's text body is real but not on this machine:
+                            # the quote's absence from its other fields proves nothing
+                            res.unverifiable += 1
+                            res.notes.append(f"{where}: corpus://{h[:12]}…'s artifact "
+                                             "bytes are not reachable here — quote "
+                                             "unverifiable")
+                            bad(skey)
+                            continue
                         if status == "ok" and text is not None and \
-                                _quote_found(str(quote), content.full_text):
+                                _quote_found(str(quote), content.full_text,
+                                             strip_markup=not verbatim):
                             sev.append(f"{where}: quote exists in the record but NOT at "
                                        f"the cited anchor — re-anchor or widen the span")
                         else:
