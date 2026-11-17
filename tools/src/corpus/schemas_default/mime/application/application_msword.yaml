@@ -1,0 +1,29 @@
+description: |
+  Word 97-2003 binary documents (`.doc`) — a legacy OLE2 Compound Document whose text lives
+  in the `WordDocument` stream behind a piece table rather than in XML parts. The pre-2007
+  predecessor of the OOXML `.docx` container
+  (`application/vnd.openxmlformats-officedocument.wordprocessingml.document`).
+
+  The drafter reads the main document story (headers, footnotes and text boxes are later
+  stories it does not read) into one address-less `text` segment of plain paragraphs: a
+  field keeps its result (what the page shows), never its code; table cells join with a
+  tab and rows with a line; picture and drawing anchors are dropped. There is no address
+  axis below the whole document, so the body is cited record-wide. An encrypted or
+  pre-Word-97 file drafts no body and attests a blocking `partial-content` issue. Reading
+  needs the `[office]` extra (`xlrd`'s OLE2 reader), as `.xls` does.
+applies_to:
+  content_types:
+  - application/msword
+mode: body-draft
+artifact_kind: self_contained
+# One document, read as one story: the drafter has no stored structure to address below it.
+whole_address: admissible
+normalization:
+  guidance: |
+    The drafted body is the main story's text, faithful but flat: headings, list numbering,
+    and table structure come through only as paragraphs, tabs and lines. Read the document
+    rendered (open it, or a PDF rendition the source publishes) before re-shaping it, and
+    keep every word of the drafted text; restructure, never paraphrase. Pictures and
+    embedded objects are not drafted: where one carries content (a figure with numbers,
+    an embedded worksheet), say so in a `format-loss` issue rather than transcribing from
+    memory.

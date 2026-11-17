@@ -143,9 +143,11 @@ def get_strategy_drafter(strategy: str) -> DrafterFn | None:
 
 
 # Importing the per-MIME submodules registers their drafters. The office drafters
-# lazy-import their heavy deps (openpyxl / xlrd) inside their functions, so importing
+# lazy-import their heavy deps (openpyxl / xlrd — also the .doc drafter's OLE2 reader)
+# inside their functions, so importing
 # them here is safe without the `[office]` extra; docx uses only the stdlib.
 from . import audio as _audio  # noqa: E402, F401
+from . import doc as _doc  # noqa: E402, F401
 from . import docx as _docx  # noqa: E402, F401
 from . import eml as _eml  # noqa: E402, F401
 from . import epub as _epub  # noqa: E402, F401
