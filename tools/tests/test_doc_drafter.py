@@ -130,3 +130,15 @@ def test_a_drafted_doc_record_verifies_a_quote(tmp_path):
     join = CorpusJoin([RegisteredCorpus("corpus", root, private=False)])
     res = verify_ledger(ledger, join, {}, stamp=False, today="2026-11-17")
     assert not res.errors and res.verified == 1, (res.errors, res.notes)
+
+
+def test_a_truncated_piece_table_is_a_format_error_not_a_crash(tmp_path, run_drafter):
+    data = bytearray(_doc(_TEXT1, _TEXT2))
+    off = 512 * 3  # the WordDocument stream's first sector
+    struct.pack_into("<II", data, off + 0x1A2, 0, 9)  # lcbClx cuts the PlcPcd short
+    with pytest.raises(doc_draft.DocFormatError):
+        doc_draft.read_main_text(bytes(data))
+    src = tmp_path / "t.doc"
+    src.write_bytes(bytes(data))
+    result, blocks = run_drafter(doc_draft.draft, src)
+    assert blocks == [] and result["issues"][0]["id"] == "partial-content"

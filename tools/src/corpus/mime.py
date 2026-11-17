@@ -502,10 +502,12 @@ _SEGMENTS_SURFACE_MIMES = frozenset({
 
 
 def artifact_is_text_body(media_type: str) -> bool:
-    """Whether a formless record's artifact bytes ARE its derived body — a `text/*` type, read
-    by sniffed charset (`ledger.verify`). Every other type's body exists only as persisted
+    """Whether a formless record's artifact bytes ARE its derived body — a `text/*` type or
+    JSON (whose `body` op is a verbatim passthrough, §12.4.1), read by sniffed charset
+    (`ledger.verify`). Every other type's body exists only as persisted
     segments (or derivation-op output), so with none persisted there is no text to quote."""
-    return media_type.startswith("text/")
+    return (media_type.startswith("text/") or media_type == "application/json"
+            or media_type.endswith("+json"))
 
 
 def citation_surface(media_type: str, corpus_root: Path | None = None) -> str:

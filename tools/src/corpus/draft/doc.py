@@ -59,7 +59,16 @@ def _compdoc():
 
 
 def read_main_text(data: bytes) -> str:
-    """The main document story's raw characters (Word's control characters intact)."""
+    """The main document story's raw characters (Word's control characters intact).
+    Raises `DocFormatError` for anything it cannot read — a truncated FIB or piece table
+    included, never a bare `struct.error`."""
+    try:
+        return _read_main_text(data)
+    except (struct.error, IndexError, OverflowError, MemoryError) as e:
+        raise DocFormatError(f"malformed Word structures: {e}") from e
+
+
+def _read_main_text(data: bytes) -> str:
     compdoc = _compdoc()
     try:
         cdoc = compdoc.CompDoc(data, logfile=io.StringIO())
