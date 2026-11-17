@@ -45,8 +45,11 @@ merges onto the record:
                    record's `canonical:` field is disabled (spec §7.1 status note); content-
                    canonical identity stays retired under v20 (§7.9's "two tiers")
     origin_fields — non-primary-source enrichment (e.g. a media `ytdlp_*` set) → origin block
-    origin_uri_aliases — URLs aliasing the captured origin (canonical/final); folded into
-                   the origin block's uri: list, not artifact fields (spec §7.2)
+    origin_uri_aliases — URLs aliasing the captured origin (a post-redirect final URL);
+                   folded into the origin block's uri: list, not artifact fields (spec §7.2)
+    origin_canonical_url — the page's self-declared `<link rel=canonical>`: a publisher's
+                   CLAIM, folded in as an alias only where it names the retrieved resource
+                   (`derive.canonical_names_retrieved`)
 
 Issues emitted by the drafter MUST use our spec's vocabulary (severity ∈ {blocking,
 warning, info}; resolution ∈ {open, fixed, wontfix, superseded}; detector as a touch
@@ -77,6 +80,9 @@ class DrafterResult(TypedDict, total=False):
     # link, post-redirect final URL). Merged into the origin block's uri: list by
     # `_apply_drafter_result` — NOT artifact fields (spec §7.2).
     origin_uri_aliases: list[str]
+    # The page's `<link rel=canonical>` href, as written (possibly relative) — admitted as an
+    # alias by `_apply_drafter_result` only when it names the retrieved resource (§7.2).
+    origin_canonical_url: str
     # Content-zone structural byte-marks (§4.3.2.3) attested at ingest — the address families
     # a drafter declares ownership of (currently: media-container chapters, `time=<tc>`,
     # §12.20 item 2). Each entry: `{address, level, entry}`. Merged onto the record's TOP-LEVEL

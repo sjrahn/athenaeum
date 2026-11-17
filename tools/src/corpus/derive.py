@@ -97,6 +97,14 @@ def apply_drafter_result(
     # block's uri: list, not the artifact block (§7.2).
     for alias in result.get("origin_uri_aliases") or []:
         records.add_origin_uri_alias(post, str(alias), corpus_root=corpus_root)
+    # The page's `<link rel=canonical>` is the publisher's claim: an alias only where it
+    # names the resource the capture retrieved (§7.2 — one origin's uri list is one
+    # resource's spellings). open.alberta.ca points a superseded publication's canonical at
+    # its SUCCESSOR, which made one record claim another publication's URL.
+    if canonical_href := str(result.get("origin_canonical_url") or "").strip():
+        retrieved = _latest_origin_uris(post)
+        if (url := canonical_names_retrieved(canonical_href, retrieved)) is not None:
+            records.add_origin_uri_alias(post, url, corpus_root=corpus_root)
 
     # Host-pattern / scheme qualification of any still-bare origin block (§7.2's "the
     # ingest pipeline iterates every origin block" upgrade). Runs after the producer-
@@ -473,3 +481,40 @@ def derive_body(
     if not produces_body(mt_schema):
         return ""
     return segments.emit(build.blocks)
+
+
+def _latest_origin_uris(post: Any) -> list[str]:
+    """The uri spellings of the origin block the current capture seeded (the last one)."""
+    origins = post.metadata.get("_origins") or []
+    if not origins:
+        return []
+    uri = (origins[-1].get("fields") or {}).get("uri")
+    return [str(u).strip() for u in (uri if isinstance(uri, list) else [uri]) if u]
+
+
+def _host_path(url: str) -> tuple[str, str] | None:
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(url)
+    if parts.scheme not in ("http", "https") or not parts.hostname:
+        return None
+    host = parts.hostname.lower().removeprefix("www.")
+    return host, parts.path.rstrip("/") or "/"
+
+
+def canonical_names_retrieved(href: str, retrieved: list[str]) -> str | None:
+    """The absolute canonical URL when `href` names the same resource as one of the
+    `retrieved` uris — same host (`www.`-insensitive) and same path (trailing-slash-
+    insensitive); query and fragment may differ (tracking noise a canonical sheds) — else
+    None. A relative href resolves against the first retrieved uri; with nothing retrieved
+    (a uri-less origin) there is nothing it could alias."""
+    from urllib.parse import urljoin
+
+    if not retrieved:
+        return None
+    url = urljoin(retrieved[0], href)
+    key = _host_path(url)
+    if key is None:
+        return None
+    return url if any(_host_path(u) == key for u in retrieved) else None
+

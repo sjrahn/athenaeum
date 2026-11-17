@@ -322,9 +322,11 @@ def draft(
     # artifact block (spec §7.2 — canonical / shortlink / final URLs collapse into one
     # origin). `_apply_drafter_result` folds them in. `fetched_at` is already the origin
     # block's snapshot: (set at ingest), so the drafter doesn't re-emit it.
+    # The canonical is the publisher's claim, not a retrieval fact: it rides separately and
+    # is admitted only where it names the retrieved resource (`derive`), since a publisher
+    # may point it at a different document (a successor publication, a series landing page).
     origin_uri_aliases: list[str] = []
-    if v := _canonical_url(soup):
-        origin_uri_aliases.append(v)
+    origin_canonical_url = _canonical_url(soup)
     if v := _meta_content(soup, "corpus-capture-url"):
         origin_uri_aliases.append(v)
     # Producer-declared origin overlay injected as `<meta name="corpus-origin-*">` — the way a
@@ -441,6 +443,8 @@ def draft(
         "canonical": canonical,
         "origin_uri_aliases": origin_uri_aliases,
     }
+    if origin_canonical_url:
+        result["origin_canonical_url"] = origin_canonical_url
     if origin_schema:
         result["origin_schema"] = origin_schema
     if origin_meta_fields:
