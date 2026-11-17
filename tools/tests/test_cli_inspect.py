@@ -238,7 +238,21 @@ def test_inspect_citable_yes_for_raw_class_record(tmp_path, capsys):
     rc = dispatch(["inspect", rid, "--corpus-root", str(root)])
     assert rc == 0
     out = capsys.readouterr().out
-    assert "citable:     yes (raw surface — record-wide quotes are honest)" in out
+    assert "citable:     yes (raw surface — the artifact's own text is the quote surface)" \
+        in out
+
+
+def test_inspect_citable_record_level_only_for_a_bodyless_binary(tmp_path, capsys):
+    """A raw-class record whose bytes are not text and which persists no segments (a `.doc`
+    held as a passthrough, an image not yet OCR'd) has no body a quote could match — saying
+    "record-wide quotes are honest" there sent quotes nowhere."""
+    root = _corpus(tmp_path)
+    rid = _stage(root, b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1" + b"\0" * 64,
+                 mime="image/png", name="scan.png")
+    rc = dispatch(["inspect", rid, "--corpus-root", str(root)])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "citable:     record-level only — no text surface persisted" in out
 
 
 # ---------- content-axes compression: dense range vs sparse ---------- #

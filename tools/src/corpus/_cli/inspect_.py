@@ -109,8 +109,14 @@ def _citability_line(root, post) -> str:
             return "no — segments required, none persisted (enqueue for normalize; ledger.md §13.2)"
         return f"yes (segments: {seg_count})"
 
-    base = "yes (raw surface — record-wide quotes are honest"
-    return f"{base}; segments: {seg_count})" if seg_count > 0 else f"{base})"
+    if seg_count > 0:
+        return f"yes (raw surface — record-wide quotes are honest; segments: {seg_count})"
+    if _mime.artifact_is_text_body(media_type):
+        return "yes (raw surface — the artifact's own text is the quote surface)"
+    # a raw surface with nothing persisted and bytes that are not text (a `.doc` held as a
+    # passthrough, an image not yet OCR'd): there is no body for a quote to be found in
+    return ("record-level only — no text surface persisted (a quote has nothing to match; "
+            "attested fields and derivation-op anchors still verify)")
 
 
 # ---------- 2. artifact ---------- #

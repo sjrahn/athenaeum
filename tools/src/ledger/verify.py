@@ -409,13 +409,14 @@ def load_record_content(join: CorpusJoin, hash_: str) -> RecordContent | None:
         pass
     touches = post.metadata.get("touch") or []
     touch = str(touches[-1]) if isinstance(touches, list) and touches else ""
+    from corpus import mime as _mime
     from corpus.mime import citation_surface as _citation_surface_for
 
     media_type = records.media_type_for(post)
     surface = _citation_surface_for(media_type, corpus_root=corpus_root)
     segment_count = sum(1 for _ in segments.leaf_segments(blocks))
     raw_body = body_unreachable = False
-    if surface == "raw" and segment_count == 0 and media_type.startswith("text/"):
+    if surface == "raw" and segment_count == 0 and _mime.artifact_is_text_body(media_type):
         # A formless raw-surface text record (a `.txt` table, an unformed CSV): its derived
         # body IS the decoded artifact, and record-wide quotes against it are honest (§6.3,
         # corpus §7.1) — without it, a record `corpus inspect` calls citable verified nothing.
