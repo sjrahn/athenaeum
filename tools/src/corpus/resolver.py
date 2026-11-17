@@ -116,6 +116,10 @@ _ARCHIVE_PATH_OP_PARAMS: frozenset[str] = frozenset({"path"})
 # identity rather than a stale answer served from before it.
 _PDF_GEOMETRY_OP_PARAMS: frozenset[str] = frozenset({"words", "geometry"})
 
+# The PDF exposable-member axis (§7.1, `attachment=<N>`) — pinned by
+# `transforms.pdf.ATTACHMENT_ENGINE_VERSION`.
+_PDF_ATTACHMENT_OP_PARAMS: frozenset[str] = frozenset({"attachment"})
+
 # The HTML el= LIVE element-scoping op (§6.2, §12.11 `el=`) — the htmlel working-kind resolver
 # path only, never the persisted-segment `address: el=N` read (`transforms.html.ENGINE_VERSION`).
 _HTML_EL_OP_PARAMS: frozenset[str] = frozenset({"el"})
@@ -144,7 +148,7 @@ MEMBERS_ENGINE_VERSION = "members@2"
 # arrive later") — harmless to list now: `_resolve_handler` simply finds no handler for them
 # until a schema declares one, exactly as for any other unimplemented axis.
 _MEMBER_RECHAIN_PARAMS: frozenset[str] = frozenset(
-    {"path", "msg", "part", "card", "entry", "item", "el"}
+    {"path", "msg", "part", "card", "entry", "item", "el", "attachment"}
 )  # `el` re-chains only where it yields `bytes`: a docx block's embedded part (v47.1)
 
 # The turn= unit op and its att= companion (§6.2) — the form-mapping unit-array resolution
@@ -462,6 +466,10 @@ def resolve(
         version_label = zip_tf.ENGINE_VERSION
     elif any(k in _PDF_GEOMETRY_OP_PARAMS for k, _ in parsed.params):
         version_label = pdf_introspect.GEOMETRY_ENGINE_VERSION
+    elif any(k in _PDF_ATTACHMENT_OP_PARAMS for k, _ in parsed.params):
+        from .transforms import pdf as pdf_tf
+
+        version_label = pdf_tf.ATTACHMENT_ENGINE_VERSION
     else:
         version_label = None
     key_uri = f"{canonical_uri}|engine={version_label}" if version_label else canonical_uri
@@ -701,7 +709,7 @@ def resolve(
 #: yet (§12.11) — harmless to list: nothing ever mints an origin `uri:` on those axes until
 #: a schema declares them, so `_member_lineage` simply never matches on them today.
 _MEMBER_AXES: frozenset[str] = frozenset(
-    {"stream_id", "msg", "part", "path", "card", "entry", "item"}
+    {"stream_id", "msg", "part", "path", "card", "entry", "item", "attachment"}
 )
 
 
@@ -1935,6 +1943,10 @@ def engine_version_for_param(key: str) -> str | None:
         return SIDECAR_ENGINE_VERSION
     if key in _PDF_GEOMETRY_OP_PARAMS:
         return pdf_introspect.GEOMETRY_ENGINE_VERSION
+    if key in _PDF_ATTACHMENT_OP_PARAMS:
+        from .transforms import pdf as pdf_tf
+
+        return pdf_tf.ATTACHMENT_ENGINE_VERSION
     return None
 
 

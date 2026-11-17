@@ -242,6 +242,11 @@ def open_member_stream(
         data = emlfile.resolve_part(container_path.read_bytes(), ordinal)
         yield io.BytesIO(data)
         return
+    # A PDF's exposable members — embedded files and portfolio members — addressed
+    # `attachment=<N>` (§7.1, §12.11): the embedded stream's bytes, verbatim.
+    if container_media_type == "application/pdf" and key == "attachment":
+        yield io.BytesIO(_pdf_attachment(container_path, value)[1])
+        return
     family = _archive_family(container_media_type)
     if key != "path" or family is None:
         raise ValueError(
@@ -296,6 +301,13 @@ def member_source_metadata(
             return {}
         filename = emlfile.part_filename(container_path.read_bytes(), ordinal)
         return {"filename": filename} if filename else {}
+    # A PDF embedded file names itself (its file specification's name); no reliable mtime.
+    if container_media_type == "application/pdf" and key == "attachment":
+        try:
+            name = _pdf_attachment(container_path, value)[0]
+        except ValueError:
+            return {}
+        return {"filename": name} if name else {}
     meta: dict[str, str] = {"filename": value.rsplit("/", 1)[-1]}
     family = _archive_family(container_media_type)
     if key == "path" and family:
@@ -308,6 +320,18 @@ def member_source_metadata(
         if mtime:
             meta["source_modified"] = mtime
     return meta
+
+
+def _pdf_attachment(container_path: Path, value: str) -> tuple[str, bytes]:
+    import pypdfium2 as pdfium
+
+    from .transforms import pdf as pdf_tf
+
+    doc = pdfium.PdfDocument(str(container_path))
+    try:
+        return pdf_tf.attachment_bytes(doc, value)
+    finally:
+        doc.close()
 
 
 def member_sniff_name(address: str, filename: str | None = None) -> str | None:

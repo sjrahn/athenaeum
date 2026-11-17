@@ -126,6 +126,7 @@ def draft(
                     Segment(atom="structural", address=f"page={page_no}", level=1, body=title)
                 )
             blocks.append(_page_segment(reader, doc, i, page_no, chrome, text_algos))
+        embeds = _attachment_embeds(doc) if doc is not None else []
     finally:
         if doc is not None:
             doc.close()
@@ -139,10 +140,48 @@ def draft(
     recordbuild.add_blocks(build, blocks)
     return {
         "fields": fields,
-        "embeds": [],
+        "embeds": embeds,
         "issues": [],
         "canonical": canonical,
     }
+
+
+def _attachment_embeds(doc: Any) -> list[dict[str, Any]]:
+    """One exposable-member row per embedded file / portfolio member (§7.1), addressed
+    `attachment=<N>` in the resolver's enumeration (`transforms.pdf.attachments`). An entry
+    pdfium cannot read has no bytes to roster and is skipped (resolving it says why)."""
+    import blake3
+
+    from corpus import mime as mime_mod
+    from corpus.transforms import pdf as pdf_tf
+
+    try:
+        entries = pdf_tf.attachments(doc)
+    except Exception as exc:  # a broken name tree never sinks the page draft
+        log.debug("embedded-file enumeration failed: %s", exc)
+        return []
+    by_hash: dict[str, dict[str, Any]] = {}  # one row per distinct bytes, every address
+    for n, (name, data) in enumerate(entries, start=1):
+        if data is None:
+            continue
+        digest = blake3.blake3(data).hexdigest()
+        if digest in by_hash:
+            by_hash[digest]["addresses"].append(f"attachment={n}")
+            continue
+        media_type = mime_mod.sniff_head(data[:8192], name or None)
+        fields: dict[str, Any] = {"bytes": len(data)}
+        if name:
+            fields["filename"] = name
+        by_hash[digest] = {
+            "media_type": media_type if media_type != "unknown" else "application/octet-stream",
+            "addresses": [f"attachment={n}"], "fields": fields,
+        }
+    return [
+        {"media_type": e["media_type"],
+         "address": e["addresses"][0] if len(e["addresses"]) == 1 else e["addresses"],
+         "transport": records.format_hash("blake3", digest), "fields": e["fields"]}
+        for digest, e in by_hash.items()
+    ]
 
 
 # ---------- per-page shape + addressing ---------- #

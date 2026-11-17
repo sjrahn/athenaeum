@@ -19,6 +19,10 @@ address_scheme:
   type: rect
   description: |-
     <x>,<y>,<w>,<h> — relative floats in [0.0, 1.0]. Origin top-left. x+w ≤ 1.0, y+h ≤ 1.0.
+- param: attachment
+  type: integer
+  description: |-
+    An exposable member (spec §7.1): the N-th embedded file — an attachment, or a member of an Acrobat portfolio — 1-indexed in the EmbeddedFiles name tree's key order (`pdfdetach -list`'s order). Resolves to the member's bytes verbatim, and re-chains into the member's own pipeline: `attachment=2&page=3&text` reads a page of an embedded PDF. The drafter rosters each member as a member row (`filename`, `bytes`), promotable with `corpus promote 'corpus://<id>?attachment=<N>'`.
 # Computed at draft time but NOT persisted — the write path into a record's `canonical:`
 # field is disabled (spec §7.1 status note: it collapsed unrelated text-empty PDFs;
 # content-canonical identity stays retired under v20, §7.9's "two tiers" — the `hash:`
@@ -40,6 +44,10 @@ normalization:
     - **Scanned / no-text** (`image_coverage` ≥ 0.9, or a vector-only/DRM'd page with nothing extractable) → an `atom: image` body-empty marker at bare `page=<N>`.
 
     The PDF's top-level **outline** entries draft as `atom: structural` byte-marks (`address: page=<N>`, `level: 1`, body = the bookmark title verbatim), one immediately before its page's own content segment, in document order — the same treatment docx headings and EPUB nav already get. A fresh draft is still **sectionless** either way: grouping structural marks and their pages into `<!--section-->` blocks is normalizer judgment, never the drafter's (below).
+
+    ## Portfolios and embedded files
+
+    An Acrobat **portfolio** drafts as its cover page alone (often a single "open this in Acrobat" sheet): the documents are **exposable members**, rostered on the record at `attachment=<N>`. The cover page is not the content. Read a member through the resolver (`corpus resolve 'corpus://<hash>?attachment=<N>&page=1'`), cite it there, and when it needs a formed surface of its own, raise a `promote` need for `attachment=<N>` rather than normalizing the cover.
 
     ## Page addresses are content bands, not whole pages — and bodies are not bands
 

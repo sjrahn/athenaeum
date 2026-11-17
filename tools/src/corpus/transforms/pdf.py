@@ -72,6 +72,58 @@ def _no_value(value: str | None, name: str) -> None:
         raise ValueError(f"{name} is flag-style and takes no value (select the page with page=N)")
 
 
+# `attachment=<N>` (§7.1 exposable members, §12.11): the N-th entry of the document's
+# EmbeddedFiles name tree — embedded files and portfolio members alike — in pdfium's order
+# (the name tree's own key order, `pdfdetach -list`'s order). Folded into the cache key so a
+# change to that enumeration is a new identity, never a stale member served under the old one.
+ATTACHMENT_ENGINE_VERSION = "pdf-attachment@1"
+
+
+def attachments(doc: Any) -> list[tuple[str, bytes | None]]:
+    """`(name, bytes)` per embedded file, in `attachment=<N>` order; bytes None for an entry
+    whose stream pdfium cannot read (a dangling or external file specification)."""
+    out: list[tuple[str, bytes | None]] = []
+    for i in range(doc.count_attachments()):
+        att = doc.get_attachment(i)
+        try:
+            name = att.get_name() or ""
+        except Exception:
+            name = ""
+        try:
+            data: bytes | None = bytes(att.get_data())
+        except Exception:
+            data = None
+        out.append((name, data))
+    return out
+
+
+def attachment_bytes(doc: Any, value: str | None) -> tuple[str, bytes]:
+    """`attachment=<N>` — the N-th embedded file's name and bytes, verbatim."""
+    from .. import functional_uri as furi
+
+    count = doc.count_attachments()
+    low, high = furi.parse_index_span("attachment", value, count=count, noun="document")
+    if low != high:
+        raise ValueError(f"attachment={low}-{high}: a span of members has no single byte "
+                         "surface")
+    name, data = attachments(doc)[low - 1]
+    if data is None:
+        raise ValueError(f"attachment={low} ({name!r}): the file specification carries no "
+                         "embedded stream the package holds")
+    return name, data
+
+
+@register("pdf", "attachment", "bytes")
+def extract_attachment(pdf: Any, value: str | None, ctx: RenderContext) -> bytes:
+    """`?attachment=N` — an embedded file or portfolio member, its bytes verbatim. A member
+    axis: the resolver re-detects the member's own type, so `attachment=2&page=3` reads a
+    page of an embedded PDF."""
+    name, data = attachment_bytes(pdf, value)
+    if name:
+        ctx["member_name"] = name
+    return data
+
+
 @register("pdf", "page", "pdfpage")
 def select_page(pdf: Any, value: str | None, ctx: RenderContext) -> PdfPageRef:
     """Select page N (1-indexed). Yields a `pdfpage`; a terminal `pdfpage` renders."""
